@@ -15,10 +15,30 @@ import { isProvisional } from "./booking-status";
  */
 
 /**
- * Source acceptée en entrée : une forme structurelle, pas le type Beds24 d'un site.
+ * Source acceptée en entrée : une forme structurelle, du côté **transport** de la frontière.
  *
- * Le socle ne connaît ni `Beds24Booking` ni `Sejour` — c'est le lot suivant qui tranchera le
- * type canonique. En attendant, tout objet portant ces champs se projette.
+ * ⚠️ **Question tranchée au Lot 3, à ne pas rouvrir.** `/api/dashboard/bookings` de Barbusse
+ * sert encore la forme Beds24 à `projectBookings`, et non le `Booking` canonique, parce que
+ * `BookingLike.id` est requis là où `Booking.id` est optionnel. Ce n'était pas un défaut à
+ * corriger, mais la frontière elle-même, et elle reste où elle est. Trois raisons.
+ *
+ * 1. **Deux métiers, deux fonctions.** `toBooking` est un traducteur : son travail est la
+ *    fidélité. `projectBookings` est une liste blanche : son travail est le confinement.
+ *    Projeter depuis `Booking` ferait reposer la fermeture de la fuite `NUKI_PIN` sur un
+ *    traducteur — qui n'a aucune raison de refuser un champ le jour où quelqu'un l'ajoutera
+ *    « parce qu'il est utile ». Une liste blanche, si.
+ * 2. **`id` optionnel est une vérité du domaine, pas du transport.** Il l'est sur `Booking`
+ *    parce qu'une ligne d'archive d'Albiez vient d'un export de canal et n'a jamais eu
+ *    d'identifiant Beds24. Ici, toute ligne en a un : c'est la clé de la route d'écriture des
+ *    notes et la clé de rendu des barres. Le rendre optionnel pousserait un `!` ou un
+ *    `?? 0` dans un composant, pour satisfaire un type qui décrit l'autre rive.
+ * 3. **Ce DTO transporte des champs que `Booking` a déjà digérés** : `referer` et `channel`
+ *    bruts — que le calendrier repasse à `normalizeChannel` — et `price`. Les remplacer par
+ *    `channel: Channel` et `gross` changerait la forme servie au navigateur sans rien
+ *    fermer de plus.
+ *
+ * Mesure inchangée en rôle `viewer` sur `?arrivalFrom=2025-01-01&arrivalTo=2026-06-30` :
+ * **50 réservations, 15 clés distinctes, 0 `NUKI_PIN`, 14 813 octets.**
  */
 export interface BookingLike {
   id: number;
