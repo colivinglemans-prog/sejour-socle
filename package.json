@@ -8,7 +8,9 @@
     "url": "git+https://github.com/colivinglemans-prog/sejour-socle.git"
   },
   "//exports": "Pas de build : chaque sous-chemin pointe droit sur le fichier TypeScript. Sans cette carte, Turbopack refuse d'ajouter l'extension `.ts` aux imports venus de node_modules — tsc, lui, la trouvait seul, d'où une erreur qui n'apparaissait qu'au build.",
+  "//exports-tsx": "Un module de `lib/` ecrit en TSX ne peut pas passer par le motif `./lib/*` : il pointe sur `.ts`. Chaque .tsx de lib/ prend donc une entree exacte, qui l'emporte sur le motif.",
   "exports": {
+    "./lib/invoice-pdf": "./lib/invoice-pdf.tsx",
     "./lib/*": "./lib/*.ts",
     "./components/*": "./components/*.tsx",
     "./ui/*": "./ui/*",
@@ -24,7 +26,8 @@
     "next": "^16",
     "react": "^19",
     "react-dom": "^19",
-    "recharts": "^3"
+    "recharts": "^3",
+    "@react-pdf/renderer": "^4"
   },
   "devDependencies": {
     "@types/node": "^20",
@@ -37,6 +40,12 @@
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "recharts": "^3.10.1",
-    "typescript": "^5"
+    "typescript": "^5",
+    "@react-pdf/renderer": "^4.5.1"
+  },
+  "peerDependenciesMeta": {
+    "@react-pdf/renderer": {
+      "optional": true
+    }
   }
 }
