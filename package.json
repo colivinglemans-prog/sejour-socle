@@ -7,6 +7,13 @@
     "type": "git",
     "url": "git+https://github.com/colivinglemans-prog/sejour-socle.git"
   },
+  "//exports": "Pas de build : chaque sous-chemin pointe droit sur le fichier TypeScript. Sans cette carte, Turbopack refuse d'ajouter l'extension `.ts` aux imports venus de node_modules — tsc, lui, la trouvait seul, d'où une erreur qui n'apparaissait qu'au build.",
+  "exports": {
+    "./lib/*": "./lib/*.ts",
+    "./ui/*": "./ui/*",
+    "./config/*": "./config/*.ts",
+    "./data/*": "./data/*"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "lint": "eslint"

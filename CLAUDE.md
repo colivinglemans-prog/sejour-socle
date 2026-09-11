@@ -121,3 +121,50 @@ Plan détaillé : `C:\Users\alexa\.claude\plans\cheerful-toasting-rivest.md`.
 
 *(Cette section se remplit lot par lot. À chaque module extrait, la section correspondante des
 `CLAUDE.md` applicatifs est remplacée par un renvoi d'une ligne vers ici.)*
+
+### Lot 0 — noyau technique
+
+| Chemin | Contenu | Vient de |
+|---|---|---|
+| `lib/periodes.ts` | Vacances scolaires par zone, semaines de fêtes, bandes de calendrier. Français réglementaire conservé. | Albiez (copie octet pour octet chez Barbusse) |
+| `data/vacances-scolaires.json` | Données générées, versionnées : le site ne fait aucun appel réseau à l'exécution. | identique des deux côtés |
+| `scripts/build-vacances.mjs` | Régénère le JSON depuis l'open data du ministère. À relancer chaque rentrée, **depuis le socle**. | identique à un mot de commentaire près |
+| `lib/dates.ts` | Les 7 helpers de jour calendaire, en heure locale. Noms anglais. | identiques ligne pour ligne après renommage |
+| `lib/channels.ts` | `Channel`, `CHANNELS`, `CHANNEL_COLORS`, `normalizeChannel`. | Albiez, palette arbitrée |
+| `lib/time.ts` | `nowParis`, `currentHourParis`, `todayParis`, `tomorrowParis`. | Barbusse (Albiez ne l'a pas encore) |
+| `lib/cron-auth.ts` | `verifyCronAuth` — pas de `CRON_SECRET`, pas d'accès. | Barbusse |
+| `lib/ntfy.ts` | `sendNtfy`, encodage RFC 2047 des titres accentués. | Barbusse |
+| `ui/theme.css` | `@theme inline`, `.prose-article`, `.hide-scrollbar`, `prefers-reduced-motion`. | structure commune |
+
+Ce qui **n'est pas** monté avec eux, et pourquoi :
+
+- `MONTH_NAMES_FR` / `DAY_NAMES_FR` (Barbusse) — les noms de mois viennent du dictionnaire
+  i18n (`t.calendar.monthNames`). Ils étaient déjà morts dans le code : supprimés.
+- Les **valeurs** de couleur des sept tokens — un fichier par site, c'est l'arbitrage Design.
+
+### Comment une application s'y branche
+
+```jsonc
+// package.json
+"@sejour/socle": "github:colivinglemans-prog/sejour-socle#v0.1.0"
+```
+```ts
+// next.config.ts
+transpilePackages: ["@sejour/socle"],
+```
+```css
+/* app/globals.css — les @import restent en tête de fichier */
+@import "tailwindcss";
+@import "@sejour/socle/ui/theme.css";
+:root { --site-background: …; /* les 7 valeurs, + le trio d'accents si le site en a un */ }
+```
+
+Les sous-chemins sont déclarés dans `exports` et pointent droit sur le `.ts` : sans cette
+carte, Turbopack refuse d'ajouter l'extension aux imports venus de `node_modules`, et l'erreur
+n'apparaît qu'au `next build`, pas au `tsc`.
+
+**Boucle de dev, et sa limite.** `npm link @sejour/socle` pose un lien symbolique vers un
+dossier situé **hors** de la racine du projet, et Turbopack refuse de résoudre au-delà de
+cette racine : `tsc --noEmit` passe, `next build` échoue en `Module not found`. Le
+contournement local, jamais commité, est `turbopack: { root: "<parent commun>" }` dans
+`next.config.ts` — ou plus simplement travailler sur le paquet installé depuis son tag.
