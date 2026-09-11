@@ -109,7 +109,7 @@ deux validations.
 | Lot | Contenu | Agent | Tag |
 |---|---|---|---|
 | 0 | Amorçage + les 5 modules à ≥ 85 % de recouvrement | `tonton-tuyau` | `v0.1` |
-| 1 | Auth, rôles, cloisonnement — **ferme la fuite `NUKI_PIN`** | `cerbere` | `v0.2` |
+| 1 | Auth, rôles, cloisonnement — **ferme la fuite `NUKI_PIN`** | `cerbere` | `v0.2` — code écrit, tag à poser |
 | 2 | Beds24 + modèle canonique `Booking` | `champollion` | `v0.3` |
 | 3 | Dashboard | `madame-soleil` | `v0.4` |
 | 4 | Factures, taxe de séjour, fiscal | `le-percepteur` | `v0.5` |
@@ -141,6 +141,52 @@ Ce qui **n'est pas** monté avec eux, et pourquoi :
 - `MONTH_NAMES_FR` / `DAY_NAMES_FR` (Barbusse) — les noms de mois viennent du dictionnaire
   i18n (`t.calendar.monthNames`). Ils étaient déjà morts dans le code : supprimés.
 - Les **valeurs** de couleur des sept tokens — un fichier par site, c'est l'arbitrage Design.
+
+### Lot 1 — auth, rôles, cloisonnement
+
+Trois portes, dans cet ordre : le **proxy**, le **handler de route**, la **projection de la
+réponse**. Aucune n'est suffisante seule, et c'est le point : `/api/dashboard/bookings` de
+Barbusse était couvert par aucune des trois et rendait 73 champs — dont 37 `NUKI_PIN` — à
+n'importe quel rôle connecté.
+
+| Chemin | Contenu | Vient de |
+|---|---|---|
+| `lib/auth.ts` | `createAuth<Role>` : JWT `jose` HS256, claim unique `{ role }`, expiration 90 j, secret `DASHBOARD_SECRET`. **Aucun import de `next/headers`** — le proxy tourne en edge. | 87 % de lignes identiques entre les deux sites |
+| `lib/auth-cookie.ts` | `setAuthCookie` / `removeAuthCookie`. Isolé parce qu'il tire `next/headers` : seules les routes Node l'importent. | identique des deux côtés |
+| `lib/auth-guard.ts` | `createRouteGuard` — `deny(request, roles)` et `denyNonAdmin(request)`, 401 sans cookie, 403 avec un cookie insuffisant. | remplaçe trois copies chez Barbusse, dont deux octet pour octet |
+| `lib/proxy.ts` | `createDashboardProxy` — négociation de langue, redirections d'anciennes URLs, cookie, bornage du rôle restreint. | Albiez |
+| `lib/booking-status.ts` | `EXCLUDED_STATUSES`, `UNCONFIRMED_STATUSES`, `HELD_STATUSES`, `provisionalKind`. | `EXCLUDED_STATUSES` recopié 5 fois ; les deux autres sortis d'un composant client |
+| `lib/booking-dto.ts` | `BookingListItem` (15 champs), `AdminBookingListItem` (+5), `projectBookings`. | Albiez (`calendrier/route.ts`), généralisé |
+
+**Le fail-safe est celui d'Albiez.** Un jeton illisible, expiré ou portant un `role` inconnu
+retombe sur le rôle **restreint**. Barbusse retombait sur `"admin"` : un jeton invalide valait
+les pleins pouvoirs. Échouer fermé ne coûte aucune reconnexion légitime — `createToken` pose
+toujours le claim.
+
+**Le préfixe des mots de passe est une liste, pas une constante.** Chaque site déclare les
+siens : Albiez `["DASHBOARD_PASSWORD_MENAGE", "DASHBOARD_PASSWORD_VIEWER"]`, Barbusse
+`["DASHBOARD_PASSWORD_VIEWER"]`. Le code passe à `viewer` **sans attendre le renommage des
+variables Vercel** : leur valeur de production est un `Secret` illisible après coup, et un
+renommage raté couperait l'accès de la personne du ménage sans retour possible. Les deux
+formes marchant en même temps, la bascule des noms se fera à froid.
+
+**Liste blanche par projection, jamais suppression de champs.** Beds24 renvoie 73 champs et en
+ajoutera : `delete b.infoItems` protège de ce qu'on connaît, une projection protège aussi de ce
+qui arrivera. Quatre champs à ne pas retirer du lot commun, vérifiés dans les composants :
+`company` et `title` portent le nom sur les barres sans prénom, `comments` s'affiche sans
+condition de rôle, `referer`/`channel` alimentent `normalizeChannel` même quand les couleurs
+sont masquées, `notes` est la consigne de ménage — la raison d'être du rôle.
+
+**Ce qui n'entre dans aucun DTO** : `infoItems` (le PIN de serrure), `invoiceItems`,
+`stripeToken`, `pcibookingToken`, `commission`, `deposit`, `tax`, `address`, `city`, `state`,
+`postcode`, `custom1..10`, `apiReference`, `apiMessage`, `groupNote`, `message`, `voucher`, et
+les ~40 autres.
+
+**Pas de bornage des dates.** La liste blanche rend la fenêtre inoffensive, et l'administrateur
+a besoin de fenêtres larges.
+
+Mesure sur `/api/dashboard/bookings?arrivalFrom=2025-01-01&arrivalTo=2026-06-30`, en `viewer` :
+**73 clés et 37 `NUKI_PIN` avant, 15 clés et 0 après** (129 537 → 14 770 octets).
 
 ### Comment une application s'y branche
 
