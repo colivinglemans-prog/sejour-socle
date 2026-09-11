@@ -111,7 +111,7 @@ deux validations.
 | 0 | Amorçage + les 5 modules à ≥ 85 % de recouvrement | `tonton-tuyau` | `v0.1` |
 | 1 | Auth, rôles, cloisonnement — **ferme la fuite `NUKI_PIN`** | `cerbere` | `v0.2.0` |
 | 2 | Beds24 + modèle canonique `Booking` | `champollion` | `v0.3` — code écrit, tag à poser |
-| 3 | Dashboard | `madame-soleil` | `v0.4` |
+| 3 | Dashboard | `madame-soleil` | `v0.4` — code écrit, tag à poser |
 | 4 | Factures, taxe de séjour, fiscal | `le-percepteur` | `v0.5` |
 | 5 | Vitrine — *proposé, non engagé* | `monsieur-loyal`, `poisson-babel` | — |
 
@@ -241,12 +241,122 @@ Vérification de non-régression, dashboards interrogés en local avant et aprè
 année et par canal identiques à l'euro près des deux côtés**, et la fuite `NUKI_PIN` toujours
 fermée (15 clés, 0 PIN, 14 813 octets, à l'octet près avant/après).
 
+### Lot 3 — dashboard
+
+| Chemin | Contenu | Vient de |
+|---|---|---|
+| `lib/stats.ts` | `RevenueMode`, `RevenueExtra`, `RevenueChartData`, `ChannelYear`, `YearComparison`, `spreadRevenue`, `stayNights`, `revenueMovements`, `buildRevenueChart`, `channelsByYear`, `compareYears`, `occupiedNights`, `channelBreakdown`. | Albiez (`lib/stats.ts`, 332 l.), renommé en anglais |
+| `lib/calendar-lanes.ts` | `placeSegments<T>`, `LaneBar<T>`, `Segment<T>`, `LaneGranularity`, `laneCount`, `roundedEnds`, `periodTooltip`, `PERIOD_PALETTE`. | Albiez pour la forme (`placer<T>`), les deux pour le mécanisme |
+| `lib/chart-theme.ts` | `CHART_GRID`, `CHART_AXIS`, `chartAxisIn`, `CHART_TOOLTIP_STYLE`, `CHART_LEGEND`, `chartEuro`. | Albiez (rampe `slate`, arbitrée) |
+| `components/DashboardNav.tsx` | Barre de navigation générée depuis une config de liens, avec filtrage par rôle et tiroir mobile. | les deux, convergents ligne pour ligne |
+| `lib/dates.ts` | **+ `daysBetween`** — la seule fonction du module à compter en UTC, parce qu'un écart est une quantité et non un jour affiché. `nightsBetween` de `lib/booking.ts` y délègue. | trois copies, dont `joursEntre` d'Albiez |
+
+**Ce que le socle fournit, ce sont les briques ; la composition reste au site.** Albiez a
+délibérément abandonné le camembert — « il ne répondait qu'à *quelle est ma dépendance
+aujourd'hui*, la vraie question est *comment évolue-t-elle* » — et Barbusse le garde ; Albiez a
+`ComparaisonAnnuelle`, Barbusse `RevenueProjection` et `OccupancyGauge`. Aucun de ces choix
+n'entre ici.
+
+**La série de référence est le net, mais c'est un défaut, pas une contrainte.** Le parti pris
+d'Albiez — le brut change de définition au milieu de son historique, la rupture Airbnb
+*host-only* de mars 2024 — est celui de `spreadRevenue`. Barbusse suit son brut en passant le
+montant explicitement (`spreadRevenue(b, mode, b.gross)`) : son dashboard l'annonce sur sa
+première carte, et son historique ne traverse pas cette rupture. C'est une **donnée**, pas un
+mode de plus.
+
+**`demiCellules` est devenu `LaneGranularity`.** Le booléen d'Albiez disait *comment* une barre
+occupe sa case ; il dit maintenant *ce qu'elle occupe* — `"half-day"` pour un séjour ou une
+bande de vacances, qui libèrent la moitié de leur dernier jour, `"full-day"` pour un événement
+de calendrier, qui n'en libère rien et qu'une demi-case de chaque côté réduirait à rien s'il ne
+dure qu'un jour.
+
+**`PERIOD_PALETTE.vacances` est une valeur par défaut, pas une constante.** Barbusse la
+redéfinit : chez lui l'indigo est déjà la couleur du badge « Événement » du circuit, et sa zone
+scolaire locale `B` se distingue des deux autres parce que c'est l'information utile au ménage.
+`fete` est commune, aux mêmes `#fb7185` / `#be123c`.
+
+**`RevenueMode` prend les mots de Barbusse.** `"averagedPerNight" | "byCheckIn" | "byCheckOut" |
+"byBookingDate"` contre `"reparti" | "arrivee" | "depart" | "reservation"` : la règle 5 donnait
+Albiez, la règle 4 donne l'anglais technique, et la règle 4 l'emporte sur un vocabulaire de
+type. Les libellés affichés, eux, n'ont pas bougé.
+
+Ce qui **n'est pas** monté, et pourquoi — les trois refus sont mesurés, pas d'humeur :
+
+- **`<StatCard>`.** Les deux cartes partagent `rounded-2xl p-5` et rien d'autre : Albiez a une
+  carte blanche cerclée à libellé `xs` capitalisé, Barbusse une carte pastel à libellé `sm` dont
+  la **couleur est une information** (émeraude / ambre / rose selon le seuil d'occupation).
+  Une brique commune coûterait ~25 lignes plus deux configurations de ~8 : autant que les 31
+  lignes qu'elle remplacerait. Un composant dont chaque visuel est une prop est un `div`.
+- **`BookingsTable`.** 145 lignes ici, 108 là, et pas les mêmes colonnes : Albiez double son
+  tableau d'une liste de cartes sous `md` et affiche canal, période et net ; Barbusse a un
+  bouton « voir les N » et une colonne Événement. Un tableau à colonnes configurables ferait
+  ~120 lignes plus deux configurations de ~40, contre 253 — 20 % de gain contre une indirection
+  et un changement de rendu garanti d'au moins un côté.
+- **`GuestShareBlock` / `PartageVoyageur`.** 49 % de lignes identiques, mais l'essentiel de ces
+  lignes est de la ponctuation JSX. Les deux divergent sur leur **source de vérité** : Albiez
+  sert un code statique par variable d'environnement (`/api/dashboard/code-acces`), Barbusse un
+  code **par réservation** lu dans Beds24 (`/bookings/{id}/nuki-code`) ; Barbusse présélectionne
+  la langue d'après le pays, ce qu'Albiez ne peut pas faire faute du scope
+  `read:bookings-personal` ; Barbusse arrête la propagation sur chaque clic, sa popup en
+  dépend. Le seul morceau vraiment commun est le presse-papier avec repli de sélection
+  manuelle : **~35 lignes**, contre l'ouverture d'une surface de hooks React dans le socle.
+  Candidat pour un lot ultérieur, pas pour celui-ci.
+- **L'enveloppe du `BookingCalendar`.** Voir ci-dessous.
+
+**Le calendrier : le moteur monte, l'enveloppe reste.** Le plan d'ensemble prévoyait un
+composant unifié à slots ; il n'est pas fait, et ce n'est pas un report. Ce qui était commun
+était l'**algorithme** — placement en lanes, demi-cellules, arrondis, infobulle de bande — et il
+est monté : Barbusse passe de 1 114 à 946 lignes, Albiez de 722 à 615. Ce qui reste divergent
+est irréductible : bandeaux de saison de station d'un côté, barres d'événements de circuit et
+rayures « non confirmé » de l'autre ; popup ancrée en carte absolue d'un côté, feuille modale
+mobile de l'autre ; net, commission et surcollecte de taxe ici, identité voyageur et partage
+là. Un composant capable des deux prendrait au moins six slots et serait plus difficile à lire
+que les deux composants qu'il remplacerait.
+
+**Le piège UTC, trois fois.** Trois copies de `toISOString().split("T")[0]` subsistaient chez
+Barbusse, et deux d'entre elles étaient fausses depuis un fuseau à l'est de Greenwich :
+
+1. `BookingCalendar.toDateStr` décidait quel jour entourer — entre minuit et 2 h à Paris l'été,
+   la pastille se posait sur la veille ;
+2. la ventilation par nuit de `/api/dashboard/stats` avançait une `Date` avec `setDate()` —
+   heure locale — puis relisait le jour avec `toISOString()` — UTC : la nuit du passage à
+   l'heure d'été comptait deux fois et la dernière du séjour était perdue, **459,16 €
+   basculant de mars à avril** ;
+3. `lib/events.ts` décalait d'un jour la fenêtre étendue d'un événement, si bien qu'une même
+   réservation portait « SWS Karting Finals 2026 » sur Vercel et aucun événement en
+   développement.
+
+Aucun effet sur Vercel, qui tourne en UTC. **La vérification qui les a tous trouvés** : lancer
+le serveur une fois tel quel et une fois avec `TZ=UTC`, et comparer les charges utiles. Avant,
+les 20 combinaisons période × mode divergeaient ; après, aucune.
+
+**Vérification de non-régression.** Barbusse sous `TZ=UTC`, c'est-à-dire dans le fuseau de
+Vercel : **22 charges utiles identiques octet pour octet** (20 combinaisons période × mode de
+`/api/dashboard/stats`, plus `/api/dashboard/bookings` en `admin` et en `viewer`). Albiez :
+**17 charges utiles identiques** après application de la table de renommage des clés (16
+combinaisons période × mode, plus `/api/dashboard/calendrier`) — les valeurs ne bougent pas,
+seuls les noms de clés changent. La fuite reste fermée : **50 réservations, 15 clés distinctes,
+0 `NUKI_PIN`, 14 813 octets**, à l'octet près.
+
+**La question laissée ouverte par le Lot 2 est tranchée, et `booking-dto.ts` la porte.**
+`/api/dashboard/bookings` continue de servir la forme Beds24 à `projectBookings`, et
+`BookingLike.id` reste requis. Ce n'est pas un défaut : c'est la frontière. `toBooking` est un
+traducteur, dont le métier est la fidélité ; `projectBookings` est une liste blanche, dont le
+métier est le confinement — faire reposer la fermeture de la fuite `NUKI_PIN` sur un traducteur
+serait la confier à une fonction qui n'a aucune raison de refuser un champ. Et `id` optionnel
+est une vérité du **domaine** (une ligne d'archive d'Albiez n'a jamais eu d'identifiant Beds24),
+pas du **transport**, où toute ligne en a un.
+
 ### Comment une application s'y branche
 
 ```jsonc
 // package.json
 "@sejour/socle": "github:colivinglemans-prog/sejour-socle#v0.1.0"
 ```
+Les composants React du socle se résolvent par `@sejour/socle/components/<Nom>`, une entrée
+`exports` ajoutée au Lot 3 : `"./components/*": "./components/*.tsx"`. Comme pour `./lib/*`,
+sans cette carte l'erreur n'apparaît qu'au `next build`, pas au `tsc`.
+
 ```ts
 // next.config.ts
 transpilePackages: ["@sejour/socle"],
