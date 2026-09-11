@@ -1,4 +1,5 @@
 import type { Channel } from "./channels";
+import { daysBetween } from "./dates";
 
 /**
  * Le type canonique du domaine : **un séjour vendu**, quelle que soit sa provenance.
@@ -137,7 +138,5 @@ export interface Booking {
  * un appelant qui veut ce plafond l'écrit lui-même.
  */
 export function nightsBetween(arrival: string, departure: string): number {
-  return Math.round(
-    (Date.parse(`${departure}T00:00:00Z`) - Date.parse(`${arrival}T00:00:00Z`)) / 86_400_000,
-  );
+  return daysBetween(arrival, departure);
 }

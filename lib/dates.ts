@@ -57,3 +57,21 @@ export function addDays(dateStr: string, n: number): string {
   d.setDate(d.getDate() + n);
   return formatDate(d);
 }
+
+/**
+ * Nombre de jours **entre** deux jours calendaires — la seule fonction d'ici qui compte en
+ * UTC, et c'est volontaire.
+ *
+ * Un écart n'est pas un jour affiché : c'est une quantité. En heure locale, les deux
+ * changements d'heure annuels font des journées de 23 et de 25 heures, et un séjour à cheval
+ * sur le dernier dimanche d'octobre rendrait 7,04 puis 7 après arrondi — l'arrondi rattrape
+ * aujourd'hui, mais rien ne le garantit. En UTC, chaque jour fait 86 400 s, toujours.
+ *
+ * Rend une valeur **signée** : négative sur des dates inversées, nulle sur deux fois le même
+ * jour. Plafonner masquerait une donnée incohérente au lieu de la laisser voir.
+ */
+export function daysBetween(from: string, to: string): number {
+  return Math.round(
+    (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000,
+  );
+}
