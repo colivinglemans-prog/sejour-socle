@@ -76,6 +76,9 @@ Décisions prises une fois, à ne pas rediscuter à chaque lot.
 | Couleurs de canal | Celles d'Albiez : Abritel `#1668E3`, Direct `#0E9F6E`, Autre `#9ca3af`. Airbnb `#FF385C` et Booking `#003580` sont officielles et déjà communes. | 2026-09-11 |
 | Design | Mêmes 7 tokens sémantiques et mêmes polices ; un fichier de valeurs par site. Albiez reste bleu alpin, Barbusse rose Airbnb. Trio d'accents optionnel pour la couche `[data-season]` d'Albiez. | 2026-09-11 |
 | Périmètre | Noyau + dashboard + réglementaire français. Vitrine, i18n, blog et photos restent chez chaque site (Lot 5, non engagé). | 2026-09-11 |
+| Régime d'Albiez | **La SCI JUARISAL est à l'IS**, et sa comptabilité est tenue sur **Indy.fr**. Aucune extension SCI/IS du module fiscal n'est conçue, aucune note de cadrage n'est produite : la question est tranchée, pas reportée. | 2026-09-11 |
+| Indy | **Pas d'API publique** — vérifié le 2026-09-11. Le seul point d'accroche envisageable serait l'export FEC. Rien n'est construit dans cette direction. À ne pas reposer. | 2026-09-11 |
+| Exception à la règle 6 | `lib/fiscal/` monte avec **un seul consommateur**, en connaissance de cause. Motif et portée dans `lib/fiscal/README.md`, qui doit être relu avant tout arbitrage sur ce module. | 2026-09-11 |
 
 ## Ce qui n'entre jamais
 
@@ -112,7 +115,7 @@ deux validations.
 | 1 | Auth, rôles, cloisonnement — **ferme la fuite `NUKI_PIN`** | `cerbere` | `v0.2.0` |
 | 2 | Beds24 + modèle canonique `Booking` | `champollion` | `v0.3` — code écrit, tag à poser |
 | 3 | Dashboard | `madame-soleil` | `v0.4` — code écrit, tag à poser |
-| 4 | Factures, taxe de séjour, fiscal | `le-percepteur` | `v0.5` |
+| 4 | Factures, taxe de séjour, fiscal | `le-percepteur` | `v0.5` — code écrit, tag à poser |
 | 5 | Vitrine — *proposé, non engagé* | `monsieur-loyal`, `poisson-babel` | — |
 
 Plan détaillé : `C:\Users\alexa\.claude\plans\cheerful-toasting-rivest.md`.
@@ -346,6 +349,138 @@ métier est le confinement — faire reposer la fermeture de la fuite `NUKI_PIN`
 serait la confier à une fonction qui n'a aucune raison de refuser un champ. Et `id` optionnel
 est une vérité du **domaine** (une ligne d'archive d'Albiez n'a jamais eu d'identifiant Beds24),
 pas du **transport**, où toute ligne en a un.
+
+### Lot 4 — factures, taxe de séjour, fiscal
+
+| Chemin | Contenu | Vient de |
+|---|---|---|
+| `lib/invoice-config.ts` | `InvoiceIssuerConfig` lu dans les `INVOICE_*`, plus `InvoiceBranding`, `InvoiceMentions`, `InvoiceLogo`, `InvoiceTemplateConfig`. | Barbusse (seul à facturer), branding et mentions extraits du gabarit |
+| `lib/invoice-number.ts` | `PREVIEW_NUMBER`, `InvoiceCounterStore`, `createInvoiceNumbering`. **Clé préfixée par entité**, avec reprise de la série antérieure. | Barbusse, préfixe et reprise ajoutés |
+| `lib/invoice-payload.ts` | `InvoicePayload`, `InvoiceKind`, `InvoicePaymentDetail`, `beds24ToPayload`, `beds24PaymentToPayload`, `paymentToPayload`, `emptyPayload`, `validateInvoicePayload`, `computeNights`, `staySharePercent`, `remainingAfter`. | Barbusse, logique pure, montée telle quelle |
+| `lib/invoice-pdf.tsx` | `renderInvoicePdf` — gabarit React-PDF paramétré par `InvoiceTemplateConfig`. | Barbusse |
+| `lib/taxe-sejour.ts` | `TaxeSejourBareme`, `computeTaxeSejour`, **`ecartDeCollecte`**, `Provenance`, `groupByQuarter`, `groupByChannel`, `TaxeSejourLine`, `MonthTotals`. | **les deux** — moteur de Barbusse, exonération des mineurs d'Albiez |
+| `lib/fiscal/*` | 8 fichiers : `config`, `revenus`, `commissions`, `bic`, `ir`, `lmp-test`, `cotisations`, `orientations`. | Barbusse |
+| `lib/fiscal/README.md` | L'exception à la règle 6, motivée et datée. | — |
+
+**⚠️ Cette section enfreint la règle 6, et le dit.** `lib/fiscal/` n'a **qu'un seul
+consommateur** — Coliving Barbusse. La SCI JUARISAL est à l'IS et sa comptabilité est tenue
+sur Indy.fr : le BIC LMNP au réel, `SEUIL_LMP_RECETTES`, `testLMP` et `computeCotisations` ne
+la concernent pas, et Albiez n'est branché sur rien de tout cela. L'utilisateur a tranché
+ainsi le **2026-09-11**, après que la conséquence lui a été signalée. `lib/fiscal/README.md`
+porte la note complète et doit être relu avant tout arbitrage sur ce module. Une règle qu'on
+enfreint sans le dire devient une règle morte.
+
+**Le compteur de factures est préfixé par entité, et c'est une règle comptable.** La clé
+était `invoice:counter:{année}`. Deux entités branchées sur le même Upstash — ce qui arrive
+dès qu'on partage un projet Vercel ou qu'on recopie un `.env` — se partageraient la même
+série, et deux personnes morales émettraient chacune un `2026-007`. La numérotation
+chronologique continue et sans trou est une mention obligatoire de l'article 242 nonies A de
+l'annexe II au CGI.
+
+Mais préfixer une série déjà commencée la ferait **repartir à 001** et réémettrait des
+numéros déjà utilisés — la même anomalie, prise par l'autre bout. `invoice:counter:2026`
+valait **13** au 2026-09-11. D'où `legacyKey` : au premier numéro d'une année, si la clé
+préfixée est absente et que l'ancienne porte une valeur, la nouvelle est semée avec elle et
+la série reprend à `2026-014`. Idempotent, sans course grâce à `setIfAbsent`, à retirer une
+fois 2026 close. Vérifié sur un magasin en mémoire, jamais sur la production.
+
+**Le magasin est injecté, pas importé.** Upstash est le choix d'un site. Trois opérations
+suffisent — `incr`, `get`, `setIfAbsent` — et `incr` doit être atomique : c'est tout ce qui
+garantit qu'un numéro n'est pas attribué deux fois.
+
+**La mention de TVA est obligatoire dans la config, sans valeur par défaut.** « TVA non
+applicable, art. 293B du CGI (location meublée non professionnelle) » était en dur dans le
+gabarit, à côté du nom, de la couleur rose et du logo. Les trois autres sont de la mise en
+page ; celle-là est une mention **de régime fiscal**. Une SCI à l'IS assujettie ne porte pas
+la même, et l'imprimer quand même rendrait la facture irrégulière. Un `tsc` rouge vaut mieux
+qu'une facture fausse — d'où l'absence de repli.
+
+**Le prestataire de paiement n'entre pas dans le socle.** `beds24StripeToPayload` et
+`stripeToPayload` sont devenus `beds24PaymentToPayload` et `paymentToPayload`, sur un
+`InvoicePaymentDetail` structurel dont le `StripePaymentDetail` de Barbusse est un
+sur-ensemble. Le libellé du moyen de paiement est un **champ requis** de cet encaissement, et
+non un `"Carte bancaire via Stripe"` deviné par le gabarit : écrire « carte bancaire » sur ce
+qui serait un virement mettrait une contrevérité sur une pièce comptable. Seul le libellé de
+description **par défaut** a changé, et il n'apparaît que quand le prestataire n'en fournit
+aucun — c'est une suggestion que l'écran de saisie propose et que l'utilisateur corrige.
+
+**Le barème de taxe de séjour est une donnée, et les clés changent de nom.** `city`,
+`ratePercent`, `capPerPersonNight`, `departmentalRegionalRate` deviennent `collectivite`,
+`tauxPourcent`, `plafondParPersonneNuit`, `tauxDepartemental` : le socle ne parle plus du
+Mans mais d'une collectivité quelconque, chacune votant sa délibération au titre de l'article
+L.2333-30 du CGCT. **Les valeurs ne bougent pas** — vérifié champ par champ — et aucun
+composant ne lisait ces clés : le bloc était sérialisé dans la réponse sans être affiché.
+
+**La surcollecte et le moteur ont fusionné, et aucun des deux n'a disparu.**
+`surcollecteTaxe()` vivait dans `lib/beds24.ts` d'Albiez et n'était pas un doublon : c'était
+une règle que le moteur de Barbusse n'avait pas. Elle est devenue `ecartDeCollecte`, et
+Albiez l'importe désormais du socle — **sans aucune configuration**, puisqu'elle part du
+montant collecté et non d'un barème. Les deux calculs répondent à deux questions
+différentes :
+
+| Fonction | Question | Source |
+|---|---|---|
+| `computeTaxeSejour` | combien **est dû** ? | le barème et la réservation |
+| `ecartDeCollecte` | combien a été **collecté en trop** ? | la ligne de facture Beds24 |
+
+L'exonération des mineurs (article L.2333-31 du CGCT) est appliquée par les deux, par deux
+chemins qui se rejoignent : la taxe due se compte sur les seuls adultes, l'écart rapporte le
+collecté à la part des adultes. Le motif de l'écart est que Beds24 assied un item en
+pourcentage sur la totalité de l'hébergement — `per: "adult"` n'est honoré que par les items
+à montant fixe, confirmé par leur support le 2026-09-01, aucun réglage ne corrigeant cela.
+La correction est donc une routine permanente, pas une mesure d'attente.
+
+**Le module fiscal ne suppose plus le répertoire de travail.** `loadFiscalYearConfig` faisait
+`path.join(process.cwd(), "data", "fiscal", …)` : le `cwd` est celui de l'application, que le
+socle n'a aucun moyen de connaître. Il prend un `dir`. De même, `revenus.ts` importait
+`getBookingsWithArchive` et `getDailyPrices` du site : ce sont maintenant `fetchBookings` et
+`fetchDailyPrices`, injectés — la fusion avec l'archive est un choix de site depuis le Lot 2,
+et le pricing dynamique une option dont l'absence rend déjà `null`. Le `9` en dur du
+dénominateur d'occupation est devenu `unitsWhenMultiProperty`, et « Le Mans Métropole »,
+écrit dans le texte d'une orientation, est devenu `collectivite`.
+
+Ce qui **n'est pas** monté, et pourquoi :
+
+- **`components/dashboard/InvoiceForm.tsx` (753 lignes).** Un seul site facture, et le
+  formulaire est entièrement fait de la composition d'écran de ce site — pré-remplissage
+  depuis Beds24 ou Stripe, recherche de paiement, aperçu en iframe. C'est la règle 6 appliquée
+  là où elle n'a pas de motif de dérogation : contrairement au fiscal, rien n'indique qu'une
+  seconde entité voudra ce formulaire-là.
+- **`INVOICE_TEMPLATE` et `TAXE_SEJOUR_CONFIG`.** Ce sont les valeurs, pas les mécanismes.
+- **Le client du compteur.** `@upstash/redis` ne devient pas une dépendance du socle pour un
+  site qui ne s'en sert pas.
+- **La note de cadrage SCI/IS** que la définition de `le-percepteur` réclamait. Annulée par
+  l'arbitrage du 2026-09-11 : la SCI est à l'IS et sa comptabilité est chez Indy.
+
+**Un `.tsx` de `lib/` prend une entrée exacte dans `exports`.** Le motif `./lib/*` pointe sur
+`./lib/*.ts` : `@sejour/socle/lib/invoice-pdf` ne se résolvait pas. Une entrée exacte
+`"./lib/invoice-pdf": "./lib/invoice-pdf.tsx"` l'emporte sur le motif. Comme au Lot 3,
+l'erreur n'apparaissait qu'au `next build`, pas au `tsc`.
+
+**Vérification de non-régression.** Barbusse sous `TZ=UTC`, c'est-à-dire dans le fuseau de
+Vercel :
+
+- **Trois factures d'aperçu identiques octet pour octet** (acompte, solde, acquittée), la
+  seule différence étant l'horodatage de génération — que react-pdf écrit dans un objet
+  indirect `(D:AAAAMMJJHHMMSSZ)` et non sous une clé `/CreationDate`. Aucun numéro consommé :
+  `?preview=1` rend `PREVIEW` des deux côtés.
+- **Taxe de séjour, trois années** (2025, 2026, 2027) : charges utiles identiques au bit près
+  une fois le bloc de barème renommé — total dû, réservations, nuitées, les quatre trimestres
+  et leurs douze mois, les canaux, et les **67 lignes** de détail. 6,67 € en 2025, 671,27 € en
+  direct et 1 276,70 € collectés en 2026, 99,46 € en 2027.
+- **Module fiscal, six charges utiles** (3 années × projeté/réalisé) **identiques au sha256
+  près**, 404 compris : CA 99 556,90 € et résultat 22 149,90 € en projeté 2026, 72 228,44 € et
+  1 344,35 € en réalisé.
+- **La fuite reste fermée** : **50 réservations, 15 clés, 0 `NUKI_PIN`, 14 813 octets** en
+  `viewer`, à l'octet près, et 55 / 20 / 0 / 20 250 en `admin`.
+- **Albiez : 17 charges utiles identiques octet pour octet** (16 combinaisons période × mode
+  de `/api/dashboard/stats`, plus `/api/dashboard/calendrier`) après le passage de
+  `surcollecteTaxe()` à `ecartDeCollecte`. Aucune réservation vivante ne porte à la fois des
+  mineurs et une ligne de taxe : la branche positive a donc été vérifiée à part, sur **13 cas
+  joués à la main** contre l'implémentation d'origine — dont le cas documenté d'Albiez,
+  24,50 € pour 4 adultes et 2 enfants, qui donne bien 16,33 € dus et 8,17 € de trop.
+- **La numérotation** vérifiée sur un magasin en mémoire : série neuve, reprise depuis 13,
+  deux entités qui ne se marchent plus dessus, préfixe vide refusé, bascule d'année en UTC.
 
 ### Comment une application s'y branche
 
