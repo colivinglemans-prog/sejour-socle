@@ -1,0 +1,171 @@
+/*
+ * Structure de thème commune aux deux sites.
+ *
+ * Le socle porte les **noms** — les sept tokens sémantiques, les polices, la mise en forme
+ * des articles, les deux ou trois correctifs d'accessibilité — et jamais les **valeurs** :
+ * Albiez est bleu alpin, Barbusse rose Airbnb, et cette différence est leur identité.
+ *
+ * Chaque application écrit donc, dans son propre `globals.css` :
+ *
+ *   @import "tailwindcss";
+ *   @import "@sejour/socle/ui/theme.css";
+ *
+ *   :root {
+ *     --site-background: #ffffff;
+ *     --site-foreground: #16212b;
+ *     --site-primary: #1b4965;
+ *     --site-primary-dark: #123449;
+ *     --site-secondary: #5d6b78;
+ *     --site-border: #dfe4e9;
+ *     --site-light-bg: #f5f7f9;
+ *   }
+ *
+ * Les `@import` doivent rester en tête de fichier : c'est une règle CSS, pas une convention.
+ * Tout ce que l'application écrit ensuite passe après le socle et gagne donc en cas
+ * d'égalité de spécificité — c'est la porte de sortie prévue pour les rares divergences de
+ * mise en page.
+ */
+
+/*
+ * `inline` est indispensable ici : sans lui, Tailwind figerait la valeur du token au moment
+ * de la compilation. Avec lui, les utilitaires émettent le `var()` tel quel, et redéfinir
+ * `--site-accent` sur un conteneur suffit à repeindre tout son sous-arbre.
+ */
+@theme inline {
+  --color-background: var(--site-background);
+  --color-foreground: var(--site-foreground);
+  --color-primary: var(--site-primary);
+  --color-primary-dark: var(--site-primary-dark);
+  --color-secondary: var(--site-secondary);
+  --color-border: var(--site-border);
+  --color-light-bg: var(--site-light-bg);
+
+  /*
+   * Trio d'accents **optionnel** : un site qui ne le définit pas retombe sur sa couleur
+   * principale et ne voit aucune différence. Il existe pour la couche saisonnière d'Albiez,
+   * où `[data-season]` redéfinit `--site-accent` sur un conteneur.
+   */
+  --color-accent: var(--site-accent, var(--site-primary));
+  --color-accent-dark: var(--site-accent-dark, var(--site-primary-dark));
+  --color-accent-soft: var(--site-accent-soft, var(--site-light-bg));
+
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+html {
+  color-scheme: light only;
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--site-background);
+  color: var(--site-foreground);
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+}
+
+/* Les ancres de sommaire passent sous l'en-tête collant sans ce décalage. */
+[id] {
+  scroll-margin-top: 5rem;
+}
+
+/*
+ * Mise en forme du corps des articles.
+ *
+ * Une classe unique posée sur le conteneur plutôt que des utilitaires sur chaque balise :
+ * le contenu des articles est du JSX presque nu (`<h2>`, `<p>`, `<ul>`), ce qui le rend
+ * lisible à l'écriture et permet de changer la typographie de tout le guide d'un seul
+ * endroit. Les couleurs passent par des tokens `--site-prose-*` optionnels, qui retombent
+ * sur les sept tokens sémantiques quand le site n'en dit rien.
+ */
+.prose-article {
+  color: var(--site-prose-body, var(--site-foreground));
+  line-height: 1.75;
+}
+.prose-article .lead {
+  font-size: 1.0625rem;
+  color: var(--site-prose-lead, var(--site-secondary));
+  margin-bottom: 2rem;
+}
+.prose-article h2 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--site-prose-heading, var(--site-primary));
+  margin-top: 2.5rem;
+  margin-bottom: 1rem;
+}
+.prose-article h3 {
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: var(--site-foreground);
+  margin-top: 1.75rem;
+  margin-bottom: 0.5rem;
+}
+.prose-article p {
+  margin-bottom: 1.25rem;
+}
+.prose-article ul,
+.prose-article ol {
+  margin-bottom: 1.25rem;
+  padding-left: 1.5rem;
+}
+.prose-article ul {
+  list-style-type: disc;
+}
+.prose-article ol {
+  list-style-type: decimal;
+}
+.prose-article li {
+  margin-bottom: 0.4rem;
+}
+.prose-article strong {
+  color: var(--site-foreground);
+  font-weight: 600;
+}
+.prose-article a {
+  color: var(--site-prose-link, var(--color-accent-dark));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.prose-article a:hover {
+  color: var(--site-prose-link-hover, var(--site-primary));
+}
+/* Encadré de faits pratiques (adresse, horaires, tarifs) en fin de section. */
+.prose-article .facts {
+  margin: 1.75rem 0;
+  border-left: 3px solid var(--color-accent);
+  background: var(--site-light-bg);
+  border-radius: 0 0.75rem 0.75rem 0;
+  padding: 1rem 1.25rem;
+  font-size: 0.9375rem;
+}
+.prose-article .facts p:last-child,
+.prose-article .facts ul:last-child {
+  margin-bottom: 0;
+}
+
+/* Bandeaux à défilement horizontal : on garde le geste, on retire la barre. */
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/*
+ * Le défilement doux et les transitions sont un confort ; pour qui a coché « réduire les
+ * animations » dans son système, ils sont un symptôme. On ne met pas à zéro — une durée
+ * nulle annule l'événement `transitionend` dont dépendent certains composants.
+ */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
