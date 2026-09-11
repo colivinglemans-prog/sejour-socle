@@ -109,8 +109,8 @@ deux validations.
 | Lot | Contenu | Agent | Tag |
 |---|---|---|---|
 | 0 | Amorçage + les 5 modules à ≥ 85 % de recouvrement | `tonton-tuyau` | `v0.1` |
-| 1 | Auth, rôles, cloisonnement — **ferme la fuite `NUKI_PIN`** | `cerbere` | `v0.2` — code écrit, tag à poser |
-| 2 | Beds24 + modèle canonique `Booking` | `champollion` | `v0.3` |
+| 1 | Auth, rôles, cloisonnement — **ferme la fuite `NUKI_PIN`** | `cerbere` | `v0.2.0` |
+| 2 | Beds24 + modèle canonique `Booking` | `champollion` | `v0.3` — code écrit, tag à poser |
 | 3 | Dashboard | `madame-soleil` | `v0.4` |
 | 4 | Factures, taxe de séjour, fiscal | `le-percepteur` | `v0.5` |
 | 5 | Vitrine — *proposé, non engagé* | `monsieur-loyal`, `poisson-babel` | — |
@@ -187,6 +187,59 @@ a besoin de fenêtres larges.
 
 Mesure sur `/api/dashboard/bookings?arrivalFrom=2025-01-01&arrivalTo=2026-06-30`, en `viewer` :
 **73 clés et 37 `NUKI_PIN` avant, 15 clés et 0 après** (129 537 → 14 770 octets).
+
+### Lot 2 — Beds24, modèle canonique, archive
+
+| Chemin | Contenu | Vient de |
+|---|---|---|
+| `lib/booking.ts` | `Booking`, `BookingSource`, `nightsBetween`. **Le type canonique du domaine.** | Albiez (`Sejour`), renommé en anglais technique |
+| `lib/beds24-types.ts` | `Beds24Booking`, `Beds24InfoItem`, `Beds24InvoiceItem`, `Beds24Property`, `Beds24CalendarSpan`, `Beds24CalendarRoom`, `Beds24AvailabilityRoom`. Le **format de transport**. | Barbusse (déclaration en production), + `commission` et `apiReference` d'Albiez |
+| `lib/beds24-client.ts` | `createBeds24Client` — jetons par voie, cache d'access tokens, replis, `keepAlive`, `updateNotes`, `expandSpans`, `eachDay`. | les deux, écrits deux fois |
+| `lib/archive.ts` | `createArchive<T>` — filtrage répliquant celui de l'API, dédoublonnage où le live gagne, `origin` exposé. | Albiez pour la forme, les deux pour le mécanisme |
+
+**Deux types, et ce n'est pas une contradiction.** `Booking` est le modèle du domaine ;
+`Beds24Booking` est le format de transport. Ce qui **calcule** parle le premier. Ce qui parle
+vraiment à l'API — factures, code Nuki, notes internes, taxe de séjour assise sur les lignes de
+facture — a besoin du second, avec ses `invoiceItems` et ses `infoItems`.
+
+**Le partage requis / optionnel est l'argument entier.** Est requis ce que les deux sources
+ont toujours ; est optionnel ce qu'une source peut légitimement ignorer. Albiez ne porte pas
+`read:bookings-personal` : `firstName`, `email`, `phone`, `country` sont optionnels **pour
+qu'aucun calcul du socle ne pousse ce site à réclamer ce scope**. De même `id` : les lignes
+archivées d'Albiez viennent d'exports de canal et n'ont aucun identifiant Beds24 — d'où `ref`,
+requis, dont la composition est le choix du site.
+
+**Les deux replis de jeton sont deux champs, pas un drapeau.** `whenMissing` répond à une
+variable non définie — une configuration incomplète, connue d'avance. `whenRefused` répond à
+un refus. Les confondre ferait reprendre un 401 de la voie de lecture par la voie d'écriture,
+qui ne porte pas `read:bookings-financial` : le dashboard afficherait des zéros au lieu d'une
+erreur, ce qui est pire.
+
+**`expandSpans` itère en UTC.** La boucle de réexpansion des tranches `[from, to]` était
+écrite quatre fois — minimum de séjour et prix, de chaque côté — et deux de ces copies
+faisaient `new Date(jour + "T00:00:00")` puis `toISOString()` : minuit **local** relu en UTC,
+donc un décalage d'un jour vers le passé pendant les huit mois d'heure d'été. Sans effet sur
+Vercel, qui tourne en UTC ; faux en développement depuis Paris.
+
+**Le merge d'archive sort du client d'API.** Barbusse l'avait enfoui dans `getBookings()` :
+un client qui ajoute en silence des lignes que l'API n'a pas renvoyées rend fausse d'avance
+toute mesure de ce qu'il produit, et c'est précisément ce qui avait laissé 37 `NUKI_PIN`
+d'origine archivée traverser une route qu'on croyait ne servir que du live. Le placement
+d'Albiez — une fusion nommée, appelée par ses consommateurs — est retenu.
+
+Ce qui **n'est pas** monté, et pourquoi :
+
+- `surcollecteTaxe()` et `contraintes()` (Albiez), `getFullyBookedDates`, `findBookingByStripeIds`,
+  `getProperties`, `getBookingById` (Barbusse) : un seul appelant réel chacun.
+- Le **chargement** de l'archive. Barbusse importe un JSON du dépôt ; Albiez ne peut pas, le
+  sien est gitignoré parce que son dépôt est public. C'est le paramètre `load`.
+- La **clé** de dédoublonnage et le **tri** de la fusion : `ref` trié par arrivée chez Albiez,
+  `id` sans tri chez Barbusse. Trier là où le site ne le faisait pas change l'ordre des séries
+  d'un graphe.
+
+Vérification de non-régression, dashboards interrogés en local avant et après : **totaux par
+année et par canal identiques à l'euro près des deux côtés**, et la fuite `NUKI_PIN` toujours
+fermée (15 clés, 0 PIN, 14 813 octets, à l'octet près avant/après).
 
 ### Comment une application s'y branche
 
