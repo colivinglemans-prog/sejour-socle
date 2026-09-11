@@ -1,0 +1,653 @@
+{
+  "source": "data.education.gouv.fr — jeu de données fr-en-calendrier-scolaire (API Explore v2.1)",
+  "genereLe": "2026-08-28",
+  "note": "Dates converties en jour local Europe/Paris. `fin` est la DERNIÈRE journée de vacances, l'API donnant le retour en classe. Les semaines de Noël et du Jour de l'An sont déduites du bloc « Vacances de Noël », coupé au samedi de rotation en station.",
+  "anneesScolaires": [
+    "2023-2024",
+    "2024-2025",
+    "2025-2026",
+    "2026-2027",
+    "2027-2028",
+    "2028-2029"
+  ],
+  "periodes": [
+    {
+      "nom": "Vacances de la Toussaint",
+      "zone": "Zone A",
+      "debut": "2023-10-21",
+      "fin": "2023-11-05",
+      "anneeScolaire": "2023-2024",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances de la Toussaint",
+      "zone": "Zone B",
+      "debut": "2023-10-21",
+      "fin": "2023-11-05",
+      "anneeScolaire": "2023-2024",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances de la Toussaint",
+      "zone": "Zone C",
+      "debut": "2023-10-21",
+      "fin": "2023-11-05",
+      "anneeScolaire": "2023-2024",
+      "type": "vacances"
+    },
+    {
+      "nom": "Semaine de Noël",
+      "zone": "Toutes",
+      "debut": "2023-12-23",
+      "fin": "2023-12-29",
+      "type": "fete"
+    },
+    {
+      "nom": "Vacances de Noël",
+      "zone": "Zone A",
+      "debut": "2023-12-23",
+      "fin": "2024-01-07",
+      "anneeScolaire": "2023-2024",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances de Noël",
+      "zone": "Zone B",
+      "debut": "2023-12-23",
+      "fin": "2024-01-07",
+      "anneeScolaire": "2023-2024",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances de Noël",
+      "zone": "Zone C",
+      "debut": "2023-12-23",
+      "fin": "2024-01-07",
+      "anneeScolaire": "2023-2024",
+      "type": "vacances"
+    },
+    {
+      "nom": "Semaine du Jour de l'An",
+      "zone": "Toutes",
+      "debut": "2023-12-30",
+      "fin": "2024-01-07",
+      "type": "fete"
+    },
+    {
+      "nom": "Vacances d'Hiver",
+      "zone": "Zone C",
+      "debut": "2024-02-10",
+      "fin": "2024-02-25",
+      "anneeScolaire": "2023-2024",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances d'Hiver",
+      "zone": "Zone A",
+      "debut": "2024-02-17",
+      "fin": "2024-03-03",
+      "anneeScolaire": "2023-2024",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances d'Hiver",
+      "zone": "Zone B",
+      "debut": "2024-02-24",
+      "fin": "2024-03-10",
+      "anneeScolaire": "2023-2024",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances de Printemps",
+      "zone": "Zone C",
+      "debut": "2024-04-06",
+      "fin": "2024-04-21",
+      "anneeScolaire": "2023-2024",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances de Printemps",
+      "zone": "Zone A",
+      "debut": "2024-04-13",
+      "fin": "2024-04-28",
+      "anneeScolaire": "2023-2024",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances de Printemps",
+      "zone": "Zone B",
+      "debut": "2024-04-20",
+      "fin": "2024-05-05",
+      "anneeScolaire": "2023-2024",
+      "type": "vacances"
+    },
+    {
+      "nom": "Pont de l'Ascension",
+      "zone": "Zone A",
+      "debut": "2024-05-09",
+      "fin": "2024-05-12",
+      "anneeScolaire": "2023-2024",
+      "type": "vacances"
+    },
+    {
+      "nom": "Pont de l'Ascension",
+      "zone": "Zone B",
+      "debut": "2024-05-09",
+      "fin": "2024-05-12",
+      "anneeScolaire": "2023-2024",
+      "type": "vacances"
+    },
+    {
+      "nom": "Pont de l'Ascension",
+      "zone": "Zone C",
+      "debut": "2024-05-09",
+      "fin": "2024-05-12",
+      "anneeScolaire": "2023-2024",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances d'Été",
+      "zone": "Zone A",
+      "debut": "2024-07-06",
+      "fin": "2024-09-01",
+      "anneeScolaire": "2023-2024",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances d'Été",
+      "zone": "Zone B",
+      "debut": "2024-07-06",
+      "fin": "2024-09-01",
+      "anneeScolaire": "2023-2024",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances d'Été",
+      "zone": "Zone C",
+      "debut": "2024-07-06",
+      "fin": "2024-09-01",
+      "anneeScolaire": "2023-2024",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances de la Toussaint",
+      "zone": "Zone A",
+      "debut": "2024-10-19",
+      "fin": "2024-11-03",
+      "anneeScolaire": "2024-2025",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances de la Toussaint",
+      "zone": "Zone B",
+      "debut": "2024-10-19",
+      "fin": "2024-11-03",
+      "anneeScolaire": "2024-2025",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances de la Toussaint",
+      "zone": "Zone C",
+      "debut": "2024-10-19",
+      "fin": "2024-11-03",
+      "anneeScolaire": "2024-2025",
+      "type": "vacances"
+    },
+    {
+      "nom": "Semaine de Noël",
+      "zone": "Toutes",
+      "debut": "2024-12-21",
+      "fin": "2024-12-27",
+      "type": "fete"
+    },
+    {
+      "nom": "Vacances de Noël",
+      "zone": "Zone A",
+      "debut": "2024-12-21",
+      "fin": "2025-01-05",
+      "anneeScolaire": "2024-2025",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances de Noël",
+      "zone": "Zone B",
+      "debut": "2024-12-21",
+      "fin": "2025-01-05",
+      "anneeScolaire": "2024-2025",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances de Noël",
+      "zone": "Zone C",
+      "debut": "2024-12-21",
+      "fin": "2025-01-05",
+      "anneeScolaire": "2024-2025",
+      "type": "vacances"
+    },
+    {
+      "nom": "Semaine du Jour de l'An",
+      "zone": "Toutes",
+      "debut": "2024-12-28",
+      "fin": "2025-01-05",
+      "type": "fete"
+    },
+    {
+      "nom": "Vacances d'Hiver",
+      "zone": "Zone B",
+      "debut": "2025-02-08",
+      "fin": "2025-02-23",
+      "anneeScolaire": "2024-2025",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances d'Hiver",
+      "zone": "Zone C",
+      "debut": "2025-02-15",
+      "fin": "2025-03-02",
+      "anneeScolaire": "2024-2025",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances d'Hiver",
+      "zone": "Zone A",
+      "debut": "2025-02-22",
+      "fin": "2025-03-09",
+      "anneeScolaire": "2024-2025",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances de Printemps",
+      "zone": "Zone B",
+      "debut": "2025-04-05",
+      "fin": "2025-04-21",
+      "anneeScolaire": "2024-2025",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances de Printemps",
+      "zone": "Zone C",
+      "debut": "2025-04-12",
+      "fin": "2025-04-27",
+      "anneeScolaire": "2024-2025",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances de Printemps",
+      "zone": "Zone A",
+      "debut": "2025-04-19",
+      "fin": "2025-05-04",
+      "anneeScolaire": "2024-2025",
+      "type": "vacances"
+    },
+    {
+      "nom": "Pont de l'Ascension",
+      "zone": "Zone A",
+      "debut": "2025-05-29",
+      "fin": "2025-06-01",
+      "anneeScolaire": "2024-2025",
+      "type": "vacances"
+    },
+    {
+      "nom": "Pont de l'Ascension",
+      "zone": "Zone B",
+      "debut": "2025-05-29",
+      "fin": "2025-06-01",
+      "anneeScolaire": "2024-2025",
+      "type": "vacances"
+    },
+    {
+      "nom": "Pont de l'Ascension",
+      "zone": "Zone C",
+      "debut": "2025-05-29",
+      "fin": "2025-06-01",
+      "anneeScolaire": "2024-2025",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances d'Été",
+      "zone": "Zone A",
+      "debut": "2025-07-05",
+      "fin": "2025-08-31",
+      "anneeScolaire": "2024-2025",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances d'Été",
+      "zone": "Zone B",
+      "debut": "2025-07-05",
+      "fin": "2025-08-31",
+      "anneeScolaire": "2024-2025",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances d'Été",
+      "zone": "Zone C",
+      "debut": "2025-07-05",
+      "fin": "2025-08-31",
+      "anneeScolaire": "2024-2025",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances de la Toussaint",
+      "zone": "Zone A",
+      "debut": "2025-10-18",
+      "fin": "2025-11-02",
+      "anneeScolaire": "2025-2026",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances de la Toussaint",
+      "zone": "Zone B",
+      "debut": "2025-10-18",
+      "fin": "2025-11-02",
+      "anneeScolaire": "2025-2026",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances de la Toussaint",
+      "zone": "Zone C",
+      "debut": "2025-10-18",
+      "fin": "2025-11-02",
+      "anneeScolaire": "2025-2026",
+      "type": "vacances"
+    },
+    {
+      "nom": "Semaine de Noël",
+      "zone": "Toutes",
+      "debut": "2025-12-20",
+      "fin": "2025-12-26",
+      "type": "fete"
+    },
+    {
+      "nom": "Vacances de Noël",
+      "zone": "Zone A",
+      "debut": "2025-12-20",
+      "fin": "2026-01-04",
+      "anneeScolaire": "2025-2026",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances de Noël",
+      "zone": "Zone B",
+      "debut": "2025-12-20",
+      "fin": "2026-01-04",
+      "anneeScolaire": "2025-2026",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances de Noël",
+      "zone": "Zone C",
+      "debut": "2025-12-20",
+      "fin": "2026-01-04",
+      "anneeScolaire": "2025-2026",
+      "type": "vacances"
+    },
+    {
+      "nom": "Semaine du Jour de l'An",
+      "zone": "Toutes",
+      "debut": "2025-12-27",
+      "fin": "2026-01-04",
+      "type": "fete"
+    },
+    {
+      "nom": "Vacances d'Hiver",
+      "zone": "Zone A",
+      "debut": "2026-02-07",
+      "fin": "2026-02-22",
+      "anneeScolaire": "2025-2026",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances d'Hiver",
+      "zone": "Zone B",
+      "debut": "2026-02-14",
+      "fin": "2026-03-01",
+      "anneeScolaire": "2025-2026",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances d'Hiver",
+      "zone": "Zone C",
+      "debut": "2026-02-21",
+      "fin": "2026-03-08",
+      "anneeScolaire": "2025-2026",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances de Printemps",
+      "zone": "Zone A",
+      "debut": "2026-04-04",
+      "fin": "2026-04-19",
+      "anneeScolaire": "2025-2026",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances de Printemps",
+      "zone": "Zone B",
+      "debut": "2026-04-11",
+      "fin": "2026-04-26",
+      "anneeScolaire": "2025-2026",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances de Printemps",
+      "zone": "Zone C",
+      "debut": "2026-04-18",
+      "fin": "2026-05-03",
+      "anneeScolaire": "2025-2026",
+      "type": "vacances"
+    },
+    {
+      "nom": "Pont de l'Ascension",
+      "zone": "Zone A",
+      "debut": "2026-05-14",
+      "fin": "2026-05-17",
+      "anneeScolaire": "2025-2026",
+      "type": "vacances"
+    },
+    {
+      "nom": "Pont de l'Ascension",
+      "zone": "Zone B",
+      "debut": "2026-05-14",
+      "fin": "2026-05-17",
+      "anneeScolaire": "2025-2026",
+      "type": "vacances"
+    },
+    {
+      "nom": "Pont de l'Ascension",
+      "zone": "Zone C",
+      "debut": "2026-05-14",
+      "fin": "2026-05-17",
+      "anneeScolaire": "2025-2026",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances d'Été",
+      "zone": "Zone A",
+      "debut": "2026-07-04",
+      "fin": "2026-08-31",
+      "anneeScolaire": "2025-2026",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances d'Été",
+      "zone": "Zone B",
+      "debut": "2026-07-04",
+      "fin": "2026-08-31",
+      "anneeScolaire": "2025-2026",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances d'Été",
+      "zone": "Zone C",
+      "debut": "2026-07-04",
+      "fin": "2026-08-31",
+      "anneeScolaire": "2025-2026",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances de la Toussaint",
+      "zone": "Zone A",
+      "debut": "2026-10-17",
+      "fin": "2026-11-01",
+      "anneeScolaire": "2026-2027",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances de la Toussaint",
+      "zone": "Zone B",
+      "debut": "2026-10-17",
+      "fin": "2026-11-01",
+      "anneeScolaire": "2026-2027",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances de la Toussaint",
+      "zone": "Zone C",
+      "debut": "2026-10-17",
+      "fin": "2026-11-01",
+      "anneeScolaire": "2026-2027",
+      "type": "vacances"
+    },
+    {
+      "nom": "Semaine de Noël",
+      "zone": "Toutes",
+      "debut": "2026-12-19",
+      "fin": "2026-12-25",
+      "type": "fete"
+    },
+    {
+      "nom": "Vacances de Noël",
+      "zone": "Zone A",
+      "debut": "2026-12-19",
+      "fin": "2027-01-03",
+      "anneeScolaire": "2026-2027",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances de Noël",
+      "zone": "Zone B",
+      "debut": "2026-12-19",
+      "fin": "2027-01-03",
+      "anneeScolaire": "2026-2027",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances de Noël",
+      "zone": "Zone C",
+      "debut": "2026-12-19",
+      "fin": "2027-01-03",
+      "anneeScolaire": "2026-2027",
+      "type": "vacances"
+    },
+    {
+      "nom": "Semaine du Jour de l'An",
+      "zone": "Toutes",
+      "debut": "2026-12-26",
+      "fin": "2027-01-03",
+      "type": "fete"
+    },
+    {
+      "nom": "Vacances d'Hiver",
+      "zone": "Zone C",
+      "debut": "2027-02-06",
+      "fin": "2027-02-21",
+      "anneeScolaire": "2026-2027",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances d'Hiver",
+      "zone": "Zone A",
+      "debut": "2027-02-13",
+      "fin": "2027-02-28",
+      "anneeScolaire": "2026-2027",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances d'Hiver",
+      "zone": "Zone B",
+      "debut": "2027-02-20",
+      "fin": "2027-03-07",
+      "anneeScolaire": "2026-2027",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances de Printemps",
+      "zone": "Zone C",
+      "debut": "2027-04-03",
+      "fin": "2027-04-18",
+      "anneeScolaire": "2026-2027",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances de Printemps",
+      "zone": "Zone A",
+      "debut": "2027-04-10",
+      "fin": "2027-04-25",
+      "anneeScolaire": "2026-2027",
+      "type": "vacances"
+    },
+    {
+      "nom": "Vacances de Printemps",
+      "zone": "Zone B",
+      "debut": "2027-04-17",
+      "fin": "2027-05-02",
+      "anneeScolaire": "2026-2027",
+      "type": "vacances"
+    },
+    {
+      "nom": "Pont de l'Ascension",
+      "zone": "Zone A",
+      "debut": "2027-05-07",
+      "fin": "2027-05-07",
+      "anneeScolaire": "2026-2027",
+      "finNonPubliee": true,
+      "type": "vacances"
+    },
+    {
+      "nom": "Pont de l'Ascension",
+      "zone": "Zone B",
+      "debut": "2027-05-07",
+      "fin": "2027-05-07",
+      "anneeScolaire": "2026-2027",
+      "finNonPubliee": true,
+      "type": "vacances"
+    },
+    {
+      "nom": "Pont de l'Ascension",
+      "zone": "Zone C",
+      "debut": "2027-05-07",
+      "fin": "2027-05-07",
+      "anneeScolaire": "2026-2027",
+      "finNonPubliee": true,
+      "type": "vacances"
+    },
+    {
+      "nom": "Début des Vacances d'Été",
+      "zone": "Zone A",
+      "debut": "2027-07-03",
+      "fin": "2027-07-03",
+      "anneeScolaire": "2026-2027",
+      "finNonPubliee": true,
+      "type": "vacances"
+    },
+    {
+      "nom": "Début des Vacances d'Été",
+      "zone": "Zone B",
+      "debut": "2027-07-03",
+      "fin": "2027-07-03",
+      "anneeScolaire": "2026-2027",
+      "finNonPubliee": true,
+      "type": "vacances"
+    },
+    {
+      "nom": "Début des Vacances d'Été",
+      "zone": "Zone C",
+      "debut": "2027-07-03",
+      "fin": "2027-07-03",
+      "anneeScolaire": "2026-2027",
+      "finNonPubliee": true,
+      "type": "vacances"
+    }
+  ]
+}
