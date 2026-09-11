@@ -40,12 +40,20 @@ identique des deux côtés.
   la subtilité Beds24 « 200 avec `success: false` dans le tableau » et le `try/catch` qui
   re-throw en filtrant sur le préfixe du message. Seul le préfixe diffère.
 
-⚠ **Le socle doit supporter les deux modèles de token**, c'est un paramètre, pas un arbitrage :
-Albiez sépare lecture et écriture (`BEDS24_REFRESH_TOKEN` + `BEDS24_PUBLIC_REFRESH_TOKEN`
-read-only, cache partagé `Map<refreshToken, …>`, repli sur le token d'écriture en 401 et log
-d'alerte) ; Barbusse a un long-life token read-only (`BEDS24_API_TOKEN`) plus un refresh token
-pour l'unique écriture. La séparation de privilèges d'Albiez est meilleure — dis-le dans le
-commentaire, mais ne force personne.
+**Les deux sites ont la même architecture de jetons depuis le 2026-09-11** — trois refresh
+tokens, un par chemin, plus aucun long life nulle part. Le transport est donc identique de part
+et d'autre ; `lib/beds24-client.ts` du socle le porte, configuré par **voies** :
+
+```ts
+createBeds24Client({ defaultRoute, routes: { public: { env, whenMissing, whenRefused, hint }, … } })
+```
+
+⚠ **`whenMissing` et `whenRefused` sont deux replis distincts, ne les confonds jamais.** La voie
+de lecture n'a délibérément **pas** de `whenRefused` : reprendre un 401 avec le jeton d'écriture,
+qui n'a pas `read:bookings-financial`, rendrait les séjours sans leurs montants — le dashboard
+afficherait des zéros au lieu d'une erreur. Un zéro silencieux est pire qu'une panne visible.
+La voie publique, elle, se replie vers la lecture, jamais vers l'écriture : le chemin le plus
+exposé du site ne doit à aucun moment, même dégradé, tenir un jeton capable d'écrire.
 
 Un cron hebdomadaire (`beds24-keepalive` chez Barbusse) empêche l'expiration du refresh token à
 30 jours d'inactivité. Le socle expose la fonction ; le cron reste chez le site.
