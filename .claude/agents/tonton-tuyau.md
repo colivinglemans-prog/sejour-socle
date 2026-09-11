@@ -40,11 +40,17 @@ deux paramètres optionnels, signature d'Albiez.
 Ce module supprime **trois** copies chez Barbusse : `lib/channel.ts`,
 `BookingCalendar.tsx:156` (qui ajoute une 5ᵉ valeur `"Autre"`) et `ChannelPieChart.tsx`.
 Le socle expose `"Autre"` — c'est le surensemble.
-⚠ Deux arbitrages de couleur à porter à l'utilisateur, pas à trancher seul :
-Airbnb `#FF385C` et Booking `#003580` sont identiques des deux côtés (couleurs officielles des
-plateformes, invariantes). Mais Abritel vaut `#1668E3` chez Albiez et `#F5A623` chez Barbusse,
-Direct `#0E9F6E` contre `#00A699` — divergence sans raison métier. Et Barbusse a **deux gris
-différents** pour « Autre » selon le fichier (`#9ca3af` / `#d1d5db`) : bug cosmétique existant.
+**Palette tranchée** — décision prise le 2026-09-11, ne la rediscute pas :
+
+| Canal | Couleur | Origine |
+|---|---|---|
+| Airbnb | `#FF385C` | officielle, identique des deux côtés |
+| Booking.com | `#003580` | officielle, identique des deux côtés |
+| Abritel | `#1668E3` | **Albiez** (Barbusse avait `#F5A623`) |
+| Direct | `#0E9F6E` | **Albiez** (Barbusse avait `#00A699`) |
+| Autre | `#9ca3af` | Barbusse avait **deux** gris selon le fichier (`#9ca3af` / `#d1d5db`) |
+
+Barbusse change donc d'aspect sur son camembert et ses barres de calendrier. C'est attendu.
 
 **`theme.css` — 85 %.**
 Les 7 tokens portent déjà le même nom des deux côtés (`--color-background`, `--color-foreground`,

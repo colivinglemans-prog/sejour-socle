@@ -53,8 +53,12 @@ Le mécanisme de mots de passe nommés est à garder et à généraliser : toute
 préfixée (`DASHBOARD_PASSWORD_MENAGE_Sylvie`, `DASHBOARD_PASSWORD_VIEWER_Sylvie`) donne le rôle
 restreint, ce qui permet une révocation individuelle. Le préfixe devient un paramètre.
 
-**Nom du rôle restreint** : Albiez dit `menage`, Barbusse dit `viewer`, même cardinalité.
-Unifie-les — et demande à l'utilisateur lequel il garde avant de renommer.
+**Nom du rôle restreint : `viewer`.** Décision prise le 2026-09-11, ne la rediscute pas.
+`type Role = "admin" | "viewer"`. Albiez renomme son `menage`, y compris ses variables
+`DASHBOARD_PASSWORD_MENAGE*` → `DASHBOARD_PASSWORD_VIEWER*` **sur Vercel, en production et en
+développement** — un renommage de code sans le renommage des variables d'environnement coupe
+l'accès de la personne qui fait le ménage. Motif de la décision : le rôle ne se réduit plus au
+ménage (chez Barbusse il pilote aussi le chauffage), c'est un accès en lecture.
 
 **`lib/proxy.ts`** — `createDashboardProxy({ localeRedirect?, restrictedRole, allowedPaths, legacyRedirects? })`.
 Le modèle d'Albiez gagne : un helper `refuser(statut, message)` unique qui rend **du JSON si
