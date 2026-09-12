@@ -84,6 +84,18 @@ Décisions prises une fois, à ne pas rediscuter à chaque lot.
 | `commune` | Additive, **optionnelle** dans le type du socle. Albiez la porte par entrée (sept communes), Barbusse la fournit une fois au JSON-LD (tout se passe au Mans). | 2026-09-12 |
 | Deux enveloppes de calendrier de tableau de bord | **Maintenues séparées**, décision de `madame-soleil` au Lot 3, non rediscutée. Le Lot 5 pose la couche d'événements d'Albiez sur le moteur du socle sans fusionner les composants. | 2026-09-12 |
 
+## Protocole de test
+
+`docs/PROTOCOLE-TEST.md` — à lire avant tout lot, et à rejouer avant chaque déploiement.
+Cinq principes, la photo de référence à prendre **avant** de modifier quoi que ce soit, la
+batterie automatique, la matrice des portes par rôle, le test de fuite avec ses valeurs
+attendues, ce que seul un œil humain peut faire, et neuf pièges payés une fois chacun.
+
+Deux règles s'y détachent : **mesurer, jamais déduire** — deux sessions ont cru le même jour que
+la production n'était pas à jour, sur la foi d'une référence de commit périmée — et **une
+dégradation silencieuse est pire qu'une panne**, parce qu'un repli qui fonctionne masque la
+panne qu'il compense.
+
 ## Ce qui n'entre jamais
 
 Contenu d'articles de blog, dictionnaires i18n, `public/`, données propres à un bien, photos.
