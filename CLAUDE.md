@@ -605,8 +605,8 @@ ne rappelle rien.
 > v0.7.0 à v1.0.0.** (Arbitrage du douanier, 2026-09-12.)
 
 Premier lot d'une convergence en cinq : il pose les définitions, **aucune application ne les
-consomme encore**. Les deux apps restent épinglées sur `v0.6.1` et leurs charges utiles n'ont
-pas bougé d'un octet.
+consomme encore**. Les deux apps restent épinglées sur `v0.7.0` (tête de `veille-evenements`,
+`f294f1c`) et leurs charges utiles n'ont pas bougé d'un octet.
 
 | Chemin | Contenu | Vient de |
 |---|---|---|

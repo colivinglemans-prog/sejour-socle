@@ -172,9 +172,19 @@ Confirmé — jamais aussi dans « Net encaissé ».
 `computeCommissionBooking` devient `commissionOf`. Écart attendu sur `/api/dashboard/fiscal` de
 Barbusse : **+7 076,89 € de commissions**, net fiscal diminué d'autant ; **le CA brut ne bouge
 pas** (`computeCAFromInvoiceItems` exclut déjà les mêmes lignes via `isCommissionLine`). Sur
-`/api/dashboard/stats` : −404,72 € (`inquiry`) et −371,40 € (`new`), −25 nuitées ; +447,40 € et
-+17 nuitées sur l'exercice 2026 (deux séjours à cheval sur le 1er janvier). Tout autre écart est
-une régression. L'invariant `77246.92` ci-dessus devient faux par construction ; la nouvelle
+`/api/dashboard/stats`, **en net** (la série de référence du socle) : −404,72 € (`inquiry`, sans
+commission) et **−302,31 €** (`new` : 371,40 € de brut, 69,09 € de commission), −25 nuitées ;
+**+364,17 €** (447,40 € de brut) et +17 nuitées sur l'exercice 2026 — deux séjours à cheval sur le
+1er janvier. Bornes de fenêtre **incluses des deux côtés** dans le socle, là où la route de Barbusse
+excluait la droite : **+9 nuitées-logement de dénominateur par fenêtre**, et +2 de numérateur sur
+2025 (la nuit du 31/12) ; l'occupation 2026 passe de 38,84 % à 38,69 %. Tout autre écart est une
+régression.
+
+⚠️ **Le test de réconciliation stats/fiscal n'est pas « à l'euro près » sans décision** :
+`Booking.gross` vaut `b.price`, **taxe de séjour incluse**, alors que `computeCABooking` l'exclut.
+Écart mesuré sur les 55 lignes acquises de Barbusse : **4 594,11 €**. À trancher au Lot B avant
+d'écrire le test — commissions à l'euro près dans tous les cas ; pour le CA, soit les stats passent
+sur `computeCABooking`, soit le critère devient « à la taxe de séjour près ». L'invariant `77246.92` ci-dessus devient faux par construction ; la nouvelle
 valeur sera relevée et consignée avec sa justification.
 
 ⚠️ **`v1.0.0` n'est pas un tag consommable** : la page fiscale y garde l'ancienne sémantique. Le

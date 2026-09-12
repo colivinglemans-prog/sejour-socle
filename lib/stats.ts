@@ -459,8 +459,9 @@ export function channelBreakdown(
  * C'est le défaut D3, et il était des deux côtés : Barbusse bornait sa requête sur
  * `arrivalFrom`, Albiez filtrait sur `s.arrival >= du && s.arrival <= au`. Un séjour du
  * 2025-12-15 au 2026-01-15 n'entrait alors dans **aucun** exercice. Mesuré le 2026-09-12 :
- * 2 séjours, 875,04 € de brut, dont **447,40 € et 17 nuitées** qui revenaient à l'exercice
- * 2026 et disparaissaient sans bruit.
+ * 2 séjours, 875,04 € de brut, dont **447,40 € de brut — 364,17 € de net — et 17 nuitées**
+ * qui revenaient à l'exercice 2026 et disparaissaient sans bruit. La série de référence du
+ * socle étant le net, c'est 364,17 € qu'une charge utile doit faire apparaître.
  *
  * Ici, un séjour appartient à une période dès qu'une de ses nuits y tombe, et seule cette
  * part-là est comptée — les nuits par `nightsInWindow`, l'argent par `spreadRevenue`.
