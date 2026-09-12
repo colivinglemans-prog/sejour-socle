@@ -1,4 +1,25 @@
 /*
+ * ⚠️ Ce fichier ne suffit PAS à styler les composants du socle.
+ *
+ * Tailwind v4 génère une classe seulement s'il la voit dans un fichier qu'il analyse, et il
+ * **n'analyse pas `node_modules`**. Les composants du socle y vivant, leurs classes n'étaient
+ * pas émises : le calendrier public a perdu `aspect-square` (cases écrasées),
+ * `md:grid-cols-2` et `hidden md:block` (un seul mois au lieu de deux), `bg-primary/15`
+ * (les nuits entre l'arrivée et le départ n'étaient plus teintées). Seules survivaient les
+ * classes que l'application utilisait par ailleurs — d'où un site touché et pas l'autre.
+ *
+ * Chaque application doit donc déclarer le socle comme source, dans son `globals.css` :
+ *
+ *     @import "tailwindcss";
+ *     @import "@sejour/socle/ui/theme.css";
+ *     @source "../node_modules/@sejour/socle";
+ *
+ * Le symptôme est trompeur : le composant marche, le build passe, le typage passe, et seul
+ * le rendu est faux. C'est exactement le trou que le protocole de test nomme — aucun agent
+ * n'a jamais regardé une page.
+ */
+
+/*
  * Structure de thème commune aux deux sites.
  *
  * Le socle porte les **noms** — les sept tokens sémantiques, les polices, la mise en forme

@@ -479,7 +479,17 @@ export default function ReservationCalendar({
 
       {modalOpen && url && checkIn && checkOut && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          /*
+           * `z-[9999]` et non `z-50` : c'est le seul endroit du socle où la valeur de Barbusse
+           * l'emporte sur celle d'Albiez, et voici le motif écrit qu'exige la règle 5.
+           *
+           * Leaflet pose ses propres couches très haut — tuiles vers 400, contrôles jusqu'à
+           * 1000 — et la carte du quartier vit sur la même page que ce calendrier. En `z-50`,
+           * la modale de paiement passait **sous** la carte. Albiez n'ayant pas de carte ne
+           * voyait rien : le défaut n'apparaissait que là où il coûtait cher, sur le chemin
+           * qui encaisse.
+           */
+          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-4"
           onClick={(e) => {
             if (e.target === e.currentTarget) setModalOpen(false);
           }}
