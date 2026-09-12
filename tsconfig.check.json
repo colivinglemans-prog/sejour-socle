@@ -1,0 +1,14 @@
+{
+  "//": "Le socle n'a pas de lanceur de tests, et n'en prend pas un pour une vérification. Celle-ci compile `scripts/verifier-indicateurs.ts` et son graphe d'imports en CommonJS dans un dossier temporaire, que Node exécute tel quel : les imports internes du socle sont relatifs et sans extension, ce que `node --experimental-strip-types` ne sait pas résoudre, mais que `require` résout depuis toujours.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "verbatimModuleSyntax": false,
+    "outDir": ".verif",
+    "incremental": false
+  },
+  "files": ["scripts/verifier-indicateurs.ts"],
+  "include": []
+}

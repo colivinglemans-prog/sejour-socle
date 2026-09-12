@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Sortie CommonJS de `npm run verifier`, compilee a la demande et jamais commitee.
+    ".verif/**",
   ]),
   {
     // Les articles du guide sont de la prose française écrite directement en JSX.

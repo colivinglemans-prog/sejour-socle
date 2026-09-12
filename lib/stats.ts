@@ -1,7 +1,9 @@
 import type { Booking } from "./booking";
+import { unitsOf } from "./booking";
+import { countsAsSold } from "./booking-status";
 import type { Channel } from "./channels";
 import { CHANNELS } from "./channels";
-import { addDays, daysBetween } from "./dates";
+import { addDays, daysBetween, daysInMonthKey } from "./dates";
 import { todayParis } from "./time";
 
 /**
@@ -54,6 +56,14 @@ export interface RevenueExtra {
   date: string | null;
   channel: Channel;
   net: number;
+  /**
+   * Brut de la recette, quand il diffère du net.
+   *
+   * Absent, il **vaut le net** : une recette qu'aucun canal n'a commissionnée n'a pas deux
+   * montants. C'est ce qui permet à la sous-ligne « brut et commissions » de retomber sur la
+   * carte « net encaissé » sans qu'aucun site n'ait à renseigner un champ qu'il n'a pas.
+   */
+  gross?: number;
 }
 
 /**
@@ -109,7 +119,16 @@ export interface YearComparison {
   ongoing: boolean;
   /** Année future : `yearTotal` n'est que ce qui est déjà réservé, à date. */
   upcoming: boolean;
-  projection?: number;
+  /**
+   * Année en cours : **réalisé + confirmé**, et rien d'autre.
+   *
+   * Le champ s'appelait `projection`, et le libellé affiché « · projeté ». Les deux mentaient
+   * depuis qu'on a retiré l'extrapolation sur les jours encore libres : ce nombre n'est pas
+   * une prévision, c'est un engagement — des nuits déjà vendues, opposables. Un nom qui ne
+   * décrit plus son contenu sur une page montrée à un banquier est exactement le défaut que
+   * ce lot supprime, d'où le renommage assumé et le tag majeur qui va avec.
+   */
+  committedTotal?: number;
 }
 
 /**
@@ -321,7 +340,7 @@ export function compareYears(
   bookings: Booking[],
   extras: RevenueExtra[],
   mode: RevenueMode,
-  currentYearProjection: number | null,
+  currentYearCommitted: number | null,
 ): YearComparison[] {
   const today = todayParis();
   const currentYear = Number(today.slice(0, 4));
@@ -376,8 +395,8 @@ export function compareYears(
           : null,
       ongoing,
       upcoming,
-      ...(ongoing && currentYearProjection != null
-        ? { projection: round2(currentYearProjection) }
+      ...(ongoing && currentYearCommitted != null
+        ? { committedTotal: round2(currentYearCommitted) }
         : {}),
     };
   });
@@ -415,4 +434,469 @@ export function channelBreakdown(
     stays: perChannel.get(channel)!.stays,
     revenue: round2(perChannel.get(channel)!.revenue),
   }));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// La nuitée-logement : le dénominateur unique du tableau de bord
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * **Une nuitée-logement = un logement, une nuit.** C'est la seule unité de mesure de la page,
+ * et le seul dénominateur.
+ *
+ * Un bien loué en entier pèse `units` nuitées par nuit ; une chambre seule en pèse une. Chez
+ * Albiez, `unitsTotal = 1` et `units` vaut son défaut : la nuitée-logement y est la nuitée et
+ * aucun chiffre ne bouge. Chez Barbusse, `unitsTotal = 9` : une nuit de maison entière remplit
+ * 9 nuitées sur 9 — donc le dénominateur ne pénalise pas l'avenir — et l'historique à la
+ * chambre reste juste, là où un dénominateur à 1 afficherait 100 % d'occupation avec une seule
+ * chambre occupée sur neuf.
+ *
+ * `unitsTotal` est une **donnée injectée** (règle 1) : aucun module d'ici ne teste un
+ * `propertyId`.
+ *
+ * ## L'appartenance à une période est un recouvrement, jamais un test sur l'arrivée
+ *
+ * C'est le défaut D3, et il était des deux côtés : Barbusse bornait sa requête sur
+ * `arrivalFrom`, Albiez filtrait sur `s.arrival >= du && s.arrival <= au`. Un séjour du
+ * 2025-12-15 au 2026-01-15 n'entrait alors dans **aucun** exercice. Mesuré le 2026-09-12 :
+ * 2 séjours, 875,04 € de brut, dont **447,40 € et 17 nuitées** qui revenaient à l'exercice
+ * 2026 et disparaissaient sans bruit.
+ *
+ * Ici, un séjour appartient à une période dès qu'une de ses nuits y tombe, et seule cette
+ * part-là est comptée — les nuits par `nightsInWindow`, l'argent par `spreadRevenue`.
+ */
+
+/**
+ * Les nuits d'un séjour qui tombent dans `[from, to]`, bornes incluses.
+ *
+ * Les nuits se comptent depuis `arrival` et `nights`, jamais depuis `departure` : c'est la
+ * même source que `stayNights`, et les deux ne peuvent donc pas se contredire sur une ligne
+ * d'archive dont les dates auraient été recomposées.
+ */
+export function nightsInWindow(booking: Booking, from: string, to: string): number {
+  if (booking.nights <= 0) return 0;
+  const lastNight = addDays(booking.arrival, booking.nights - 1);
+  const start = booking.arrival > from ? booking.arrival : from;
+  const end = lastNight < to ? lastNight : to;
+  return Math.max(0, daysBetween(start, end) + 1);
+}
+
+/**
+ * Ce séjour concerne-t-il la période ?
+ *
+ * Un séjour **sans nuit** — une recette facturée sans dates, qui n'est pas une erreur — se
+ * rattache à son jour d'arrivée : il apporte du revenu et n'occupe rien, exactement comme une
+ * `RevenueExtra`.
+ */
+export function overlapsWindow(booking: Booking, from: string, to: string): boolean {
+  if (booking.nights > 0) return nightsInWindow(booking, from, to) > 0;
+  return booking.arrival >= from && booking.arrival <= to;
+}
+
+/**
+ * **Nuitées vendues** sur `[from, to]` : Σ `nuits dans la fenêtre × units`.
+ *
+ * Pas de dédoublonnage par jour, contrairement à `occupiedNights` : neuf chambres vendues la
+ * même nuit font bien neuf nuitées. C'est toute la différence entre les deux fonctions, et
+ * c'est pourquoi celle-ci prend le relais partout où un taux se calcule.
+ */
+export function soldUnitNights(bookings: Booking[], from: string, to: string): number {
+  let total = 0;
+  for (const b of bookings) total += nightsInWindow(b, from, to) * unitsOf(b);
+  return total;
+}
+
+/**
+ * **Nuitées disponibles** sur `[from, to]`, bornes incluses : `unitsTotal × jours`.
+ *
+ * L'appelant borne lui-même `to` à aujourd'hui quand il mesure une occupation réalisée —
+ * compter les mois à venir comme des nuitées invendues écraserait le taux sans rien dire
+ * d'utile — et ne le borne pas quand il mesure un carnet à venir. La fonction, elle, ne
+ * connaît pas la date du jour : c'est ce qui la rend testable.
+ */
+export function availableUnitNights(unitsTotal: number, from: string, to: string): number {
+  const days = daysBetween(from, to) + 1;
+  return days > 0 ? unitsTotal * days : 0;
+}
+
+/** Fenêtre de mesure : bornes incluses, plus le jour qui sépare le réalisé de l'engagé. */
+export interface RevenueWindow {
+  from: string;
+  to: string;
+  /** Défaut : aujourd'hui à Paris. Injecté pour rendre la fonction reproductible. */
+  asOf?: string;
+}
+
+/**
+ * Ce qu'une fenêtre a rapporté, coupé au jour dit.
+ *
+ * Aucun arrondi : ce sont des cumuls, pas des affichages. L'arrondi appartient à la dernière
+ * division, et à elle seule.
+ */
+export interface WindowRevenue {
+  total: number;
+  /** Tombé le `asOf` ou avant : un **fait**. */
+  realized: number;
+  /** Tombé après : un **engagement contractuel**, jamais une extrapolation. */
+  committed: number;
+}
+
+/**
+ * Le revenu imputé à une fenêtre, séjours et recettes sans nuits confondus.
+ *
+ * **Tout montant imputé à une date passe par `spreadRevenue`**, ici comme ailleurs : c'est la
+ * règle qui empêche deux blocs de la même page de tomber sur deux nombres différents. En
+ * convention `averagedPerNight`, un séjour à cheval sur le 1er janvier laisse dans la fenêtre
+ * exactement la part de ses nuits qui y tombe ; dans les trois autres conventions il tombe
+ * d'un seul côté, et c'est ce que la convention dit.
+ *
+ * Les deux sélecteurs de montant sont des **données**, pas des drapeaux (règle 2) : ils
+ * servent à suivre le brut ou la commission sur la même ventilation que le net, sans qu'aucun
+ * mode supplémentaire n'existe.
+ */
+export function windowRevenue(
+  bookings: Booking[],
+  extras: RevenueExtra[],
+  mode: RevenueMode,
+  window: RevenueWindow,
+  amountOf: (b: Booking) => number = (b) => b.net,
+  extraAmountOf: (r: RevenueExtra) => number = (r) => r.net,
+): WindowRevenue {
+  const asOf = window.asOf ?? todayParis();
+  const out: WindowRevenue = { total: 0, realized: 0, committed: 0 };
+  // Le tri par statut est fait ici plutôt que chez l'appelant : c'est le défaut D2, et il est
+  // revenu une fois par endroit où le filtre était facultatif.
+  const acquired = bookings.filter((b) => countsAsSold(b.status));
+  const add = (day: string, amount: number) => {
+    if (day < window.from || day > window.to) return;
+    out.total += amount;
+    if (day <= asOf) out.realized += amount;
+    else out.committed += amount;
+  };
+  for (const b of acquired) {
+    for (const { day, amount } of spreadRevenue(b, mode, amountOf(b))) add(day, amount);
+  }
+  for (const r of extras) {
+    if (r.date) add(r.date, extraAmountOf(r));
+  }
+  return out;
+}
+
+/** Un mois de la série : l'argent, les nuitées, et les deux taux qui s'en déduisent. */
+export interface MonthlyPoint {
+  /** « YYYY-MM ». */
+  month: string;
+  /** Revenu du mois déjà tombé, recettes sans nuits comprises. */
+  realized: number;
+  /** Revenu du mois encore à venir. */
+  upcoming: number;
+  /**
+   * Part du revenu du mois portée par des **séjours**, à l'exclusion des recettes sans nuits.
+   * C'est le numérateur du RevPAR, et c'est pourquoi il est publié : la courbe doit pouvoir se
+   * recalculer à la main depuis les barres.
+   */
+  stayNet: number;
+  soldUnitNights: number;
+  availableUnitNights: number;
+  /** En %. Sur le mois **entier**, y compris le mois en cours. */
+  occupancyRate: number;
+  /** `stayNet ÷ availableUnitNights`. Un quotient, jamais « prix moyen × occupation ». */
+  revpar: number;
+  isFuture: boolean;
+}
+
+export interface MonthlySeriesOptions {
+  from: string;
+  to: string;
+  unitsTotal: number;
+  /** Défaut : aujourd'hui à Paris. */
+  asOf?: string;
+  amountOf?: (b: Booking) => number;
+  extraAmountOf?: (r: RevenueExtra) => number;
+}
+
+/**
+ * La série « revenus mensuels » et « occupation mois par mois » — **une seule passe, un seul
+ * dénominateur**.
+ *
+ * C'est la fonction qui ferme le défaut D4. Barbusse publiait deux RevPAR sur la même page :
+ * la carte valait « prix moyen × occupation » pondéré par neuf logements, la courbe valait
+ * `(réalisé + à venir) ÷ jours du mois` avec la maison comptée pour une seule unité. Les deux
+ * étaient étiquetés « RevPAR ». Ici le RevPAR est **défini comme un quotient** — revenu ÷
+ * nuitées disponibles — et son égalité avec « prix moyen × occupation » est une conséquence
+ * arithmétique, plus une seconde formule qui peut diverger.
+ *
+ * Le mois en cours est compté **entier** au dénominateur : un mois est un mois, et une barre
+ * dont le dénominateur grandit d'un jour par jour ne se compare pas à celle d'à côté. Le
+ * bornage à la part écoulée appartient aux indicateurs de période, pas à la saisonnalité.
+ *
+ * Le tri par statut est fait ici, comme dans `computeIndicators` : une demande de
+ * renseignement n'a pas à peindre une barre, et un filtre qu'on laisse à l'appelant est un
+ * filtre qu'on oublie une fois sur deux.
+ */
+export function buildMonthlySeries(
+  bookings: Booking[],
+  extras: RevenueExtra[],
+  mode: RevenueMode,
+  options: MonthlySeriesOptions,
+): MonthlyPoint[] {
+  const asOf = options.asOf ?? todayParis();
+  const amountOf = options.amountOf ?? ((b: Booking) => b.net);
+  const extraAmountOf = options.extraAmountOf ?? ((r: RevenueExtra) => r.net);
+  const currentMonth = asOf.slice(0, 7);
+
+  const months: string[] = [];
+  for (
+    let key = options.from.slice(0, 7);
+    key <= options.to.slice(0, 7);
+    key = addDays(`${key}-01`, daysInMonthKey(key)).slice(0, 7)
+  ) {
+    months.push(key);
+  }
+
+  const revenue = new Map<string, { realized: number; upcoming: number; stayNet: number }>();
+  const nights = new Map<string, number>();
+  const bucket = (key: string) => {
+    let b = revenue.get(key);
+    if (!b) revenue.set(key, (b = { realized: 0, upcoming: 0, stayNet: 0 }));
+    return b;
+  };
+
+  for (const b of bookings.filter((x) => countsAsSold(x.status))) {
+    // Une ligne sans nuit apporte du revenu et n'occupe rien : elle entre dans les barres et
+    // reste hors du numérateur du RevPAR, exactement comme dans `computeIndicators`.
+    const occupies = b.nights > 0;
+    for (const { day, amount } of spreadRevenue(b, mode, amountOf(b))) {
+      if (day < options.from || day > options.to) continue;
+      const e = bucket(day.slice(0, 7));
+      if (occupies) e.stayNet += amount;
+      if (day <= asOf) e.realized += amount;
+      else e.upcoming += amount;
+    }
+    const units = unitsOf(b);
+    for (const night of stayNights(b)) {
+      if (night < options.from || night > options.to) continue;
+      const key = night.slice(0, 7);
+      nights.set(key, (nights.get(key) ?? 0) + units);
+    }
+  }
+  for (const r of extras) {
+    if (!r.date || r.date < options.from || r.date > options.to) continue;
+    const e = bucket(r.date.slice(0, 7));
+    const amount = extraAmountOf(r);
+    if (r.date <= asOf) e.realized += amount;
+    else e.upcoming += amount;
+  }
+
+  return months.map((month) => {
+    const money = revenue.get(month) ?? { realized: 0, upcoming: 0, stayNet: 0 };
+    const sold = nights.get(month) ?? 0;
+    const available = options.unitsTotal * daysInMonthKey(month);
+    return {
+      month,
+      realized: round2(money.realized),
+      upcoming: round2(money.upcoming),
+      stayNet: round2(money.stayNet),
+      soldUnitNights: sold,
+      availableUnitNights: available,
+      occupancyRate: available > 0 ? round2((sold / available) * 100) : 0,
+      revpar: available > 0 ? round2(money.stayNet / available) : 0,
+      isFuture: month > currentMonth,
+    };
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Les huit indicateurs, calculés une fois
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Les huit indicateurs de la grille, plus les bases qui les produisent.
+ *
+ * Les bases — `stayNet`, `soldUnitNights`, `availableUnitNights` — sont publiées exprès : ce
+ * sont elles qui permettent de refaire les trois quotients à la main, et donc de prouver qu'il
+ * n'y en a qu'un jeu sur la page. Une valeur qu'on ne peut pas recalculer depuis la charge
+ * utile est une valeur qu'il faut croire sur parole.
+ */
+export interface Indicators {
+  /** Bornes de la période demandée. */
+  from: string;
+  to: string;
+  /**
+   * Dernier jour **écoulé** de la période, `min(to, asOf)`. Tous les indicateurs s'arrêtent
+   * là : ce qui suit est du carnet, et le carnet a son propre bloc.
+   */
+  elapsedTo: string;
+
+  /** 1 — net encaissé : séjours **et** recettes sans nuits. */
+  netRevenue: number;
+  /** 1, sous-ligne. */
+  grossRevenue: number;
+  /** 1, sous-ligne. `grossRevenue − netRevenue`, pour que la sous-ligne retombe sur la carte. */
+  commissions: number;
+
+  /**
+   * Assiette des indicateurs 3, 4 et 6 : le net des **séjours seuls**.
+   *
+   * ⚠️ Ce n'est pas `netRevenue`, et c'est voulu : une ligne sans nuit — `RevenueExtra` ou
+   * séjour facturé sans dates — apporte du revenu et n'occupe rien. L'inclure au numérateur
+   * d'un prix par nuitée ferait payer une nuit à qui n'en a pas dormi. Écrit ici pour qu'on ne
+   * le « corrige » pas dans six mois.
+   */
+  stayNet: number;
+
+  soldUnitNights: number;
+  availableUnitNights: number;
+
+  /** 2 — `soldUnitNights ÷ availableUnitNights`, en %. */
+  occupancyRate: number;
+  /** 3 — `stayNet ÷ soldUnitNights`. */
+  pricePerUnitNight: number;
+  /** 4 — `stayNet ÷ availableUnitNights`. Toujours ≤ 3, par construction. */
+  revpar: number;
+
+  /** 5 — nombre de séjours retenus, c'est-à-dire d'au moins une nuit dans la période. */
+  stays: number;
+  /** 5 — nuits de ces séjours tombant dans la période, **sans** pondération par `units`. */
+  stayNights: number;
+  /** 5 — `stayNights ÷ stays`. Une durée, pas une occupation. */
+  avgStay: number;
+
+  /** 6 — part du net de séjours encaissée sans commission de canal, en %. */
+  directRevenueShare: number;
+  /** 6, sous-ligne — part des séjours, en %. */
+  directStayShare: number;
+
+  /** 7 — nuitées déjà réservées sur les 90 prochaines nuits, en %. */
+  forwardOccupancy90: number;
+
+  /** 8 — jours moyens entre la réservation et l'arrivée. `null` si aucune date connue. */
+  avgLeadTime: number | null;
+}
+
+export interface IndicatorsInput {
+  /**
+   * **Tous** les séjours connus, live et archive confondus, sans filtrage préalable.
+   *
+   * Le tri par statut (`countsAsSold`) et par recouvrement de période est fait ici : ce sont
+   * les défauts D2 et D3, et les laisser à l'appelant, c'est les laisser revenir.
+   * L'indicateur 7 regarde les 90 jours à venir, qui débordent de toute période passée — d'où
+   * un jeu complet en entrée plutôt qu'une liste déjà bornée.
+   */
+  bookings: Booking[];
+  extras?: RevenueExtra[];
+  mode: RevenueMode;
+  from: string;
+  to: string;
+  /** Nombre de logements louables du bien. Donnée injectée, jamais déduite d'un `propertyId`. */
+  unitsTotal: number;
+  /** Défaut : aujourd'hui à Paris. */
+  asOf?: string;
+}
+
+/**
+ * **Les huit indicateurs du tableau de bord, calculés une seule fois.**
+ *
+ * Quatre décisions, toutes opposables, toutes écrites ici parce qu'elles se relisent le jour
+ * où un chiffre surprend :
+ *
+ * 1. **Tout se mesure sur la part écoulée de la période**, `[from, min(to, asOf)]`. C'est ce
+ *    qui rend le « net encaissé » opposable à un relevé bancaire, et surtout ce qui fait que
+ *    le prix par nuitée, l'occupation et le RevPAR partagent le même numérateur et le même
+ *    dénominateur. Le reste de l'exercice — le confirmé — est un engagement, et il a son
+ *    propre bloc (`windowRevenue`, champ `committed`).
+ * 2. **Le RevPAR est un quotient**, `stayNet ÷ availableUnitNights`. Son égalité avec
+ *    « prix moyen × occupation » est une conséquence arithmétique et non une seconde formule :
+ *    c'est ce qui interdit à D4 de revenir.
+ * 3. **Deux assiettes, et elles ne sont pas interchangeables.** Le net encaissé compte les
+ *    recettes sans nuits ; le prix par nuitée et le RevPAR ne les comptent pas.
+ * 4. **Aucun arrondi avant la dernière division.** Les sommes courent en nombres exacts, seuls
+ *    les huit résultats sont arrondis, et l'affichage arrondit encore.
+ */
+export function computeIndicators(input: IndicatorsInput): Indicators {
+  const asOf = input.asOf ?? todayParis();
+  const extras = input.extras ?? [];
+  const { from, to, unitsTotal, mode } = input;
+  const elapsedTo = to < asOf ? to : asOf;
+
+  const acquired = input.bookings.filter((b) => countsAsSold(b.status));
+  /*
+   * **Deux sélections, et elles ne portent pas sur la même chose.**
+   *
+   * L'argent est retenu par le jour où la convention le fait tomber — c'est `windowRevenue`,
+   * donc `spreadRevenue`, donc la règle « tout montant imputé à une date passe par une seule
+   * fonction ». Les nuitées, elles, sont retenues par recouvrement de la période.
+   *
+   * En convention `averagedPerNight`, la convention par défaut, les deux coïncident. Dans les
+   * trois autres, l'argent d'un séjour peut tomber dans une période où il n'a aucune nuit —
+   * c'est exactement ce que veulent dire « à la réservation » ou « au départ », et le prix par
+   * nuitée s'en trouve décalé d'autant. C'est une propriété de la convention choisie, pas un
+   * écart de calcul : le sélecteur de convention est affiché au-dessus des cartes.
+   *
+   * Une ligne **sans nuit** — une recette facturée sans dates — apporte du revenu et n'occupe
+   * rien. Elle entre donc dans le net encaissé et reste hors de l'assiette du prix par nuitée
+   * et du RevPAR, au même titre qu'une `RevenueExtra` : c'est la séparation qui garde
+   * l'égalité `prix moyen × nuitées vendues = stayNet` vraie au centime.
+   */
+  const occupying = acquired.filter((b) => b.nights > 0);
+  const noNightLines = acquired.filter((b) => b.nights <= 0);
+  const retained = occupying.filter((b) => overlapsWindow(b, from, elapsedTo));
+  const windowExtras = extras.filter((r) => r.date && r.date >= from && r.date <= elapsedTo);
+  const window: RevenueWindow = { from, to: elapsedTo, asOf: elapsedTo };
+
+  const stayMoney = windowRevenue(occupying, [], mode, window);
+  const stayGross = windowRevenue(occupying, [], mode, window, (b) => b.gross);
+  const noNightNet = windowRevenue(noNightLines, [], mode, window);
+  const noNightGross = windowRevenue(noNightLines, [], mode, window, (b) => b.gross);
+  const extrasNet = windowExtras.reduce((s, r) => s + r.net, 0) + noNightNet.total;
+  const extrasGross = windowExtras.reduce((s, r) => s + (r.gross ?? r.net), 0) + noNightGross.total;
+  const netRevenue = stayMoney.total + extrasNet;
+  const grossRevenue = stayGross.total + extrasGross;
+
+  const soldNights = soldUnitNights(retained, from, elapsedTo);
+  const available = availableUnitNights(unitsTotal, from, elapsedTo);
+  const nights = retained.reduce((s, b) => s + nightsInWindow(b, from, elapsedTo), 0);
+
+  const direct = retained.filter((b) => b.channel === "Direct");
+  const directNet = windowRevenue(
+    occupying.filter((b) => b.channel === "Direct"),
+    [],
+    mode,
+    window,
+  ).total;
+
+  const forwardEnd = addDays(asOf, 89);
+  const forwardSold = soldUnitNights(acquired, asOf, forwardEnd);
+  const forwardAvailable = availableUnitNights(unitsTotal, asOf, forwardEnd);
+
+  const withBookedAt = retained.filter((b) => b.bookedAt);
+  const leadTimes = withBookedAt.map((b) =>
+    Math.max(0, daysBetween(b.bookedAt!.slice(0, 10), b.arrival)),
+  );
+
+  return {
+    from,
+    to,
+    elapsedTo,
+    netRevenue: round2(netRevenue),
+    grossRevenue: round2(grossRevenue),
+    commissions: round2(grossRevenue - netRevenue),
+    stayNet: round2(stayMoney.total),
+    soldUnitNights: soldNights,
+    availableUnitNights: available,
+    occupancyRate: available > 0 ? round2((soldNights / available) * 100) : 0,
+    pricePerUnitNight: soldNights > 0 ? round2(stayMoney.total / soldNights) : 0,
+    revpar: available > 0 ? round2(stayMoney.total / available) : 0,
+    stays: retained.length,
+    stayNights: nights,
+    avgStay: retained.length > 0 ? round2(nights / retained.length) : 0,
+    directRevenueShare: stayMoney.total > 0 ? round2((directNet / stayMoney.total) * 100) : 0,
+    directStayShare: retained.length > 0 ? round2((direct.length / retained.length) * 100) : 0,
+    forwardOccupancy90:
+      forwardAvailable > 0 ? round2((forwardSold / forwardAvailable) * 100) : 0,
+    avgLeadTime:
+      leadTimes.length > 0
+        ? round2(leadTimes.reduce((s, d) => s + d, 0) / leadTimes.length)
+        : null,
+  };
 }
