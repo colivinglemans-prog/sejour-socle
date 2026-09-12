@@ -25,9 +25,23 @@ export function parseDate(s: string): Date {
   return new Date(y, m - 1, d);
 }
 
-/** Nombre de jours du mois (mois indexé à partir de 0). */
+/**
+ * Nombre de jours du mois — **`month` est indexé à partir de 0**, comme partout ailleurs dans
+ * ce module et comme `Date.getMonth()`.
+ *
+ * ⚠️ La forme recopiée à la main dans les routes de statistiques est `new Date(y, m, 0)` avec
+ * un mois **1-12** : les deux écritures sont justes, mais elles ne prennent pas le même
+ * argument. Passer ici un mois 1-12 rend le nombre de jours du mois **suivant** — et février
+ * n'en a jamais 31, donc l'erreur ne se voit pas sur un graphe, elle se voit sur un RevPAR.
+ * Un appelant qui tient une clé « YYYY-MM » écrit `daysInMonth(y, m - 1)`.
+ */
 export function daysInMonth(year: number, month: number): number {
   return new Date(year, month + 1, 0).getDate();
+}
+
+/** Nombre de jours du mois désigné par une clé « YYYY-MM ». */
+export function daysInMonthKey(key: string): number {
+  return daysInMonth(Number(key.slice(0, 4)), Number(key.slice(5, 7)) - 1);
 }
 
 /** Jour de la semaine du 1er du mois, lundi = 0 (`getDay()` rend dimanche = 0). */

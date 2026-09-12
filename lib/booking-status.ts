@@ -51,3 +51,20 @@ export function isProvisional(status: string | undefined | null): boolean {
 export function isExcludedStatus(status: string | undefined | null): boolean {
   return EXCLUDED_STATUSES.has((status ?? "").toLowerCase());
 }
+
+/**
+ * **Cette réservation est-elle une nuit vendue ?** Le seul test à écrire dans un calcul de
+ * revenu, d'occupation ou de taxe.
+ *
+ * Ni annulée, ni bloquée, ni provisoire. Les trois lots ci-dessus disaient déjà chacun une
+ * partie de la réponse ; aucun ne la disait en entier, et c'est ainsi que **776,12 €** de
+ * statuts non acquis se sont retrouvés dans le chiffre d'affaires et l'occupation de Barbusse
+ * — relevé le 2026-09-12 sur son archive : une `inquiry` à 404,72 € pour 15 nuitées, quatre
+ * `new` à 371,40 € pour 10 nuitées. Le filtre en place n'écartait que `cancelled` et `black`.
+ *
+ * Une demande de renseignement n'est pas un engagement contractuel, et une page de chiffres
+ * montrée à un banquier ne compte que des faits ou des engagements.
+ */
+export function countsAsSold(status: string | undefined | null): boolean {
+  return !isExcludedStatus(status) && !isProvisional(status);
+}

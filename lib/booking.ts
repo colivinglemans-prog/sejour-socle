@@ -79,6 +79,24 @@ export interface Booking {
 
   roomId?: number;
 
+  /**
+   * **Nombre de logements que cette ligne occupe.** Défaut `1`.
+   *
+   * C'est le poids de la réservation dans la seule unité de mesure du dashboard, la
+   * *nuitée-logement* : nuitées vendues = Σ `nights × units`, nuitées disponibles =
+   * `unitsTotal × jours écoulés`. Le `toBooking` du site le pose — il a le droit, lui, de
+   * connaître ses identifiants de propriété — et le socle ne fait que le lire (règle 1).
+   *
+   * Chez Barbusse, une nuit de maison entière remplit 9 nuitées sur 9 ; une chambre seule en
+   * remplit 1 sur 9. C'est ce qui rend l'historique à la chambre juste — un dénominateur à 1
+   * afficherait 100 % d'occupation avec une chambre occupée sur neuf — **sans pénaliser
+   * l'avenir**, où tout se loue en maison entière. Chez Albiez, `unitsTotal = 1` et le défaut
+   * suffit : la nuitée-logement y est la nuitée, aucun chiffre ne bouge.
+   *
+   * Additif et non cassant : un site qui ne le renseigne pas lit `1` partout.
+   */
+  units?: number;
+
   /** Statut Beds24 brut. Le sens commercial est dans `./booking-status`. */
   status?: string;
 
@@ -139,4 +157,16 @@ export interface Booking {
  */
 export function nightsBetween(arrival: string, departure: string): number {
   return daysBetween(arrival, departure);
+}
+
+/**
+ * Le poids d'une ligne en logements, défaut `1`.
+ *
+ * Écrit une fois ici plutôt que `b.units ?? 1` à chaque somme : c'est le genre de valeur par
+ * défaut qu'un appelant finit par oublier, et l'oubli ne se voit pas — il divise simplement
+ * l'occupation par neuf.
+ */
+export function unitsOf(booking: Pick<Booking, "units">): number {
+  const u = booking.units;
+  return typeof u === "number" && Number.isFinite(u) && u > 0 ? u : 1;
 }
