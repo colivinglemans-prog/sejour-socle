@@ -75,10 +75,14 @@ Décisions prises une fois, à ne pas rediscuter à chaque lot.
 | Rôle restreint | `viewer`. Albiez renomme son `menage`, **variables Vercel comprises** (`DASHBOARD_PASSWORD_MENAGE*` → `DASHBOARD_PASSWORD_VIEWER*`, prod et dev). | 2026-09-11 |
 | Couleurs de canal | Celles d'Albiez : Abritel `#1668E3`, Direct `#0E9F6E`, Autre `#9ca3af`. Airbnb `#FF385C` et Booking `#003580` sont officielles et déjà communes. | 2026-09-11 |
 | Design | Mêmes 7 tokens sémantiques et mêmes polices ; un fichier de valeurs par site. Albiez reste bleu alpin, Barbusse rose Airbnb. Trio d'accents optionnel pour la couche `[data-season]` d'Albiez. | 2026-09-11 |
-| Périmètre | Noyau + dashboard + réglementaire français. Vitrine, i18n, blog et photos restent chez chaque site (Lot 5, non engagé). | 2026-09-11 |
+| Périmètre | Noyau + dashboard + réglementaire français. **Élargi au Lot 5** : événements, calendrier public de réservation, blocs de réservation d'article. Le contenu — dictionnaires, articles, photos, catalogues d'événements — reste chez chaque site. | 2026-09-12 |
 | Régime d'Albiez | **La SCI JUARISAL est à l'IS**, et sa comptabilité est tenue sur **Indy.fr**. Aucune extension SCI/IS du module fiscal n'est conçue, aucune note de cadrage n'est produite : la question est tranchée, pas reportée. | 2026-09-11 |
 | Indy | **Pas d'API publique** — vérifié le 2026-09-11. Le seul point d'accroche envisageable serait l'export FEC. Rien n'est construit dans cette direction. À ne pas reposer. | 2026-09-11 |
 | Exception à la règle 6 | `lib/fiscal/` monte avec **un seul consommateur**, en connaissance de cause. Motif et portée dans `lib/fiscal/README.md`, qui doit être relu avant tout arbitrage sur ce module. | 2026-09-11 |
+| Clé d'un événement | `key`, stable et jamais affichée, porte la jointure depuis `BlogPostMeta.event`. **Jamais le nom** : un nom est de l'affichage, il se corrige et finira par se traduire. Barbusse a migré ses cinq articles. | 2026-09-12 |
+| `confirmed` sur un événement | Un **fait** sur l'événement (les dates sont-elles officielles), pas un aiguillage de comportement : conforme à la règle 2. Il commande l'émission du JSON-LD `Event`. | 2026-09-12 |
+| `commune` | Additive, **optionnelle** dans le type du socle. Albiez la porte par entrée (sept communes), Barbusse la fournit une fois au JSON-LD (tout se passe au Mans). | 2026-09-12 |
+| Deux enveloppes de calendrier de tableau de bord | **Maintenues séparées**, décision de `madame-soleil` au Lot 3, non rediscutée. Le Lot 5 pose la couche d'événements d'Albiez sur le moteur du socle sans fusionner les composants. | 2026-09-12 |
 
 ## Ce qui n'entre jamais
 
@@ -116,7 +120,7 @@ deux validations.
 | 2 | Beds24 + modèle canonique `Booking` | `champollion` | `v0.3` — code écrit, tag à poser |
 | 3 | Dashboard | `madame-soleil` | `v0.4` — code écrit, tag à poser |
 | 4 | Factures, taxe de séjour, fiscal | `le-percepteur` | `v0.5` — code écrit, tag à poser |
-| 5 | Vitrine — *proposé, non engagé* | `monsieur-loyal`, `poisson-babel` | — |
+| 5 | Vitrine — événements, calendrier public, blocs de réservation | `monsieur-loyal` | code écrit ; **`package.json` reste en 0.5.0**, la bascule de version et le tag `v0.6` restent à poser |
 
 Plan détaillé : `C:\Users\alexa\.claude\plans\cheerful-toasting-rivest.md`.
 
@@ -481,6 +485,52 @@ Vercel :
   24,50 € pour 4 adultes et 2 enfants, qui donne bien 16,33 € dus et 8,17 € de trop.
 - **La numérotation** vérifiée sur un magasin en mémoire : série neuve, reprise depuis 13,
   deux entités qui ne se marchent plus dessus, préfixe vide refusé, bascule d'année en UTC.
+
+### Lot 5 — vitrine : événements et tunnel de réservation
+
+| Chemin | Contenu | Vient de |
+|---|---|---|
+| `lib/events.ts` | `LocalEvent`, `nextEdition`, `findEventByKey`, `findEventOnDay`, `findEventForStay`, `stayWindow`, `eventJsonLd`. **Le type et les fonctions ; jamais les données.** | Albiez pour la forme (écrit pour être extrait), Barbusse pour `findEventForStay` |
+| `lib/availability.ts` | `AvailabilityResponse`, `AvailabilityUrl`, `strictestMinStay`, `longestFreeRange`. | Barbusse (le CTA), généralisé |
+| `lib/stay-selection.ts` | `SelectionContext`, `isValidCheckIn`, `isValidCheckOut`, `cellState`, `selectionAfterClick`, `consecutiveFreeNights`. **Le cœur du tunnel, sorti d'un composant client pour devenir testable.** | les deux calendriers, identiques |
+| `lib/booking-url.ts` | `bookingUrl` — l'URL `booking2.php` composée à un seul endroit. | trois copies, mêmes paramètres dans le même ordre |
+| `components/ReservationCalendar.tsx` | Le calendrier public : deux mois, huit états de case, séjour minimum, fermetures, compteurs, modale Beds24. | les deux, à 80 % identiques |
+| `components/EventBanner.tsx` | L'encart « prochaine édition » — **serveur**, figé au build. | Albiez |
+| `components/EventBookingCTA.tsx` | Le bloc de réservation de fin d'article — **client**, sonde la disponibilité. | Barbusse |
+
+**`EventBanner` et `EventBookingCTA` ne sont pas le même objet et ne doivent pas être
+fusionnés.** La bannière répond à « quand est la prochaine édition » et doit être dans le HTML
+initial d'une page dont l'événement est le sujet ; le CTA répond à « la maison est-elle libre »
+et ne peut être lu qu'à la visite. Les deux coexistent sur une même page d'article.
+
+⚠️ **Deux exceptions à la règle 6, assumées et à valider.** `EventBanner` n'a aujourd'hui
+qu'Albiez comme appelant, `EventBookingCTA` que Barbusse. Ils montent parce que le Lot 5 les
+désigne nommément et parce qu'ils sont l'un et l'autre le pendant manquant du site d'en face —
+Barbusse gagnerait une bannière, Albiez gagnerait un CTA — mais aucun des deux n'a été posé
+chez le voisin dans ce lot : cela réclame des libellés dans cinq langues, c'est-à-dire du
+contenu, et le contenu n'est pas du ressort du socle. Si le second appelant n'apparaît pas, la
+règle 6 dit de les redescendre.
+
+**Ce qui ne monte pas, et pourquoi :**
+
+- **Les catalogues d'événements.** Une valeur, comme une photo ou un dictionnaire. Toutes les
+  fonctions reçoivent le catalogue en paramètre.
+- **`shortEventLabel`** (Barbusse) — une table de noms propres du Mans. Donnée, pas mécanisme.
+- **Les dictionnaires**, sauf la **forme** de la section `calendar` : `CalendarLabels` est
+  déclarée avec le composant qui la consomme, et les deux sites y intersectent leur section.
+  C'est la seule section commune aux deux dictionnaires ; le reste ne monte jamais.
+- **Les deux enveloppes de calendrier de tableau de bord** — décision du Lot 3, maintenue.
+
+**La rotation du samedi n'est pas un paramètre.** `sansArrivee` / `sansDepart` arrivent dans la
+réponse de disponibilité ; un site qui n'en envoie pas lit deux index vides et ne voit rien
+changer. C'était le moyen le plus court de respecter la règle 2 sur une règle métier qu'un seul
+site possède.
+
+**Trois corrections pour Barbusse au passage**, toutes issues d'Albiez : le `sandbox`
+autorisant la redirection 3-D Secure sur l'iframe de paiement, le plafonnement adultes/enfants
+à la capacité (on pouvait composer 37 voyageurs pour une maison de 20), et la mise à jour
+fonctionnelle du cache de disponibilité, là où un objet capturé dans la closure perdait la
+première de deux réponses qui se croisent.
 
 ### Comment une application s'y branche
 
