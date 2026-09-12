@@ -41,14 +41,22 @@ Sans photo d'avant, on ne peut rien prouver. À prendre **avant la première mod
 # Sous TZ=UTC, et se connecter d'abord (voir plus bas)
 for per in year fiscal 1y 6m 3m 30d; do
   for mode in averagedPerNight byCheckIn byCheckOut byBookingDate; do
-    curl -s -b cookie.txt "$BASE/api/dashboard/stats?period=$per&revenueMode=$mode" \
+    curl -s -b cookie.txt "$BASE/api/dashboard/stats?period=$per&mode=$mode" \
       -o "avant-$per-$mode.json"
   done
 done
 ```
 
-Côté Albiez, l'équivalent est `?periode=annee|precedente|12m|toute` × `?mode=reparti|arrivee|depart|reservation`,
-plus `/api/dashboard/calendrier?mois=YYYY-MM`.
+Côté Albiez, l'équivalent est `?periode=annee|precedente|12m|toute` × le **même** `mode=` — les
+valeurs sont en anglais des deux côtés depuis le Lot 3 (`averagedPerNight|byCheckIn|byCheckOut|
+byBookingDate`) — plus `/api/dashboard/calendrier?mois=YYYY-MM`.
+
+⚠️ **Vérifier que la photo exerce bien les quatre conventions** : les quatre fichiers d'une même
+période doivent avoir des sha256 **différents**. Le 2026-09-12, une première photo a été prise
+avec `revenueMode=` (paramètre inexistant, la route lit `mode=`) et des valeurs françaises
+périmées : 45 fichiers, tous identiques entre modes, trois conventions sur quatre non couvertes,
+et rien ne le signalait. Une photo qui ne varie pas quand on change le paramètre n'a pas lu le
+paramètre.
 
 Si le lot renomme des clés, prévoir une table de correspondance et comparer les **valeurs**.
 
@@ -138,6 +146,40 @@ Un événement `confirmed: true` émet un nœud `"@type":"Event"` ; un événeme
 ```bash
 curl -sL "$BASE/fr/guide/<slug>" | grep -c '"@type":"Event"'
 ```
+
+### Invariants permanents des statistiques (arbitrage du 2026-09-12)
+
+```
+INV-STATS-1 — En convention averagedPerNight : prix moyen × nuitées vendues = net, au centime.
+En byCheckIn, byCheckOut et byBookingDate l'égalité ne tient pas : l'écart est relevé, consigné,
+et NE DOIT PAS être « corrigé ». Un correctif qui rétablirait l'égalité dans les quatre
+conventions aurait recalculé l'argent en dehors de spreadRevenue.
+
+INV-STATS-2 — forwardOccupancy90 se mesure sur [aujourd'hui, +89 j], jamais sur elapsedTo.
+C'est la seule carte tournée vers l'avant, et son libellé le dit.
+
+INV-STATS-3 — Les huit cartes se mesurent sur la part écoulée [du, min(au, aujourd'hui)].
+Un euro déjà réservé au-delà d'elapsedTo apparaît UNE fois, dans « Revenu engagé », segment
+Confirmé — jamais aussi dans « Net encaissé ».
+```
+
+`npm run verifier` dans le socle rejoue INV-STATS-1 sur les quatre conventions, plus
+`RevPAR × nuitées disponibles = net`, `RevPAR = prix moyen × occupation` et
+`brut − commissions = net`.
+
+### Critère d'acceptation du Lot B (convergence des stats)
+
+`computeCommissionBooking` devient `commissionOf`. Écart attendu sur `/api/dashboard/fiscal` de
+Barbusse : **+7 076,89 € de commissions**, net fiscal diminué d'autant ; **le CA brut ne bouge
+pas** (`computeCAFromInvoiceItems` exclut déjà les mêmes lignes via `isCommissionLine`). Sur
+`/api/dashboard/stats` : −404,72 € (`inquiry`) et −371,40 € (`new`), −25 nuitées ; +447,40 € et
++17 nuitées sur l'exercice 2026 (deux séjours à cheval sur le 1er janvier). Tout autre écart est
+une régression. L'invariant `77246.92` ci-dessus devient faux par construction ; la nouvelle
+valeur sera relevée et consignée avec sa justification.
+
+⚠️ **`v1.0.0` n'est pas un tag consommable** : la page fiscale y garde l'ancienne sémantique. Le
+premier tag épinglable par une application est celui du Lot B. Aucun site ne passe de `v0.7.0`
+à `v1.0.0`.
 
 ---
 
