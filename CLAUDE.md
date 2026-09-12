@@ -83,6 +83,9 @@ Décisions prises une fois, à ne pas rediscuter à chaque lot.
 | `confirmed` sur un événement | Un **fait** sur l'événement (les dates sont-elles officielles), pas un aiguillage de comportement : conforme à la règle 2. Il commande l'émission du JSON-LD `Event`. | 2026-09-12 |
 | `commune` | Additive, **optionnelle** dans le type du socle. Albiez la porte par entrée (sept communes), Barbusse la fournit une fois au JSON-LD (tout se passe au Mans). | 2026-09-12 |
 | Deux enveloppes de calendrier de tableau de bord | **Maintenues séparées**, décision de `madame-soleil` au Lot 3, non rediscutée. Le Lot 5 pose la couche d'événements d'Albiez sur le moteur du socle sans fusionner les composants. | 2026-09-12 |
+| Série de référence des stats | **Le net encaissé**, sur les deux pages. Le brut reste en sous-ligne — c'est lui qui se rapproche des relevés Airbnb et Booking. En brut, la carte « part du direct » classe le direct à l'envers : la politique tarifaire le veut 7 % moins cher qu'Airbnb, alors qu'il rapporte 12 % de plus une fois les 18,6 % de commission déduits. | 2026-09-12 |
+| Unité de mesure des stats | **La nuitée-logement**, seul dénominateur des deux pages. `unitsTotal` est une donnée injectée (1 pour Albiez, 9 pour Barbusse), `Booking.units` le poids d'une ligne. Le triplet `SplitMetric {global, house, room}` est refusé : la justesse du passé à la chambre vient du dénominateur, pas de trois nombres par carte. | 2026-09-12 |
+| Où tombe l'argent | **Une seule fonction décide** : `spreadRevenue` pour l'imputation, `availableUnitNights` pour le dénominateur. Aucune page ne recalcule. Le RevPAR est **défini comme un quotient** ; son égalité avec « prix moyen × occupation » est une conséquence arithmétique, plus une seconde formule qui peut diverger. | 2026-09-12 |
 
 ## Protocole de test
 
@@ -133,6 +136,7 @@ deux validations.
 | 3 | Dashboard | `madame-soleil` | `v0.4` — code écrit, tag à poser |
 | 4 | Factures, taxe de séjour, fiscal | `le-percepteur` | `v0.5` — code écrit, tag à poser |
 | 5 | Vitrine — événements, calendrier public, blocs de réservation | `monsieur-loyal` | `v0.6.0`, puis `v0.6.1` |
+| A | Convergence des stats — **les définitions** | `madame-soleil` | `1.0.0` dans le `package.json` ; **tag `v1.0.0` à poser** après relecture |
 | — | Veille des dates d'événements (`lib/events-watch.ts`) | — | `v0.7.0` |
 
 Plan détaillé : `C:\Users\alexa\.claude\plans\cheerful-toasting-rivest.md`.
@@ -591,6 +595,75 @@ cinq autres non confirmés, et au 2028-03-05 rappelle un catalogue vide alors qu
 aucune entrée à confirmer ; un événement déjà commencé et toujours non confirmé se lit « déjà
 commencé » ; une fenêtre qui chevauche le nouvel an tient ; un catalogue entièrement confirmé
 ne rappelle rien.
+
+### Lot A — les définitions de la page de statistiques
+
+> ⚠️ **`v1.0.0` n'est pas un tag consommable.** `lib/fiscal/commissions.ts` y garde encore
+> `computeCommissionBooking` sur l'ancienne sémantique (lignes de facture seules), alors que
+> `lib/commissions.ts` porte déjà la définition unique. Le premier tag qu'une application peut
+> épingler est celui du Lot B, qui bascule les deux sur `commissionOf`. **Aucun site ne passe de
+> v0.7.0 à v1.0.0.** (Arbitrage du douanier, 2026-09-12.)
+
+Premier lot d'une convergence en cinq : il pose les définitions, **aucune application ne les
+consomme encore**. Les deux apps restent épinglées sur `v0.6.1` et leurs charges utiles n'ont
+pas bougé d'un octet.
+
+| Chemin | Contenu | Vient de |
+|---|---|---|
+| `lib/commissions.ts` *(nouveau)* | `commissionOf`, `commissionFromInvoiceItems`, `isCommissionLine`, `COMMISSION_LINE_RE`, `invoiceLineTotal`, `listCommissionLines`. **La définition unique du commissionnement.** | `lib/fiscal/commissions.ts`, qui la réexporte et garde ses helpers de CA |
+| `lib/booking-status.ts` *(+)* | `countsAsSold` = ni exclu, ni provisoire | les deux routes de stats |
+| `lib/booking.ts` *(+)* | `units?: number` et `unitsOf(b)` — le poids d'une ligne en logements, défaut 1 | Barbusse le pose, Albiez laisse le défaut |
+| `lib/dates.ts` *(+)* | `daysInMonthKey("YYYY-MM")` ; `daysInMonth` existait déjà | trois copies de `new Date(y, m, 0)` |
+| `lib/stats.ts` *(+)* | `nightsInWindow`, `overlapsWindow`, `soldUnitNights`, `availableUnitNights`, `windowRevenue`, `buildMonthlySeries`, `computeIndicators`, et le renommage `YearComparison.projection` → `committedTotal` | écrit ici |
+| `lib/dashboard-stats.ts` *(nouveau)* | `DashboardStatsPayload`, `StayRow`, `StatsPeriod`, `periodBounds` — la charge utile **unique** des deux routes | écrit ici |
+| `scripts/verifier-indicateurs.ts` | La vérification de cohérence, exécutable **sans serveur ni Beds24** : `npm run verifier` | écrit ici |
+
+**Les huit indicateurs sont calculés une fois, et leurs bases sont publiées.** `stayNet`,
+`soldUnitNights` et `availableUnitNights` figurent dans la charge utile à côté des trois
+quotients qu'ils produisent. Ce n'est pas de la redondance : c'est ce qui permet de refaire les
+calculs à la main depuis la réponse, donc de prouver qu'il n'y a qu'un seul jeu de définitions
+sur la page. Une valeur qu'on ne peut pas recalculer est une valeur qu'il faut croire sur
+parole.
+
+**Deux assiettes, et elles ne sont pas interchangeables.** Le net encaissé compte les recettes
+sans nuits — kit de draps facturé à part, frais d'annulation, séjour facturé sans dates : les
+retirer creuserait un trou de canal Direct sur 2024 et 2025 chez Albiez. Le prix par nuitée et
+le RevPAR ne les comptent pas : une ligne sans nuit n'occupe rien. C'est écrit dans le type,
+dans la fonction et ici, pour qu'on ne le « corrige » pas dans six mois.
+
+**Deux sélections, et elles ne portent pas sur la même chose.** L'argent est retenu par le jour
+où la convention le fait tomber (`spreadRevenue`), les nuitées par recouvrement de la période.
+En `averagedPerNight` — la convention par défaut — les deux coïncident. En « à la réservation »,
+l'argent d'un séjour de novembre réservé en août tombe en août, dans une période où ce séjour
+n'a aucune nuit : c'est exactement ce que la convention dit, et le sélecteur est affiché
+au-dessus des cartes. La vérification de cohérence rejoue les quatre conventions pour cette
+raison.
+
+**Ce que la vérification garantit.** `npm run verifier` compile le module et son graphe
+d'imports en CommonJS dans `.verif/`, puis exécute 48 contrôles sur un jeu de séjours écrit à la
+main, contenant exprès les quatre pièges du lot — un statut `inquiry`, un séjour à cheval sur le
+1er janvier, une ligne sans nuit, une réservation prise le jour de l'arrivée :
+
+```
+prix moyen × nuitées vendues     = net des séjours
+RevPAR     × nuitées disponibles = net des séjours
+RevPAR                           = prix moyen × occupation
+```
+
+Les trois sont vérifiées sur les valeurs exactes puis sur les valeurs publiées à l'arrondi
+près, et la série mensuelle doit retomber sur les indicateurs au centime. C'est ce qui interdit
+au défaut D4 — deux RevPAR sur la même page — de revenir par une seconde formule.
+
+**`commissionOf` d'abord, les lignes de facture en repli.** Le champ `commission` est ce que le
+canal déclare à Beds24 ; la reconnaissance par libellé est une heuristique. Sur le compte de
+Barbusse elle ne matche **aucune** description réelle, d'où **0 €** de commissions affichées sur
+la page fiscale quand le champ en portait **7 076,89 €**. `lib/fiscal/commissions.ts` garde
+volontairement l'ancienne sémantique sous son ancien nom (`computeCommissionBooking`) : la
+bascule déplace le résultat fiscal de 7 076,89 €, et elle appartient au lot qui la mesure.
+
+**Ce que le lot ne fait pas** : il ne touche à aucune application, ne modifie aucune route et ne
+change aucun chiffre. Les 45 charges utiles de la photo de référence du 2026-09-12, relevées
+sous `TZ=UTC`, sont identiques au sha256 après le lot.
 
 ### Comment une application s'y branche
 
