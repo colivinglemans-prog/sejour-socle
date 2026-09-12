@@ -132,7 +132,8 @@ deux validations.
 | 2 | Beds24 + modèle canonique `Booking` | `champollion` | `v0.3` — code écrit, tag à poser |
 | 3 | Dashboard | `madame-soleil` | `v0.4` — code écrit, tag à poser |
 | 4 | Factures, taxe de séjour, fiscal | `le-percepteur` | `v0.5` — code écrit, tag à poser |
-| 5 | Vitrine — événements, calendrier public, blocs de réservation | `monsieur-loyal` | code écrit ; **`package.json` reste en 0.5.0**, la bascule de version et le tag `v0.6` restent à poser |
+| 5 | Vitrine — événements, calendrier public, blocs de réservation | `monsieur-loyal` | `v0.6.0`, puis `v0.6.1` |
+| — | Veille des dates d'événements (`lib/events-watch.ts`) | — | `v0.7.0` |
 
 Plan détaillé : `C:\Users\alexa\.claude\plans\cheerful-toasting-rivest.md`.
 
@@ -543,6 +544,53 @@ autorisant la redirection 3-D Secure sur l'iframe de paiement, le plafonnement a
 à la capacité (on pouvait composer 37 voyageurs pour une maison de 20), et la mise à jour
 fonctionnelle du cache de disponibilité, là où un objet capturé dans la closure perdait la
 première de deux réponses qui se croisent.
+
+### v0.7.0 — veille des dates d'événements
+
+| Chemin | Contenu | Vient de |
+|---|---|---|
+| `lib/events-watch.ts` | `EventWatchConfig`, `PublicationWindow`, `EventWatchAlert`, `watchEvents`, `formatEventWatch`. Dit **quand aller vérifier** qu'une date non confirmée l'est devenue. | écrit directement dans le socle, les deux appelants posés le même jour |
+
+**Ce n'est pas une détection, c'est un rappel.** Les organisateurs n'ont ni API ni flux : un
+calendrier de circuit paraît en octobre sur le site de l'organisateur, une fête de village sur
+Facebook ou par l'office de tourisme. La seule chose fiable est de rappeler à un humain d'aller
+voir, au bon moment, avec la liste de ce qui manque. Trois règles, toutes réglées par des
+données du site (règle 2) : l'**échéance** (une entrée `confirmed: false` dont le premier jour
+projeté est à moins de `deadlineDays`), le **trou de catalogue** (le catalogue de l'année en
+préparation — la suivante à partir d'un `MM-DD`, l'année en cours avant — doit compter au
+moins `minEvents` entrées) et la **fenêtre de publication** (la période de l'année où les
+organisateurs publient, avec la consigne du site — qui appeler, où regarder). La fenêtre ne
+rappelle que s'il reste quelque chose à vérifier.
+
+**Le trou de catalogue vaut toute l'année.** La première version ne regardait l'année
+suivante qu'à partir d'octobre : les trois relecteurs ont vu la même chose — le 1er janvier,
+elle basculait sur l'année d'après et se taisait avec le calendrier toujours vide, au moment
+où plus rien ne pouvait le signaler, puisque la règle d'échéance ne voit pas des entrées qui
+ne sont pas dans le catalogue. `from` marque désormais le jour où l'année **en préparation**
+devient la suivante ; avant lui, c'est l'année en cours qui doit être pleine.
+
+**Sans état, et c'est voulu.** Rien n'est mémorisé entre deux passages : la même alerte
+revient chaque semaine tant que le catalogue n'est pas mis à jour, et s'éteint seule le jour
+où il l'est. Un magasin « déjà notifié » transformerait un rappel qui insiste en rappel reçu
+une fois puis oublié. Conséquence pour les sites : pas de Redis, pas de coupe-circuit.
+
+**Le module rend le corps du message, jamais le titre.** Le corps est en français, comme
+tous les messages du socle ; le titre porte le nom du site, que le socle ne connaît pas
+(règle 1). Une date non confirmée n'y est affichée qu'au **mois** — c'est une projection,
+comme partout ailleurs dans `lib/events.ts`.
+
+**Un `NTFY_TOPIC` absent doit valoir un 500 chez l'appelant.** `sendNtfy` se contente sinon
+d'un `console.error`, et une veille qui se tait ressemble exactement à une veille qui n'a
+rien à dire — le principe 5 du protocole. Les deux routes le vérifient avant d'envoyer.
+
+Vérifié sur **14 scénarios** joués sur les deux catalogues réels, identiques sous `TZ=UTC` et
+`TZ=Europe/Paris` : rien à dire au 2026-09-12 des deux côtés ; Barbusse au 2026-10-05 signale
+« 5 entrées seulement » pour 2027 et ouvre la fenêtre lemans.org, et le redit encore au
+2027-01-11 si rien n'a bougé ; Albiez au 2027-03-15 signale Le Charoc à J-82 et liste les
+cinq autres non confirmés, et au 2028-03-05 rappelle un catalogue vide alors qu'il n'y a plus
+aucune entrée à confirmer ; un événement déjà commencé et toujours non confirmé se lit « déjà
+commencé » ; une fenêtre qui chevauche le nouvel an tient ; un catalogue entièrement confirmé
+ne rappelle rien.
 
 ### Comment une application s'y branche
 

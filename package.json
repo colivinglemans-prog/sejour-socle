@@ -1,6 +1,6 @@
 {
   "name": "@sejour/socle",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "description": "Socle partagé des sites de location saisonnière (Albiez, Coliving Barbusse).",
   "license": "UNLICENSED",
   "repository": {
