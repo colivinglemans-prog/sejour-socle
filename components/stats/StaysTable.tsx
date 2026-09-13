@@ -27,7 +27,16 @@ import { euros, shortDate } from "./format";
 /** Cinq lignes, puis « Voir les N » — le bouton vient de Barbusse. */
 const PREVIEW = 5;
 
-export default function StaysTable({ title, stays }: { title: string; stays: StayRow[] }) {
+export default function StaysTable({
+  title,
+  stays,
+  footnote,
+}: {
+  title: string;
+  stays: StayRow[];
+  /** Ce que le tableau couvre et que les cartes ne couvrent pas — écrit, pas déduit. */
+  footnote?: string;
+}) {
   const [expanded, setExpanded] = useState(false);
   const visible = expanded ? stays : stays.slice(0, PREVIEW);
 
@@ -143,6 +152,7 @@ export default function StaysTable({ title, stays }: { title: string; stays: Sta
       )}
 
       <p className="mt-3 text-xs leading-snug text-slate-400">
+        {footnote ? `${footnote} ` : ""}
         Le net est celui du séjour entier, pas de sa part tombant dans la période. Une nuitée =
         un logement pour une nuit ; « archive » désigne une ligne rejouée depuis l&apos;historique
         figé, absente de Beds24.

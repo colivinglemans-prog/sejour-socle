@@ -212,8 +212,16 @@ export default function StatsDashboard({
 
           {/* Pleine largeur et non côte à côte : sur une demi-colonne, les colonnes du tableau
               imposaient un défilement horizontal qui masquait le prix et le net. */}
-          <StaysTable title="Réservations récentes" stays={stats.recentStays} />
-          <StaysTable title="Meilleures nuitées" stays={stats.topStays} />
+          <StaysTable
+            title="Réservations récentes"
+            stays={stats.recentStays}
+            footnote={`Les tableaux couvrent toute la période, séjours à venir compris ; les cartes s'arrêtent au ${longDate(stats.period.elapsedTo)}.`}
+          />
+          <StaysTable
+            title="Meilleures nuitées"
+            stays={stats.topStays}
+            footnote={`Les tableaux couvrent toute la période, séjours à venir compris ; les cartes s'arrêtent au ${longDate(stats.period.elapsedTo)}.`}
+          />
         </div>
       )}
     </div>

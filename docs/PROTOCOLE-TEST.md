@@ -240,6 +240,59 @@ Le tag consommable du Lot B est **`v2.0.0`** (surface amputée : `computeCABooki
 `FetchStaysForFiscal` ; `YearComparison.projection` devient `committedTotal`). `v1.0.0` reste non
 consommable.
 
+### Lots C + D (charge utile unique et écran partagé) — critère d'acceptation chiffré
+
+Rejoué sous `TZ=UTC`, les deux apps sur le même tag, **à la même minute**. 32 charges utiles =
+2 sites × 4 périodes (`currentYear|previousYear|rolling12m|all`) × 4 conventions.
+
+| Grandeur | Attendu |
+|---|---|
+| Clés de premier niveau, Albiez vs Barbusse | `diff` **vide**, sur les 4 × 4 combinaisons. Seul `chart.byChannel` varie par les années présentes |
+| `npm run verifier` (socle) | **84/84**, sans serveur ni Beds24 |
+| Reproductibilité | Deux appels à une heure d'écart → charge utile **identique à l'octet** (aucun champ ne dérive d'un prix Beds24) |
+| `INV-STATS-4` (Σ barres réalisées = `indicators.netRevenue`) | **32/32**, tolérance `0,005 € × nb de mois + 0,005` |
+| Σ de toutes les barres = `committedRevenue.total` | en `averagedPerNight` seulement (le minimum garanti ne suit pas le sélecteur), même tolérance |
+| `indicators.grossRevenue − indicators.commissions = indicators.netRevenue` | **32/32**, au centime |
+| `committedRevenue.realized = indicators.netRevenue` sur `period=currentYear` | égalité stricte en `averagedPerNight` ; dans les trois autres conventions `committedRevenue` est **identique** à celui de la convention par défaut (il ne dépend pas de l'axe d'affichage) |
+| RevPAR = `stayNet ÷ availableUnitNights` | **32/32** ; un seul RevPAR par écran (carte et courbe) |
+| `comparison[année en cours].committedTotal = committedRevenue.total` | **32/32**, égalité stricte (ferme le C2 du dahu, 30 €) |
+| `comparison[année en cours].toDate = indicators.netRevenue` sur `currentYear` / `averagedPerNight` | **égalité stricte** — le filtre des années comparables porte sur les années produites, jamais sur les séjours |
+| Séjours à cheval sur le 1er janvier, Barbusse | `80062893` et `79264420` présents dans `chart`, `comparison` et `channelsByYear` de 2026 : **17 nuits, 447,40 € de brut, 364,17 € de net** |
+| Barbusse, unité = nuit de maison | `unitsTotal` **1**, `units` 1 (maison) / 1/9 (chambre) ; `soldUnitNights` sur `all` = 104 + 280/9 ≈ **135,1** nuits de maison ; occupation inchangée (≈ 43,6 % sur 2026), prix par nuit et RevPAR × 9 par rapport à la nuitée-chambre |
+| Aucune période ne commence avant le premier séjour connu | Barbusse `previousYear` : `period.from` = **2025-11-26**, occupation sur 36 jours et non 365 |
+| Accent de Barbusse | `#334155` — jamais `#FF385C`, qui est la couleur du canal Airbnb |
+| Albiez, `currentYear` net | **12 555,31 €** (13/09) ; `committedRevenue.total` 2026 = **13 670,04 €** |
+| `recentStays` / `topStays` | Listes **complètes**, non plafonnées ; assiette `[from, to]` en recouvrement ; `topStays` exclut les lignes à 0 nuit |
+
+**Réconciliation fiscale (Barbusse, exercice 2026, `projected=false`)**
+
+| Grandeur | Attendu |
+|---|---|
+| `INV-FISCAL-1` — `fiscal.realized` = `stats.indicators.grossRevenue` (part écoulée, `currentYear`) | **66 260,42 €** (13/09), au centime |
+| Commissions, fiscal = stats | **7 732,79 €** des deux côtés, au centime |
+| `INV-FISCAL-4` — net fiscal total vs `committedRevenue.total` | **66 825,09 € vs 66 825,08 €** — écart **≤ 0,01 € par exercice**, arrondi cumulé du prorata par nuit. **Ne jamais le rattraper par un ajustement.** Dette : `splitAmount` doit passer à `spreadRevenue`, pour que l'écart devienne impossible plutôt que toléré |
+| Albiez | Δ stats/fiscal sans objet (pas de page fiscale) ; aucun séjour à cheval, trois ans de suite |
+
+⚠️ `INV-FISCAL-1` s'énonce désormais sur la **part écoulée** : depuis le Lot C le fiscal impute au
+recouvrement et au prorata des nuits, comme la page de statistiques, et le CA total d'un exercice
+(`realized + confirmedUpcoming`) n'a plus d'équivalent dans une seule carte — il vaut le brut de
+`committedRevenue` (réalisé + confirmé), que la charge utile porte en net. Le relevé du Lot B
+(`76 024,50` des deux côtés sur la fenêtre d'arrivée) est historique.
+
+**Relevé du jour J, en production, à la même minute, Albiez d'abord :**
+
+1. `/api/dashboard/stats?period=currentYear&mode=averagedPerNight` sur les deux sites →
+   `indicators` complets, `committedRevenue`, `period.from/to/elapsedTo/asOf`, `unitsTotal` (**1** des deux côtés).
+2. `diff` des clés de premier niveau des deux réponses → **vide**.
+3. `/api/dashboard/fiscal?year=2026&projected=false` (Barbusse) → CA, commissions, nuits ; les
+   trois égalités du tableau ci-dessus.
+4. Matrice des portes inchangée : `stats | fiscal | taxe-sejour` → **401 / 403 / 200**, jeton forgé → **401**.
+5. Rappel du même `/stats` une heure plus tard → **octet pour octet identique**.
+6. Œil humain, **en mode app sur mobile**, les deux sites : captures côte à côte. Hors titre,
+   sous-titre et couleur d'accent, **aucune différence**. Vérifier nommément : la liste de cartes
+   sous `md` (aucun défilement horizontal), la mention `archive` écrite à plat, le bouton
+   « Voir les N », la réserve imprimée sous « Net encaissé », la date de fenêtre dans « À date ».
+
 ---
 
 ## Après le déploiement — la fumée en production

@@ -137,7 +137,8 @@ deux validations.
 | 4 | Factures, taxe de séjour, fiscal | `le-percepteur` | `v0.5` — code écrit, tag à poser |
 | 5 | Vitrine — événements, calendrier public, blocs de réservation | `monsieur-loyal` | `v0.6.0`, puis `v0.6.1` |
 | A | Convergence des stats — **les définitions** | `madame-soleil` | `v1.0.0` — **non consommable** |
-| B | Convergence des stats — **routes, brut par canal, fiscal sur le `Booking`, gardes** | `champollion`, `cerbere`, `le-percepteur` | **`v2.0.0`** — premier tag épinglable depuis `v0.7.0` |
+| B | Convergence des stats — **routes, brut par canal, fiscal sur le `Booking`, gardes** | `champollion`, `cerbere`, `le-percepteur` | `v2.0.0` |
+| C + D | Convergence des stats — **la charge utile unique et l'écran partagé** | `madame-soleil` | **`v3.0.0`** — le fiscal change des nombres publiés |
 | — | Veille des dates d'événements (`lib/events-watch.ts`) | — | `v0.7.0` |
 
 Plan détaillé : `C:\Users\alexa\.claude\plans\cheerful-toasting-rivest.md`.
@@ -775,6 +776,59 @@ entre deux pages), gardes sur `stats`, `fiscal`, `taxe-sejour`, `invoices/genera
 « engagé à ce jour ». **Résultat mesuré** : `/stats?period=fiscal` = `/fiscal?year=2026` =
 76 024,50 € chez Barbusse ; Albiez identique au centime sur 16 charges utiles. Le détail est dans
 `docs/PROTOCOLE-TEST.md`.
+
+### Lots C + D — une seule charge utile, un seul écran
+
+**Tag `v3.0.0`.** Majeur, non parce que l'écran est nouveau — il est additif — mais parce que
+`lib/fiscal/revenus.ts` **change les nombres publiés** d'une page fiscale : le fiscal impute au
+recouvrement et au prorata des nuits, comme `spreadRevenue` en convention « réparti par nuit »,
+et appelle `fetchStays` sur une fenêtre élargie d'un an en arrière. Chez Barbusse, 447,40 € de
+brut changent d'exercice — les 17 nuits de janvier 2026 de deux séjours de décembre 2025.
+`channelsByYear` prend désormais la convention en paramètre et suit l'argent nuit par nuit.
+
+| Chemin | Contenu |
+|---|---|
+| `lib/dashboard-stats.ts` *(+)* | `computeDashboardStats(input)` — l'assembleur : période, huit indicateurs, revenu engagé, série mensuelle, trois blocs de comparaison sur tout l'historique, deux tableaux, avertissements ; `parseStatsQuery` (`?period=&mode=`, défauts `currentYear` / `averagedPerNight`, valeur inconnue → défaut) ; `REVENUE_MODES`, `REVENUE_MODE_LABELS` ; `period.asOf` dans la charge utile |
+| `components/StatsDashboard.tsx` *(nouveau)* | L'écran entier, client, props `title`, `subtitle`, `accent`, `endpoint?`. Le conteneur `mx-auto max-w-6xl px-6 py-8` est dedans, le `DashboardNav` reste à la page |
+| `components/stats/*` *(nouveau, privé)* | `MetricCard`, `CommittedRevenue`, `MonthlyRevenueChart` (Par mois / Par année / Par canal), `OccupancyByMonth`, `YearComparisonBlock`, `ChannelsByYearChart`, `StaysTable` ; `format.ts` porte les arrondis d'affichage et les teintes d'accent — importé en relatif, hors de la carte `exports` à dessein |
+| `scripts/verifier-indicateurs.ts` | 48 → **84** contrôles : diff des clés de la charge utile contre une liste figée, INV-STATS-4 sur la charge utile, `comparison[année].committedTotal === committedRevenue.total`, C1, C2 |
+
+**Ce que fournit une route, et rien d'autre** : `bookings` déjà passés par `soldBookings`,
+`extras` (les recettes sans nuits d'Albiez ; rien chez Barbusse), `mode` et `period` lus par
+`parseStatsQuery`, `unitsTotal` (**1 des deux côtés** — chez Barbusse l'unité est la **nuit de
+maison**, et une nuit de chambre de l'époque à la chambre pèse 1/9, posé par `toBooking` ; décision
+de l'exploitant du 2026-09-13, qui renverse la nuitée-logement à 9 unités de l'arbitrage : elle
+montrait un prix moyen de 58 € et un RevPAR de 25 €, des chiffres de chambre pour une activité de
+maison entière — l'occupation ne change pas, le prix par nuit et le RevPAR sont ceux d'une maison),
+`markerOf` (période de vacances chez Albiez, événement du circuit chez Barbusse), `warnings`.
+Les deux routes tiennent en 55 et 75 lignes ; les deux pages rendent `<DashboardNav />` puis
+`<StatsDashboard title subtitle accent />`. Treize composants d'application ont disparu.
+
+**Un seul périmètre pour l'engagé et la comparaison, et une seule convention.** `committedRevenue`
+est calculé par `windowRevenue` sur l'exercice en cours, recettes sans nuits comprises, **toujours en
+« réparti par nuit »** — un minimum garanti est une propriété du carnet, pas de l'axe d'affichage ; en
+« date de réservation » le bloc affichait « 0 € confirmés » (le dahu). Et c'est
+`committedRevenue.total` qui devient `comparison[année].committedTotal` — pas un second calcul.
+Le dahu avait mesuré 30 € d'écart chez Albiez entre les deux blocs.
+
+**On écarte l'année tronquée, jamais le séjour.** La règle des « années comparables » (on garde à
+partir de la première année dont le premier séjour tombe en janvier) porte sur les **années
+produites**, pas sur les séjours en entrée. Filtrée sur l'arrivée, elle retirait des trois blocs de
+comparaison de Barbusse ses deux séjours à cheval sur le 1er janvier — présents dans les huit
+cartes du même écran. La première année gardée perd ses pourcentages de variation.
+
+**Ce que l'écran s'interdit.** Aucune infobulle : ce qui explique est imprimé, et servira tel
+quel à la vue PDF. Seules les couleurs qui codent quelque chose : canaux (`CHANNEL_COLORS`),
+seuils d'occupation (≥ 75 % émeraude, ≥ 50 % ambre, sinon rose), réalisé = accent plein et à venir
+= accent éclairci, RevPAR violet avec son axe. Les cartes sont blanches des deux côtés — le rose
+signifie Airbnb, qui n'est qu'un canal sur quatre. Aucun `if (site === …)` : quatre données, et
+`unitsTotal` vient de la charge utile qui a servi au calcul. La page n'a pas de mode dégradé : les
+routes d'argent répondent 403 au rôle restreint, jamais une charge utile allégée.
+
+**Mesuré au 2026-09-13, local `TZ=UTC`** : diff des clés de premier niveau Albiez / Barbusse vide sur
+les 16 combinaisons ; 32/32 invariants ; Barbusse fiscal 2026 `realized` = stats `grossRevenue`
+écoulé = 66 260,42 €, commissions 7 732,79 des deux côtés ; Albiez `currentYear` net 12 555,31 €,
+`committedTotal` 2026 = 13 670,04 €. Le détail est dans `docs/PROTOCOLE-TEST.md`.
 
 ### Comment une application s'y branche
 

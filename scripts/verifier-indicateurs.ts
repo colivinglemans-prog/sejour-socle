@@ -341,6 +341,17 @@ const PAYLOAD_KEYS = [
   "warnings",
 ];
 
+// La convention par defaut sert de reference : le revenu engage ne doit pas en dependre.
+const reference = computeDashboardStats({
+  bookings: BOOKINGS,
+  extras: EXTRAS,
+  mode: "averagedPerNight",
+  period: "currentYear",
+  unitsTotal: UNITS_TOTAL,
+  asOf: AS_OF,
+  warnings: { archiveMissing: false, beds24Error: null },
+});
+
 for (const mode of ["averagedPerNight", "byCheckIn", "byCheckOut", "byBookingDate"] as const) {
   const payload = computeDashboardStats({
     bookings: BOOKINGS,
@@ -365,9 +376,12 @@ for (const mode of ["averagedPerNight", "byCheckIn", "byCheckOut", "byBookingDat
   // Sur l'exercice en cours, la carte « Net encaissé » **est** le segment réalisé du revenu
   // engagé : même ventilation, même fenêtre, deux lectures. Égalité stricte, pas approchée.
   check(
-    `[${mode}] la carte « net encaisse » est le realise du revenu engage`,
-    payload.indicators.netRevenue === payload.committedRevenue.realized,
-    `${eur(payload.indicators.netRevenue)} vs ${eur(payload.committedRevenue.realized)}`,
+    `[${mode}] le revenu engage est le meme dans toutes les conventions (reparti par nuit)`,
+    mode === "averagedPerNight"
+      ? payload.indicators.netRevenue === payload.committedRevenue.realized
+      : payload.committedRevenue.realized === reference.committedRevenue.realized &&
+          payload.committedRevenue.committed === reference.committedRevenue.committed,
+    `${eur(payload.committedRevenue.realized)} realises + ${eur(payload.committedRevenue.committed)} confirmes`,
   );
 
   // INV-STATS-4 sur la charge utile : la somme des barres mensuelles déjà tombées retombe sur
@@ -380,9 +394,11 @@ for (const mode of ["averagedPerNight", "byCheckIn", "byCheckOut", "byBookingDat
     near(realizedSum, payload.indicators.netRevenue, tolerance),
     `${eur(realizedSum)} vs ${eur(payload.indicators.netRevenue)} sur ${payload.monthly.length} mois`,
   );
+  // Le minimum garanti est toujours « réparti par nuit » ; la série mensuelle suit la convention
+  // affichée. Les deux ne coïncident donc que dans la convention par défaut — c'est voulu.
   check(
-    `[${mode}] Σ de toutes les barres = minimum garanti`,
-    near(wholeSum, payload.committedRevenue.total, tolerance),
+    `[${mode}] Σ de toutes les barres = minimum garanti (en reparti par nuit seulement)`,
+    mode !== "averagedPerNight" || near(wholeSum, payload.committedRevenue.total, tolerance),
     `${eur(wholeSum)} vs ${eur(payload.committedRevenue.total)}`,
   );
 

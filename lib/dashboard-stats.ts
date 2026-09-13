@@ -87,19 +87,27 @@ export function periodBounds(
   firstStay: string | null,
 ): { from: string; to: string } {
   const year = Number(asOf.slice(0, 4));
-  switch (period) {
-    case "previousYear":
-      return { from: `${year - 1}-01-01`, to: `${year - 1}-12-31` };
-    case "rolling12m":
-      // 365 jours, borne de début incluse — et composés par `addDays`, jamais en recollant
-      // l'année précédente au jour du mois : le 29 février 2028 rendrait « 2027-02-29 ».
-      return { from: addDays(asOf, -364), to: asOf };
-    case "all":
-      return { from: firstStay ?? `${year}-01-01`, to: `${year + 1}-12-31` };
-    case "currentYear":
-    default:
-      return { from: `${year}-01-01`, to: `${year}-12-31` };
-  }
+  const bounds = (() => {
+    switch (period) {
+      case "previousYear":
+        return { from: `${year - 1}-01-01`, to: `${year - 1}-12-31` };
+      case "rolling12m":
+        // 365 jours, borne de début incluse — et composés par `addDays`, jamais en recollant
+        // l'année précédente au jour du mois : le 29 février 2028 rendrait « 2027-02-29 ».
+        return { from: addDays(asOf, -364), to: asOf };
+      case "all":
+        return { from: firstStay ?? `${year}-01-01`, to: `${year + 1}-12-31` };
+      case "currentYear":
+      default:
+        return { from: `${year}-01-01`, to: `${year}-12-31` };
+    }
+  })();
+  // Aucune période ne commence avant le premier séjour connu — la règle de « tout
+  // l'historique », appliquée à toutes. Barbusse a ouvert le 26 novembre 2025 : « Exercice
+  // précédent » borné au 1er janvier divisait 36 jours d'activité par 365, et affichait 1,8 %
+  // d'occupation pour 17,9 % réels (le chef de stand, 2026-09-13). La borne haute ne bouge pas.
+  const from = firstStay && firstStay > bounds.from && firstStay <= bounds.to ? firstStay : bounds.from;
+  return { from, to: bounds.to };
 }
 
 /**
@@ -306,9 +314,17 @@ export function computeDashboardStats(input: DashboardStatsInput): DashboardStat
    *
    * Périmètre : séjours **et** recettes sans nuits, comme partout ailleurs. Les recettes
    * restent dans les totaux — les retirer creuserait un trou de canal Direct sur 2024 et 2025.
+   *
+   * **Toujours en convention « réparti par nuit », quelle que soit celle choisie en haut de
+   * page.** Un minimum garanti est une propriété du carnet, pas de l'axe d'affichage : en
+   * « date de réservation », tout ce qui est réservé l'est dans le passé, et le bloc affichait
+   * « 0 € confirmés » alors que 1 114,73 € de nuits d'Albiez restaient à venir — 4 134 € de
+   * moins que le même total dans le bloc d'à côté (le dahu, 2026-09-13). Réalisé = nuits déjà
+   * passées, confirmé = nuits à venir ; c'est la seule lecture où ces deux mots veulent dire
+   * quelque chose.
    */
   const year = Number(asOf.slice(0, 4));
-  const engaged = windowRevenue(bookings, extras, mode, {
+  const engaged = windowRevenue(bookings, extras, "averagedPerNight", {
     from: `${year}-01-01`,
     to: `${year}-12-31`,
     asOf,

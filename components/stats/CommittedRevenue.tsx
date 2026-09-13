@@ -70,8 +70,10 @@ export default function CommittedRevenue({
 
       <p className="mt-3 text-xs leading-snug text-slate-400">
         Minimum garanti si plus aucune réservation n&apos;était prise d&apos;ici au 31 décembre.
-        Rien n&apos;y est extrapolé : aucun jour libre n&apos;est valorisé. Les recettes sans
-        nuits y figurent, comme dans tous les autres totaux de la page.
+        Rien n&apos;y est extrapolé : aucun jour libre n&apos;est valorisé. Réparti par nuit —
+        réalisé = nuits déjà passées, confirmé = nuits à venir — quelle que soit la convention
+        choisie en haut de page. Les recettes sans nuits y figurent, comme dans tous les autres
+        totaux de la page.
       </p>
     </section>
   );

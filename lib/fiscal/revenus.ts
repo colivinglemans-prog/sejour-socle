@@ -17,6 +17,7 @@
  * dans le `toBooking` de chaque site : `gross` hors taxe de séjour, `commission = commissionOf`.
  * Ce module lit ces deux champs, et rien d'autre.
  */
+import { unitsOf } from "../booking";
 import type { SoldBooking } from "../booking-status";
 import { daysBetween } from "../dates";
 import { nightsInWindow, overlapsWindow } from "../stats";
@@ -173,7 +174,9 @@ async function computeBeds24Revenus(
     commissionsUpcoming += com.upcoming;
     const start = b.arrival < yearStart ? yearStart : b.arrival;
     const end = b.departure > yearEnd ? yearEnd : b.departure;
-    occupiedNights += Math.max(0, daysBetween(start, end));
+    // Pondéré par le poids en logements de la ligne, comme la page de statistiques : chez
+    // Barbusse une nuit de chambre de l'époque vaut un neuvième de nuit de maison.
+    occupiedNights += Math.max(0, daysBetween(start, end)) * unitsOf(b);
   }
 
   const yearDays = daysBetween(yearStart, yearEnd) + 1;
