@@ -221,6 +221,20 @@ done
 Et le site n'est **jamais** `organizer` : `grep -o '"organizer":{[^}]*}'` ne doit pas contenir le
 nom du site.
 
+**Le pendant côté CTA (v3.3.0)** — sur l'article d'un événement **non confirmé**, le bloc de
+réservation reste, mais il dit que les dates sont provisoires. Le CTA est client : la phrase
+n'est pas dans le HTML prérendu, il faut un navigateur (`--playwright`) ou vérifier que le
+libellé est bien câblé dans le dictionnaire du site.
+
+```bash
+# Attendu : 0 nœud Event…
+curl -sL "$BASE/fr/blog/<slug-non-confirme>" | grep -c '"@type":"Event"'
+# …et, dans le rendu navigateur, la phrase `provisionalDates` du site sous le titre du bloc.
+```
+
+Un article non confirmé sans la phrase est un défaut du site, pas du socle : le champ est
+optionnel et le compilateur ne le réclame pas.
+
 ### Invariants permanents des statistiques (arbitrage du 2026-09-12)
 
 ```

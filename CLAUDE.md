@@ -141,6 +141,7 @@ deux validations.
 | C + D | Convergence des stats — **la charge utile unique et l'écran partagé** | `madame-soleil` | **`v3.0.0`** — le fiscal change des nombres publiés |
 | 5 (suite) | Vitrine — **i18n et SEO** : `lib/locales.ts`, `lib/seo.ts` (hreflang, JSON-LD d'article, négociation de langue) | `poisson-babel` | `v3.1.0` |
 | 5 (suite) | Événements — **les champs recommandés du nœud `Event`** (`organizer`, `performer`, `tickets`, `article`) | `le-douanier`, `chef-de-stand`, `le-dahu` | `v3.2.0` |
+| 5 (suite) | Événements — **le CTA annonce les dates provisoires** (`EventBookingLabels.provisionalDates`) | `le-douanier`, `chef-de-stand` | `v3.3.0` |
 | — | Veille des dates d'événements (`lib/events-watch.ts`) | — | `v0.7.0` |
 
 Plan détaillé : `C:\Users\alexa\.claude\plans\cheerful-toasting-rivest.md`.
@@ -517,7 +518,7 @@ Vercel :
 | `lib/booking-url.ts` | `bookingUrl` — l'URL `booking2.php` composée à un seul endroit. | trois copies, mêmes paramètres dans le même ordre |
 | `components/ReservationCalendar.tsx` | Le calendrier public : deux mois, huit états de case, séjour minimum, fermetures, compteurs, modale Beds24. | les deux, à 80 % identiques |
 | `components/EventBanner.tsx` | L'encart « prochaine édition » — **serveur**, figé au build. | Albiez |
-| `components/EventBookingCTA.tsx` | Le bloc de réservation de fin d'article — **client**, sonde la disponibilité. | Barbusse |
+| `components/EventBookingCTA.tsx` | Le bloc de réservation de fin d'article — **client**, sonde la disponibilité. Depuis v3.3.0, `labels.provisionalDates` annonce une fenêtre projetée quand `confirmed` est `false`. | Barbusse |
 
 **`EventBanner` et `EventBookingCTA` ne sont pas le même objet et ne doivent pas être
 fusionnés.** La bannière répond à « quand est la prochaine édition » et doit être dans le HTML
@@ -902,6 +903,31 @@ une épreuve complète retire la donnée.
 
 Le protocole (`docs/PROTOCOLE-TEST.md`, « Les événements ») vérifie qu'aucune URL de réservation
 des sites n'apparaît dans `offers`, et que `description` change entre `/fr/` et `/en/`.
+
+### v3.3.0 — le bloc de réservation annonce les dates provisoires
+
+Premier cas, chez Barbusse, d'un événement `confirmed: false` relié à un article avec CTA (les
+24 Heures Moto 2027, dont l'ACO n'a pas publié les dates). Le JSON-LD s'était tu, le calendrier
+affichait « 24h Moto ? », mais `EventBookingCTA` annonçait « Du 15 au 20 avril · 5 nuits » sans
+un mot sur la nature de ces dates.
+
+| Chemin | Contenu | Vient de |
+|---|---|---|
+| `components/EventBookingCTA.tsx` | `EventBookingLabels.provisionalDates?` — phrase rendue quand `event.confirmed` est `false`, sous la ligne de dates (états libre / partiel / panne) et sous le corps de l'état complet. | Barbusse |
+
+**On prévient, on ne cache pas.** La décision côté Barbusse est écrite depuis le Lot 5 : un
+événement non confirmé garde son CTA, la maison est bel et bien réservable sur ces nuits. Ce qui
+change est la nature annoncée des dates, pas la fenêtre ni le lien Beds24.
+
+**En texte seul**, comme `EventBanner` traite le même fait : pas de jeton ambre dans le contrat
+de thème, et deux composants voisins qui traiteraient le même fait avec deux grammaires
+visuelles seraient une régression. Le libellé n'est **pas** `EventBannerLabels.toBeConfirmed` :
+là-bas il remplace les dates, ici il les complète.
+
+**Optionnel, donc mineur.** Un champ requis aurait cassé le seul appelant pour une phrase qu'il
+fournit de toute façon, et imposé à Albiez cinq traductions pour un composant qu'il ne monte
+pas. Le type ne protège de rien (`""` compile) : le garde-fou est le protocole, qui vérifie que
+l'article non confirmé porte à la fois **zéro** nœud `Event` et **un** CTA avec la phrase.
 
 ### Comment une application s'y branche
 

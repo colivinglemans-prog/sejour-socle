@@ -31,6 +31,23 @@ export interface EventBookingLabels {
   book: string;
   seeCalendar: string;
   loading: string;
+  /**
+   * Phrase affichée quand `event.confirmed` est `false` : l'organisateur n'a pas publié ses
+   * dates, la fenêtre proposée est une projection sur l'édition précédente. Le bloc reste —
+   * on prévient, on ne cache pas — mais il ne doit jamais présenter des dates supposées
+   * comme acquises.
+   *
+   * Affichée **aussi dans l'état complet**, où aucune date n'est montrée : la phrase doit se
+   * tenir seule, sans renvoyer à « la fenêtre ci-dessus ».
+   *
+   * Ce n'est pas `EventBannerLabels.toBeConfirmed` : là-bas le libellé **remplace** les
+   * dates par un mois, ici il les **complète**. Une même entrée de dictionnaire ne peut pas
+   * servir aux deux.
+   *
+   * Optionnelle : absente, le composant se comporte comme avant. Le garde-fou est le
+   * protocole de test, pas le compilateur.
+   */
+  provisionalDates?: string;
 }
 
 export interface EventBookingCTAProps {
@@ -150,6 +167,10 @@ export default function EventBookingCTA({
       timeZone: "UTC",
     });
 
+  // Dates non publiées par l'organisateur : la fenêtre est une projection, et le bloc le dit
+  // dans chaque état où il s'affiche. En texte seul, comme `EventBanner` traite le même fait.
+  const provisional = !event.confirmed ? labels.provisionalDates : undefined;
+
   // Événement terminé : l'article reste en ligne comme archive, sans bloc de réservation.
   if (status === "hidden") return null;
 
@@ -166,6 +187,7 @@ export default function EventBookingCTA({
       <div className="mt-12 rounded-xl border border-border bg-light-bg px-6 py-8">
         <p className="text-lg font-semibold text-foreground">{labels.soldOutTitle}</p>
         <p className="mt-2 text-sm text-secondary">{labels.soldOutBody}</p>
+        {provisional && <p className="mt-2 text-sm text-secondary">{provisional}</p>}
         <a
           href={calendarHref}
           className="mt-5 inline-block rounded-lg border border-border bg-background px-6 py-3 text-sm font-semibold text-foreground transition-colors hover:bg-light-bg"
@@ -192,6 +214,7 @@ export default function EventBookingCTA({
           {labels.range(fmt(range.from), fmt(range.to), range.nights)}
         </p>
       )}
+      {provisional && <p className="mt-2 text-sm text-secondary">{provisional}</p>}
       <p className="mt-3 text-sm text-secondary">{labels.pitch}</p>
       <div className="mt-5 flex flex-wrap items-center gap-3">
         {bookingUrl && (
