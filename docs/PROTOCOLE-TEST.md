@@ -78,9 +78,16 @@ supplémentaire est une régression.
 
 | Mesure | Valeur attendue |
 |---|---|
-| Barbusse, CA `fiscal` | `77246.92`, 55 réservations, 44 % |
-| Albiez, net / brut / commissions / nuits | `37514.05` / `43938.37` / `6424.32` / 525 |
-| Fuite viewer (voir ci-dessous) | 50 réservations, 15 clés, **0** `NUKI_PIN`, **14 813 octets** |
+| Barbusse, `/api/dashboard/stats?period=fiscal` = `/api/dashboard/fiscal?year=2026&projected=false` | **le même nombre**, au centime, sur le CA (`totalRevenue` = `realized + confirmedUpcoming`) et sur le réalisé. Relevé du 2026-09-13 : `76024.50` / `65835.02`, 54 réservations, commissions `9541.59` |
+| Barbusse, Σ `price` des vendues − taxe de séjour des lignes | = CA fiscal. Relevé : 76 842,20 − 817,70 = 76 024,50 ; la page `taxe-sejour` rend 817,70 |
+| Albiez, net / brut / commissions / nuits (« toute ») | `37514.05` / `43938.37` / `6424.32` / 525 — **inchangés par le Lot B**, vérifié 16/16 |
+| Fuite viewer (voir ci-dessous) | **54** réservations (les 4 `new` sont visibles depuis le Lot B), 15 clés, **0** `NUKI_PIN`, **15 722 octets** |
+
+⚠️ L'ancien invariant `Barbusse, CA fiscal 77 246,92 €, 55 réservations, 44 %` est **supprimé** : c'était
+`projectedTotal` — réalisé + confirmé + moyenne journalière × jours restants — plus 1 344,35 € d'un
+bien saisi à la main. Une extrapolation qui changeait chaque jour, additionnée à une saisie. Aucun
+invariant ne porte plus sur une valeur `projected=true` ni sur un bien `source: "manuel"` ; le bien
+manuel se relève sur sa propre ligne, comme témoin de saisie.
 
 ⚠️ **`dynamicPricingRevenue` n'est pas un témoin valable** : il dérive des prix Beds24 futurs et
 change tout seul d'une heure à l'autre. Stable au sein d'un déploiement, pas entre deux.
@@ -112,8 +119,10 @@ locale. Une fenêtre étroite ne prouve rien.
 | `/api/dashboard/bookings` | 401 | 200 réduit | 200 complet |
 | `/api/dashboard/stats` | 401 | **403** | 200 |
 | `/api/dashboard/fiscal`, `taxe-sejour`, `invoices/prefill` | 401 | **403** | 200 |
+| `/api/dashboard/invoices/generate` (POST, Barbusse) | 401 | **403** | 400 sur payload vide — la garde est franchie, le compteur de factures n'est pas atteint |
 | `/api/dashboard/heating` (Barbusse) | 401 | **200** — voulu | 200 |
 | `/api/dashboard/code-acces` (Albiez) | 401 | **403** | 200 |
+| `/api/dashboard/calendrier` (Albiez) | 401 | **200** — voulu, projection viewer | 200 |
 | `/api/cron/*` sans en-tête | 401 | — | — |
 
 Tester aussi un **jeton forgé** non signé portant `{"role":"admin"}` : doit rendre 401.
@@ -174,42 +183,62 @@ INV-STATS-5 — new compte comme vendu ; request, inquiry, black et cancelled, j
 `RevPAR × nuitées disponibles = net`, `RevPAR = prix moyen × occupation` et
 `brut − commissions = net`.
 
-### Critère d'acceptation du Lot B (convergence des stats)
+### Lot B (convergence des stats) — critère mesuré, et ce qui est devenu invariant
 
-`computeCommissionBooking` devient `commissionOf`. Écart attendu sur `/api/dashboard/fiscal` de
-Barbusse : **+7 076,89 € de commissions**, net fiscal diminué d'autant ; **le CA brut ne bouge
-pas** (`computeCAFromInvoiceItems` exclut déjà les mêmes lignes via `isCommissionLine`). Sur
-`/api/dashboard/stats`, **en net** (la série de référence du socle) : **−404,72 € et −15 nuitées**
-(l'`inquiry` directe seule — les quatre `new`, 302,31 € de net et 10 nuitées, **restent** : ce sont
-des Airbnb effectués) ; **+364,17 €** (447,40 € de brut) et +17 nuitées sur l'exercice 2026 — deux
-séjours à cheval sur le 1er janvier. Albiez : rien ne sort ; `forwardOccupancy90` reste à 30 % et
-`committedRevenue.committed` reste non nul — un zéro y serait une régression. Le rôle `viewer`
-voit désormais les `new` : l'invariant « 50 réservations, 14 813 octets » bouge (+4 lignes chez
-Barbusse dans la fenêtre du test), **pas** les 15 clés ni le zéro `NUKI_PIN`. Bornes de fenêtre **incluses des deux côtés** dans le socle, là où la route de Barbusse
-excluait la droite : **+9 nuitées-logement de dénominateur par fenêtre**, et +2 de numérateur sur
-2025 (la nuit du 31/12) ; l'occupation 2026 passe de 38,84 % à 38,69 %. Tout autre écart est une
-régression.
+Le critère provisoire « +7 076,89 € de commissions, CA brut inchangé » était **faux par
+construction** : les lignes de facture Airbnb sont le versement hôte, déjà nettes de la commission
+(qui n'existe que dans le champ `commission`), donc le CA fiscal « par lignes » rendait un net pour
+Airbnb et un brut pour les autres. Le Lot B a posé **une seule définition du brut, dans le
+`toBooking` de chaque site** — `gross = price − taxe de séjour des lignes`, `commission =
+commissionOf`, `net = gross − commission`, `price` faisant foi — et le fiscal lit ces champs.
 
-⚠️ **Le critère « +7 076,89 € de commissions, CA brut inchangé » est faux tel quel**, et le test
-de réconciliation stats ↔ fiscal ne peut pas encore être écrit. Décomposition de l'écart de
-4 594,11 € entre `Σ price` et le CA fiscal des 55 lignes acquises de Barbusse (2026-09-13) :
-779,01 € de taxe de séjour (→ `Booking.touristTax`, tranché) et **3 815,10 € qui sont la
-commission Airbnb** — sur ce canal `price` = Σ lignes de facture + commission, donc les lignes
-Airbnb sont le versement hôte, déjà **nettes**, et `computeCAFromInvoiceItems` y rend un net
-(Booking.com : écart 0,00 €, lignes brutes ; direct : `price` contient la taxe comme les lignes,
-et le −465,60 € vient de deux réservations modifiées dont la facture garde l'ancien groupe).
-Basculer la page fiscale sur `commissionOf` sans redéfinir son CA compterait 4 543,53 € de
-commission Airbnb **deux fois**. Note de cadrage `champollion` du 2026-09-13 : une seule formule,
-`gross = price − touristTaxFromInvoiceItems`, `net = gross − commissionOf` ; sur les 59 lignes
-vendues, attendu **brut 63 105,95 € · commissions 7 076,89 € · net 56 029,06 € · taxe 779,01 €**,
-identique sur `/stats` (« toute ») et `/fiscal` **si** le fiscal adopte `countsAsSold` et lit
-`gross`/`commission` du `Booking` au lieu de ses lignes. Le critère définitif est écrit ici avant
-la première ligne de code de route, après passage du douanier. L'invariant `77246.92` ci-dessus devient faux par construction ; la nouvelle
-valeur sera relevée et consignée avec sa justification.
+**Mesuré le 2026-09-13, local `TZ=UTC`, contre la production du 12/09 (Barbusse) :**
 
-⚠️ **`v1.0.0` n'est pas un tag consommable** : la page fiscale y garde l'ancienne sémantique. Le
-premier tag épinglable par une application est celui du Lot B. Aucun site ne passe de `v0.7.0`
-à `v1.0.0`.
+| Grandeur | Avant | Après | Δ | Cause |
+|---|---:|---:|---:|---|
+| `/stats?period=fiscal` `totalRevenue` | 77 246,92 | **76 024,50** | −1 222,42 | −404,72 `inquiry` · −817,70 taxe de séjour sortie du brut |
+| `/stats?period=fiscal` réservations | 55 | **54** | −1 | `countsAsSold` |
+| `/fiscal?year=2026&projected=false` réalisé + confirmé | 70 884,09 | **76 024,50** | +5 140,41 | commission Airbnb réintégrée dans le brut, lignes périmées sorties, `inquiry` sortie |
+| `/fiscal` commissions (réalisées + à venir) | 0,00 | **9 541,59** | +9 541,59 | D1 : le motif de libellé ne matchait rien, `commissionOf` lit le champ |
+| `/fiscal` `bic.ca` du bien Beds24 | 97 859,73 *(projeté)* | **76 024,50** | — | le défaut est devenu contractuel ; `?projected=true` rend 104 165,74, libellé « simulation » |
+| `/stats?period=year` `totalRevenue` | 14 421,64 | **14 319,62** | −102,02 | taxe de séjour |
+| Albiez, 16 charges utiles | — | **identiques** sur net, brut, commissions, graphe, canaux | 0,00 | seules les clés datées bougent (photo du 12, mesure du 13), réconciliées à la ligne |
+| Albiez, `comparaison[2026]` | `projection` 16 126 à 17 234 selon l'onglet | **`committedTotal` 13 640,04**, valeur unique | — | l'attendu libre était une extrapolation |
+
+**Invariants permanents ajoutés :**
+
+```
+INV-FISCAL-1 — Sur le même exercice, le CA de /api/dashboard/fiscal (projected=false, bien
+Beds24, réalisé + confirmé) = totalRevenue de /api/dashboard/stats?period=fiscal, au centime.
+Et realized fiscal = projection.realizedRevenue des stats. Relevé : 76 024,50 / 65 835,02.
+
+INV-FISCAL-2 — Σ price des nuits vendues − Σ touristTax = CA fiscal. Relevé : 76 842,20 − 817,70.
+
+INV-FISCAL-3 — Σ touristTax des Booking = total collecté de /api/dashboard/taxe-sejour, au
+centime. Relevé : 817,70 des deux côtés. ⚠️ CONDITIONNEL : la page taxe interroge en fenêtre de
+DÉPART, le fiscal en fenêtre d'ARRIVÉE. L'égalité tient tant qu'aucun séjour à cheval sur le
+31/12 ne porte de ligne de taxe (Airbnb n'en porte jamais). Un Booking.com à cheval la casserait
+sans prévenir : dans ce cas l'écart doit être égal à la taxe de ce séjour, et rien d'autre.
+```
+
+**Quatre lignes de facture anomales chez Barbusse, nommées pour qu'on ne les « corrige » pas
+dans le code** : `82274645` et `80467451` (Airbnb, la ligne d'origine cohabite avec la ligne
+refaite, −193,74 € si les lignes faisaient foi), `80768054` (direct, deux groupes de lignes
+entiers), `81056833` (direct, remise manuelle de −22,00 € non répercutée dans `price`). `price`
+fait foi : +22,00 € d'erreur documentée, à corriger **dans Beds24**, pas ici. Un libellé de
+taxe « 3% » nu échappe au motif : le remède est aussi dans Beds24 (« Taxe de séjour 3% »).
+
+**Ce qui n'a pas bougé et devait ne pas bouger** : chauffage, 8 crons (401 sans en-tête,
+keepalive `ok` sur les trois jetons), compteur de factures (`invoices/generate` admin sur payload
+vide → 400 avant le compteur), badge d'événement, vitrine 5 locales, redirections `/reservation`.
+`/dashboard/water-heater` répond 500 en local faute d'identifiants Cozytouch : **à vérifier en
+preview**.
+
+Le tag consommable du Lot B est **`v2.0.0`** (surface amputée : `computeCABooking`,
+`computeCAFromInvoiceItems`, `computeCommissionBooking`, `sumCommissions` et
+`lib/fiscal/commissions.ts` disparaissent ; `FetchBookingsForFiscal` devient
+`FetchStaysForFiscal` ; `YearComparison.projection` devient `committedTotal`). `v1.0.0` reste non
+consommable.
 
 ---
 
@@ -257,6 +286,11 @@ Aucun navigateur sans tête n'est installé dans ces dépôts, et c'est le trou 
 | `vercel --prod` | envoie le **répertoire local**, pas le dernier commit | vérifier `git status` avant |
 | `toISOString()` pour composer un jour | décale d'un jour huit mois par an | `@sejour/socle/lib/dates` |
 | Une URL en `Disallow` | son `noindex` n'est jamais lu | autoriser l'exploration **et** poser `noindex` |
+| Un CA « reconstitué depuis les lignes de facture » | net chez Airbnb (versement hôte), brut ailleurs — 3 884,19 € d'écart entre deux pages du même site | le brut se définit **une fois**, dans le `toBooking` ; tout le reste lit `gross` |
+| Un attendu écrit en brut pour une série en net | fait lire une régression là où il n'y en a pas (−371,40 contre −302,31) | dire l'unité de chaque écart attendu |
+| Un attendu « rien ne bouge » sur des agrégats fenêtrés | faux dès le lendemain (`occupation90Jours` glisse d'un jour) | séparer l'argent (invariant) des clés datées (à réconcilier à la ligne) |
+| Une photo sans vérifier qu'elle lit le paramètre | 45 fichiers identiques entre conventions | les sha256 des quatre conventions doivent différer |
+| Une fonction qui lit l'horloge en secret | irrejouable à date fixe, 44,58 € d'écart fantôme | `asOf?` injectable partout, `todayParis()` seulement en défaut |
 
 ---
 

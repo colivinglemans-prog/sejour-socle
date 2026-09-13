@@ -136,7 +136,8 @@ deux validations.
 | 3 | Dashboard | `madame-soleil` | `v0.4` — code écrit, tag à poser |
 | 4 | Factures, taxe de séjour, fiscal | `le-percepteur` | `v0.5` — code écrit, tag à poser |
 | 5 | Vitrine — événements, calendrier public, blocs de réservation | `monsieur-loyal` | `v0.6.0`, puis `v0.6.1` |
-| A | Convergence des stats — **les définitions** | `madame-soleil` | `1.0.0` dans le `package.json` ; **tag `v1.0.0` à poser** après relecture |
+| A | Convergence des stats — **les définitions** | `madame-soleil` | `v1.0.0` — **non consommable** |
+| B | Convergence des stats — **routes, brut par canal, fiscal sur le `Booking`, gardes** | `champollion`, `cerbere`, `le-percepteur` | **`v2.0.0`** — premier tag épinglable depuis `v0.7.0` |
 | — | Veille des dates d'événements (`lib/events-watch.ts`) | — | `v0.7.0` |
 
 Plan détaillé : `C:\Users\alexa\.claude\plans\cheerful-toasting-rivest.md`.
@@ -685,7 +686,7 @@ sans branche par canal — `touristTax` par les lignes, `gross = price − touri
 et `price` fait foi sur les deux modifiées (+22,00 € d'erreur résiduelle documentée).
 
 **Ce que la vérification garantit.** `npm run verifier` compile le module et son graphe
-d'imports en CommonJS dans `.verif/`, puis exécute 50 contrôles sur un jeu de séjours écrit à la
+d'imports en CommonJS dans `.verif/`, puis exécute 48 contrôles sur un jeu de séjours écrit à la
 main, contenant exprès les pièges du lot — une `inquiry`, une `cancelled`, un `black` et un `new`,
 un séjour à cheval sur le 1er janvier, une ligne sans nuit, une réservation prise le jour de
 l'arrivée :
@@ -703,13 +704,77 @@ au défaut D4 — deux RevPAR sur la même page — de revenir par une seconde f
 **`commissionOf` d'abord, les lignes de facture en repli.** Le champ `commission` est ce que le
 canal déclare à Beds24 ; la reconnaissance par libellé est une heuristique. Sur le compte de
 Barbusse elle ne matche **aucune** description réelle, d'où **0 €** de commissions affichées sur
-la page fiscale quand le champ en portait **7 076,89 €**. `lib/fiscal/commissions.ts` garde
-volontairement l'ancienne sémantique sous son ancien nom (`computeCommissionBooking`) : la
-bascule déplace le résultat fiscal de 7 076,89 €, et elle appartient au lot qui la mesure.
+la page fiscale quand le champ en portait **7 076,89 €**. Au Lot A, `lib/fiscal/commissions.ts`
+gardait l'ancienne sémantique sous son ancien nom ; le Lot B l'a supprimé (voir plus bas).
 
 **Ce que le lot ne fait pas** : il ne touche à aucune application, ne modifie aucune route et ne
 change aucun chiffre. Les 45 charges utiles de la photo de référence du 2026-09-12, relevées
 sous `TZ=UTC`, sont identiques au sha256 après le lot.
+
+### Lot B — le brut par canal, le fiscal sur le `Booking`, les gardes
+
+**Tag `v2.0.0`, le premier épinglable depuis `v0.7.0`.** Majeur parce que la surface publique
+est amputée : `lib/fiscal/commissions.ts` n'existe plus (`computeCABooking`,
+`computeCAFromInvoiceItems`, `computeCommissionBooking`, `sumCommissions`, `listCommissionsBooking`
+— zéro appelant hors du socle, vérifié), `FetchBookingsForFiscal` devient `FetchStaysForFiscal`
+et prend des `SoldBooking[]`, `RevenusDeps.fetchBookings` devient `fetchStays`,
+`RevenusBien.commissionsUpcoming` apparaît, `computeBICBien` ne projette plus par défaut.
+
+**Ce que la mesure a établi, canal par canal, sur les 61 lignes de Barbusse (`champollion`,
+2026-09-13).** `price` est le brut partout, prouvé au centime : Airbnb `price = versement hôte +
+commission` (39/41 — les lignes de facture sont le versement, la commission n'existe **que** dans
+le champ), Booking.com `price = hébergement + ménage + City tax` (3/3), direct `price = Σ charges
+taxe comprise` (12/14), Abritel 1/1. D'où **une seule formule, sans branche par canal**, écrite
+dans le `toBooking` de chaque site et nulle part ailleurs :
+
+```
+touristTax = touristTaxFromInvoiceItems(b.invoiceItems)   // lib/taxe-sejour
+gross      = round2(price) − touristTax
+commission = commissionOf(b)                               // lib/commissions
+net        = gross − commission
+```
+
+Le fiscal reconstituait un « CA brut » depuis les lignes : il rendait un **net** pour Airbnb et un
+brut pour les autres, 3 884,19 € d'écart avec la page de statistiques sur le même jeu de séjours.
+Il n'y a pas de réparation possible depuis les lignes — la commission Airbnb n'y est pas — et
+toute « correction » aurait réécrit `price − taxe` sous un autre nom : deux définitions du brut.
+Le module lit désormais `gross` et `commission` du `Booking`, et n'accepte que des
+`SoldBooking[]` — le fiscal ne filtrait que `cancelled` et `black`, il comptait une demande de
+renseignement jamais payée (392,04 €, 15 nuits).
+
+**Quatre réservations modifiées gardent leurs anciennes lignes de facture** (`82274645`,
+`80467451`, `80768054`, `81056833`). `price` fait foi : +22,00 € d'erreur résiduelle documentée sur
+une remise manuelle non répercutée, à corriger dans Beds24. L'heuristique « groupe de lignes le
+plus récent » a été refusée : elle échoue sur le cas même qui la motive.
+
+**Ce que « absent » veut dire pour `touristTax`** — texte imposé par le douanier, dans
+`lib/booking.ts` : `gross` est toujours hors taxe ; `0` = la source porte le détail et il n'y avait
+pas de taxe ; un montant = retiré de `gross` ; **absent = la taxe n'a jamais transité par nos
+comptes**. L'archive d'Albiez est dans ce cas — son `brut` est déjà hors taxe sur 101/101 lignes,
+l'export Airbnb met la taxe en colonne séparée — et rien n'y est posé.
+
+**`subType` n'est pas une nomenclature Beds24.** C'est l'index de la grille de charges du compte :
+sur celui de Barbusse, taxe en 3, 10 et 16, ménage en 2, 11 et 15, hébergement en 1, 7, 8 et 9.
+Refusé comme critère de montant ; admis comme signal de doute à afficher. Le docstring de
+`beds24-types.ts` qui affirmait « 8 hébergement, 11 extras » était faux sur les données du site
+qui l'avait écrit.
+
+**La page fiscale n'a pas le droit de projeter par défaut.** `projectedTotal` est mot pour mot la
+« Tendance actuelle » bannie de la page de statistiques. Elle reste, comme **simulation**, derrière
+`?projected=true` ; le défaut est le contractuel, et aucun invariant du protocole ne porte sur
+une valeur projetée. Les commissions suivent le CA au même prorata de nuits
+(`commissionsRealized + commissionsUpcoming = Σ commissionOf`). `asOf` est injectable — c'était
+le neuvième `toISOString()` du chantier (D11).
+
+**Côté apps** (hors socle, pour mémoire) : Barbusse — `toBooking` pose les quatre champs et
+`units` (9 pour la maison entière), `getStays` demande **toujours** les lignes de facture et ce
+n'est plus un paramètre (un appelant qui les aurait omises aurait eu 779,01 € d'écart silencieux
+entre deux pages), gardes sur `stats`, `fiscal`, `taxe-sejour`, `invoices/generate`, tri par
+`countsAsSold` sur les trois pages de chiffres. Albiez — même formule dans `sejoursBeds24`,
+`soldBookings` en tête de route, `attenduLibre` et `prixParNuit` supprimés, « projeté » devient
+« engagé à ce jour ». **Résultat mesuré** : `/stats?period=fiscal` = `/fiscal?year=2026` =
+76 024,50 € chez Barbusse ; Albiez identique au centime sur 16 charges utiles. Le détail est dans
+`docs/PROTOCOLE-TEST.md`.
 
 ### Comment une application s'y branche
 
