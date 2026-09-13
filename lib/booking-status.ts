@@ -100,7 +100,12 @@ declare const SOLD: unique symbol;
  */
 export type SoldBooking = Booking & { readonly [SOLD]: true };
 
-/** Ne garde que les nuits vendues. À appeler **une fois**, à l'entrée, jamais dans un calcul. */
-export function soldBookings(bookings: Booking[]): SoldBooking[] {
-  return bookings.filter((b): b is SoldBooking => countsAsSold(b.status));
+/**
+ * Ne garde que les nuits vendues. À appeler **une fois**, à l'entrée, jamais dans un calcul.
+ *
+ * Générique pour que le type du site survive : un `Sejour` d'Albiez ressort `Sejour &
+ * SoldBooking`, et ses champs propres restent lisibles après le tri.
+ */
+export function soldBookings<T extends Booking>(bookings: T[]): (T & SoldBooking)[] {
+  return bookings.filter((b): b is T & SoldBooking => countsAsSold(b.status));
 }

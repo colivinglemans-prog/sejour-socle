@@ -16,9 +16,12 @@
 /**
  * Ligne de facture.
  *
- * `subType` discrimine la nature : **8** pour l'hébergement, **11** pour les extras — ménage,
- * linge, remise et taxe de séjour s'y mêlent. La taxe se reconnaît donc au libellé, jamais au
- * `subType`.
+ * `subType` n'est **pas** une nomenclature Beds24 : c'est l'index de la ligne de tarif
+ * configurée dans le compte. Sur le seul compte de Barbusse, le ménage sort en 11, 15 et 2,
+ * l'hébergement en 1, 8 et 9, la taxe de séjour en 3, 10 et 16 — et un autre compte a une
+ * autre grille. La taxe se reconnaît donc au libellé (`isTouristTaxLine`), jamais au
+ * `subType` ; celui-ci peut au plus servir de signal de doute à afficher, jamais de critère
+ * de montant (arbitrage du douanier, 2026-09-13).
  */
 export interface Beds24InvoiceItem {
   id?: number;

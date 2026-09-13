@@ -67,13 +67,20 @@ function round2(n: number): number {
 export function computeBICBien(
   bien: BienFiscal,
   revenus: RevenusBien,
-  useProjected: boolean,
+  /**
+   * `true` = **simulation** d'année pleine, valeur non opposable, à demander explicitement.
+   * Le défaut est le contractuel : réalisé + confirmé. La projection était le défaut jusqu'au
+   * 2026-09-13 ; c'est la même formule que la « Tendance actuelle » bannie de la page de
+   * statistiques, et elle ne peut pas être un défaut sur une page et un défaut sur l'autre.
+   */
+  useProjected = false,
 ): ResultatBICBien {
   const ca = useProjected ? revenus.projectedTotal : revenus.realized + revenus.confirmedUpcoming;
   const chargesManuelles = sumCharges(bien.chargesDeductibles);
+  // Les commissions suivent le CA : simulées avec lui, ou réalisées + à venir avec lui.
   const commissionsPlateformes = useProjected
     ? revenus.commissionsProjected
-    : revenus.commissionsRealized;
+    : revenus.commissionsRealized + revenus.commissionsUpcoming;
   const charges = chargesManuelles + commissionsPlateformes;
   const amortissement = bien.amortissementAnnuel;
   const ardStockEntree = bien.amortissementsReportes ?? 0;

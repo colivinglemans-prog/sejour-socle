@@ -72,13 +72,21 @@ export interface Booking {
   commission: number;
 
   /**
-   * Taxe de séjour collectée sur ce séjour, en euros. Défaut `0`.
+   * Taxe de séjour séparée du brut sur ce séjour, en euros.
    *
-   * Absent quand la source ne permet pas de la séparer, et dans ce cas `gross` la contient sans
-   * qu'on puisse le dire. L'archive d'Albiez la porte sur une partie de ses lignes seulement
-   * (`taxeSejourCollecteeParLeCanal`, 56 séjours sur 101, tous Airbnb) : la poser là ferait
-   * cohabiter deux définitions de brut dans la même colonne. Le `toBooking` de chaque site
-   * décide où il la sépare — c'est tranché au Lot B — et rien en aval ne la recalcule.
+   * `gross` est **toujours** hors taxe de séjour. Ce champ ne dit que ce qu'on a pu en
+   * chiffrer : `0` = la source porte le détail, il n'y avait pas de taxe ; un montant = la
+   * source porte le détail et il a été retiré de `gross` ; **absent = la taxe n'a jamais
+   * transité par nos comptes** — le canal l'a collectée et reversée hors de notre vue, et
+   * `gross` était déjà net d'elle à l'entrée. C'est le cas de l'archive d'Albiez : l'export
+   * Airbnb met la taxe en colonne séparée, vérifié sur 101/101 lignes (564,00 − 20,30 =
+   * 543,70 exact), Δ = 0,00 €.
+   *
+   * Absent n'a jamais signifié « taxe incluse, non séparable » : une source incapable de
+   * garantir un `gross` hors taxe ne produit pas de `Booking`. Corollaire : rien en aval ne
+   * soustrait ce champ de `gross`, ce serait le compter deux fois. Et le
+   * `taxeSejourCollecteeParLeCanal` de l'archive d'Albiez (1 001,40 € sur 56 séjours) est une
+   * donnée de déclaration, pas un composant du brut : ne pas le recopier ici.
    */
   touristTax?: number;
 
