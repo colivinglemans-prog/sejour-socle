@@ -3,3 +3,6 @@ node_modules/
 .DS_Store
 .env*
 .verif/
+# Sorties du protocole de test rejoué (scripts/protocole) : charges utiles, captures d'écran,
+# rapports — daté à chaque exécution, jamais commité.
+.protocole/

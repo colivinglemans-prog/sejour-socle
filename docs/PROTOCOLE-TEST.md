@@ -1,5 +1,51 @@
 # Protocole de test
 
+## Rejouer le protocole en une commande
+
+Ce document se rejouait à la main, une heure de `curl` par lot. `scripts/protocole/` en fait
+une commande — matrice des portes, test de fuite, 16 charges utiles et leurs invariants,
+captures d'écran des deux dashboards — contre une base quelconque, locale ou en production.
+
+```bash
+npm run protocole -- --site albiez|barbusse|both --base <url> [--playwright]
+```
+
+Aucun argument de ligne de commande ne porte de secret. Tout vient de variables
+d'environnement :
+
+| Variable | Sert à |
+|---|---|
+| `ALBIEZ_BASE`, `BARBUSSE_BASE` | l'URL de base de chaque site (ignorée avec `--site both`, qui lit les deux) |
+| `ALBIEZ_ADMIN_PASSWORD`, `ALBIEZ_VIEWER_PASSWORD` | connexion Albiez (`POST /api/auth/login {"motDePasse"}`) |
+| `BARBUSSE_ADMIN_PASSWORD`, `BARBUSSE_VIEWER_PASSWORD` | connexion Barbusse (`POST /api/auth/login {"password"}`) |
+| `CRON_SECRET_ALBIEZ`, `CRON_SECRET_BARBUSSE` | en-tête `Authorization: Bearer …` du cron keepalive |
+
+`--env-file <chemin>` charge un `.env` local (via `process.loadEnvFile`, l'équivalent en cours
+d'exécution de `node --env-file=<chemin>` — les deux reviennent au même) :
+
+```bash
+node scripts/protocole/run.mjs --site both --env-file .env.protocole
+```
+
+Un rôle non connecté (mot de passe absent ou refusé) ne fait pas planter le protocole : la
+ligne correspondante dit « non testé : … » plutôt que d'être comptée comme un échec. C'est le
+cas connu de l'administrateur de production d'Albiez, dont le mot de passe n'est pas celui de
+`.env.local`.
+
+`--playwright` ajoute la capture plein écran des deux dashboards en admin, à 390×844 (mobile)
+et 1280×900, dans le dossier daté — le seul recours à un navigateur de tout le protocole, et
+uniquement pour ce qu'un œil humain doit voir. Playwright est une devDependency optionnelle :
+sans elle, ou sans navigateur installé (`npx playwright install chromium`), le module le dit
+et le reste du protocole continue.
+
+`--compare <dossier>` diffuse les charges utiles de l'exécution en cours contre une photo
+précédente, clé par clé — les clés qui dérivent naturellement de l'horloge (`period.*`,
+`asOf`, `forwardOccupancy90`) sont signalées à part, jamais comptées en échec.
+
+Chaque exécution écrit un dossier daté `.protocole/<horodatage>/` (charges utiles au format
+JSON, captures PNG, `rapport.md`) — jamais commité, voir `.gitignore`. Le code de sortie est 1
+s'il y a au moins un ÉCHEC, 0 sinon.
+
 Écrit après six lots livrés en deux jours sur deux sites en production. Chaque règle vient
 d'une erreur réellement commise, et la plupart des bugs trouvés n'étaient **pas** visibles à
 l'écran.

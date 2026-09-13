@@ -20,7 +20,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "lint": "eslint",
-    "verifier": "tsc -p tsconfig.check.json && node .verif/scripts/verifier-indicateurs.js"
+    "verifier": "tsc -p tsconfig.check.json && node .verif/scripts/verifier-indicateurs.js",
+    "protocole": "node scripts/protocole/run.mjs"
   },
   "peerDependencies": {
     "jose": "^6",
@@ -31,6 +32,7 @@
     "@react-pdf/renderer": "^4"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
