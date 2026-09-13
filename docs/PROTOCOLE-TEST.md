@@ -195,11 +195,16 @@ de réconciliation stats ↔ fiscal ne peut pas encore être écrit. Décomposit
 4 594,11 € entre `Σ price` et le CA fiscal des 55 lignes acquises de Barbusse (2026-09-13) :
 779,01 € de taxe de séjour (→ `Booking.touristTax`, tranché) et **3 815,10 € qui sont la
 commission Airbnb** — sur ce canal `price` = Σ lignes de facture + commission, donc les lignes
-Airbnb sont déjà **nettes** et `computeCAFromInvoiceItems` y rend un net (Booking.com : écart
-0,00 €, lignes brutes ; direct : −465,60 €, les lignes portent une taxe que `price` n'a pas).
-Basculer la page fiscale sur `commissionOf` sans redéfinir son CA compterait 4 474,44 € de
-commission Airbnb **deux fois**. Le Lot B commence par définir le brut par canal dans le
-`toBooking` ; le critère sera re-dérivé et écrit ici avant la première ligne de code de la route. L'invariant `77246.92` ci-dessus devient faux par construction ; la nouvelle
+Airbnb sont le versement hôte, déjà **nettes**, et `computeCAFromInvoiceItems` y rend un net
+(Booking.com : écart 0,00 €, lignes brutes ; direct : `price` contient la taxe comme les lignes,
+et le −465,60 € vient de deux réservations modifiées dont la facture garde l'ancien groupe).
+Basculer la page fiscale sur `commissionOf` sans redéfinir son CA compterait 4 543,53 € de
+commission Airbnb **deux fois**. Note de cadrage `champollion` du 2026-09-13 : une seule formule,
+`gross = price − touristTaxFromInvoiceItems`, `net = gross − commissionOf` ; sur les 59 lignes
+vendues, attendu **brut 63 105,95 € · commissions 7 076,89 € · net 56 029,06 € · taxe 779,01 €**,
+identique sur `/stats` (« toute ») et `/fiscal` **si** le fiscal adopte `countsAsSold` et lit
+`gross`/`commission` du `Booking` au lieu de ses lignes. Le critère définitif est écrit ici avant
+la première ligne de code de route, après passage du douanier. L'invariant `77246.92` ci-dessus devient faux par construction ; la nouvelle
 valeur sera relevée et consignée avec sa justification.
 
 ⚠️ **`v1.0.0` n'est pas un tag consommable** : la page fiscale y garde l'ancienne sémantique. Le

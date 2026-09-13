@@ -671,13 +671,18 @@ inchangé, 58 919,45 € sur les 55 acquises ; taxe 779,01 € sur les 55 acquis
 ⚠️ **Ce que la mesure a révélé pour le Lot B** : l'écart de 4 594,11 € entre `Σ price` et le CA
 fiscal des 55 lignes acquises n'est **pas** la taxe de séjour — elle n'en fait que 779,01 €. Les
 3 815,10 € restants sont Airbnb : sur ce canal, `price` = Σ lignes de facture **+ commission**
-(4 280,70 € d'écart sur 37 lignes, pour 4 474,44 € de commissions), c'est-à-dire que les lignes
-de facture Airbnb sont **déjà nettes** de la commission, là où celles de Booking.com sont brutes
-(écart 0,00 €) et celles du direct incluent une taxe que `price` n'inclut pas (−465,60 €).
-`computeCAFromInvoiceItems` rend donc un net pour Airbnb et un brut pour Booking.com. Le critère
-« +7 076,89 € de commissions, CA brut inchangé » compterait la commission Airbnb **deux fois**.
-Le Lot B doit d'abord définir le brut **par canal** dans le `toBooking` (`champollion` +
-`le-percepteur`), et le critère de réconciliation stats ↔ fiscal sera re-dérivé de là.
+(4 349,79 € d'écart sur 41 lignes vendues, pour 4 543,53 € de commissions), c'est-à-dire que les
+lignes de facture Airbnb sont **le versement hôte**, déjà nettes de la commission — qui n'existe
+que dans le champ `commission`, jamais en ligne. Celles de Booking.com sont brutes, `City tax`
+comprise ; celles du direct sont complètes, taxe comprise, et `price` la contient aussi (le
+−465,60 € d'abord attribué au direct vient **entièrement de deux réservations modifiées** dont
+la facture garde l'ancien groupe de lignes). `computeCAFromInvoiceItems` rend donc un net pour
+Airbnb et un brut pour les autres. Le critère « +7 076,89 € de commissions, CA brut inchangé »
+est faux : le CA brut bouge, et la commission Airbnb serait comptée **deux fois** si le fiscal
+gardait ses lignes. La note de cadrage de `champollion` (2026-09-13) propose une seule formule,
+sans branche par canal — `touristTax` par les lignes, `gross = price − touristTax`,
+`commission = commissionOf`, `net = gross − commission` — exacte au centime sur 57 lignes sur 59,
+et `price` fait foi sur les deux modifiées (+22,00 € d'erreur résiduelle documentée).
 
 **Ce que la vérification garantit.** `npm run verifier` compile le module et son graphe
 d'imports en CommonJS dans `.verif/`, puis exécute 50 contrôles sur un jeu de séjours écrit à la
