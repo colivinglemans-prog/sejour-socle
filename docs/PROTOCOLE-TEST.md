@@ -202,7 +202,7 @@ Un événement `confirmed: true` émet un nœud `"@type":"Event"` ; un événeme
 curl -sL "$BASE/fr/guide/<slug>" | grep -c '"@type":"Event"'
 ```
 
-**Les champs recommandés (v3.1.0)** — `organizer`, `performer`, `offers` viennent du catalogue,
+**Les champs recommandés (v3.2.0)** — `organizer`, `performer`, `offers` viennent du catalogue,
 `description` et `image` de l'article. Deux interdits à vérifier sur chaque nœud émis :
 
 ```bash

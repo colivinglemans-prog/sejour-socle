@@ -140,6 +140,7 @@ deux validations.
 | B | Convergence des stats — **routes, brut par canal, fiscal sur le `Booking`, gardes** | `champollion`, `cerbere`, `le-percepteur` | `v2.0.0` |
 | C + D | Convergence des stats — **la charge utile unique et l'écran partagé** | `madame-soleil` | **`v3.0.0`** — le fiscal change des nombres publiés |
 | 5 (suite) | Vitrine — **i18n et SEO** : `lib/locales.ts`, `lib/seo.ts` (hreflang, JSON-LD d'article, négociation de langue) | `poisson-babel` | `v3.1.0` |
+| 5 (suite) | Événements — **les champs recommandés du nœud `Event`** (`organizer`, `performer`, `tickets`, `article`) | `le-douanier`, `chef-de-stand`, `le-dahu` | `v3.2.0` |
 | — | Veille des dates d'événements (`lib/events-watch.ts`) | — | `v0.7.0` |
 
 Plan détaillé : `C:\Users\alexa\.claude\plans\cheerful-toasting-rivest.md`.
@@ -510,7 +511,7 @@ Vercel :
 
 | Chemin | Contenu | Vient de |
 |---|---|---|
-| `lib/events.ts` | `LocalEvent`, `nextEdition`, `findEventByKey`, `findEventOnDay`, `findEventForStay`, `stayWindow`, `eventJsonLd`. Depuis v3.1.0, `LocalEvent` porte aussi `organizer`, `performer` et `tickets`, optionnels. **Le type et les fonctions ; jamais les données.** | Albiez pour la forme (écrit pour être extrait), Barbusse pour `findEventForStay` |
+| `lib/events.ts` | `LocalEvent`, `nextEdition`, `findEventByKey`, `findEventOnDay`, `findEventForStay`, `stayWindow`, `eventJsonLd`. Depuis v3.2.0, `LocalEvent` porte aussi `organizer`, `performer` et `tickets`, optionnels. **Le type et les fonctions ; jamais les données.** | Albiez pour la forme (écrit pour être extrait), Barbusse pour `findEventForStay` |
 | `lib/availability.ts` | `AvailabilityResponse`, `AvailabilityUrl`, `strictestMinStay`, `longestFreeRange`. | Barbusse (le CTA), généralisé |
 | `lib/stay-selection.ts` | `SelectionContext`, `isValidCheckIn`, `isValidCheckOut`, `cellState`, `selectionAfterClick`, `consecutiveFreeNights`. **Le cœur du tunnel, sorti d'un composant client pour devenir testable.** | les deux calendriers, identiques |
 | `lib/booking-url.ts` | `bookingUrl` — l'URL `booking2.php` composée à un seul endroit. | trois copies, mêmes paramètres dans le même ordre |
@@ -869,7 +870,7 @@ les 16 combinaisons ; 32/32 invariants ; Barbusse fiscal 2026 `realized` = stats
 écoulé = 66 260,42 €, commissions 7 732,79 des deux côtés ; Albiez `currentYear` net 12 555,31 €,
 `committedTotal` 2026 = 13 670,04 €. Le détail est dans `docs/PROTOCOLE-TEST.md`.
 
-### v3.1.0 — les champs recommandés du nœud `Event`
+### v3.2.0 — les champs recommandés du nœud `Event`
 
 Déclenché par la Search Console de Barbusse le 2026-09-13 : cinq avertissements non critiques
 sur les données structurées `Event` — `organizer`, `description`, `offers`, `image`,
