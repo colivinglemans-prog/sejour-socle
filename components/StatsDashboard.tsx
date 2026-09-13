@@ -258,7 +258,9 @@ function cards(stats: DashboardStatsPayload) {
     {
       label: "Occupation",
       value: percent(i.occupancyRate),
-      sub: `${i.soldUnitNights} nuitées vendues sur ${i.availableUnitNights} disponibles`,
+      // Arrondi à l'entier : chez Barbusse une nuit de chambre de l'époque vaut 1/9 de nuit de
+      // maison, et 111,666… nuitées ne se lit pas. Le calcul, lui, garde la fraction.
+      sub: `${Math.round(i.soldUnitNights)} nuitées vendues sur ${i.availableUnitNights} disponibles`,
       definition:
         "Nuitées vendues ÷ nuitées disponibles, sur la part écoulée de la période.",
     },
@@ -278,7 +280,7 @@ function cards(stats: DashboardStatsPayload) {
     {
       label: "Séjours",
       value: String(i.stays),
-      sub: `${i.soldUnitNights} nuitées vendues · ${decimal(i.avgStay)} nuits en moyenne`,
+      sub: `${Math.round(i.soldUnitNights)} nuitées vendues · ${decimal(i.avgStay)} nuits en moyenne`,
       definition: "Sous-ligne : nuitées vendues et durée moyenne.",
     },
     {
