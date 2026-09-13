@@ -153,6 +153,13 @@ export interface DashboardStatsPayload {
     to: string;
     /** `min(to, aujourd'hui)` : la borne sur laquelle les indicateurs se mesurent. */
     elapsedTo: string;
+    /**
+     * Le jour de référence du calcul. Imprimé dans « À date » : la comparaison annuelle
+     * cumule chaque année du 1er janvier au même rang de jour que celui-ci, et `elapsedTo` ne
+     * peut pas le dire — sur « Exercice précédent » il vaut le 31 décembre. Une feuille de
+     * chiffres non datée n'est opposable à rien (douanier, 2026-09-13).
+     */
+    asOf: string;
   };
   revenueMode: RevenueMode;
   /** Logements louables du bien : 1 pour Albiez, 9 pour Barbusse. */
@@ -323,37 +330,58 @@ export function computeDashboardStats(input: DashboardStatsInput): DashboardStat
   });
 
   /*
-   * **Années comparables** — règle reprise telle quelle de la route d'Albiez.
+   * **Années comparables : on écarte l'année tronquée, jamais le séjour.**
    *
    * La première année d'activité est écartée des comparaisons quand elle est tronquée :
-   * l'annonce a ouvert fin novembre 2023, cinq semaines contre douze mois, et la mettre côte à
-   * côte ne dit rien d'autre que « l'activité n'avait pas commencé » tout en écrasant
-   * l'échelle du graphe. On garde à partir de la première année dont le premier séjour tombe
-   * en janvier ; la règle se maintient seule et ne demandera aucune retouche l'an prochain.
+   * l'annonce d'Albiez a ouvert fin novembre 2023, cinq semaines contre douze mois, et la
+   * mettre côte à côte ne dit rien d'autre que « l'activité n'avait pas commencé » tout en
+   * écrasant l'échelle du graphe. On garde à partir de la première année dont le premier
+   * séjour tombe en janvier ; la règle se maintient seule.
+   *
+   * Mais elle porte sur les **années produites**, pas sur les séjours en entrée. La route
+   * d'Albiez filtrait les séjours par année d'arrivée, et chez Barbusse — première arrivée le
+   * 26 novembre 2025 — cela retirait des trois blocs les deux séjours de décembre 2025 dont
+   * 17 nuits tombent en janvier 2026 : 447,40 € de brut présents dans les huit cartes et
+   * absents des graphes du même écran. C'est le défaut D3 rouvert, et la signature de D4. Les
+   * trois fonctions reçoivent donc tout, et seules les colonnes d'année tronquée sont
+   * retirées ; la première année gardée perd ses pourcentages de variation, qui la
+   * compareraient à une année qui n'en est pas une.
    */
   const firstComparableYear = firstStay
     ? Number(firstStay.slice(0, 4)) + (firstStay.slice(5, 7) === "01" ? 0 : 1)
     : 0;
-  const comparable = bookings.filter(
-    (b) => Number(b.arrival.slice(0, 4)) >= firstComparableYear,
-  );
-  const comparableExtras = extras.filter(
-    (r) => !r.date || Number(r.date.slice(0, 4)) >= firstComparableYear,
-  );
+  const keepYear = (year: number) => year >= firstComparableYear;
+
+  const fullChart = buildRevenueChart(bookings, extras, mode, asOf);
+  const chart: RevenueChartData = {
+    ...fullChart,
+    years: fullChart.years.filter(keepYear),
+    byYear: fullChart.byYear.map((row) =>
+      Object.fromEntries(
+        Object.entries(row).filter(([key]) => key === "month" || keepYear(Number(key))),
+      ),
+    ),
+    byChannel: Object.fromEntries(
+      Object.entries(fullChart.byChannel).filter(([year]) => keepYear(Number(year))),
+    ),
+  };
+  // `committedRevenue.total` et pas un second calcul : voir la règle 2 ci-dessus.
+  const comparison = compareYears(bookings, extras, mode, committedRevenue.total, asOf)
+    .filter((c) => keepYear(c.year))
+    .map((c, i) => (i === 0 ? { ...c, changeToDate: null, changeYearTotal: null } : c));
 
   const stays = bookings.filter((b) => overlapsWindow(b, from, to));
 
   return {
-    period: { key: input.period, from, to, elapsedTo },
+    period: { key: input.period, from, to, elapsedTo, asOf },
     revenueMode: mode,
     unitsTotal,
     indicators,
     committedRevenue,
     monthly,
-    chart: buildRevenueChart(comparable, comparableExtras, mode, asOf),
-    // `committedRevenue.total` et pas un second calcul : voir la règle 2 ci-dessus.
-    comparison: compareYears(comparable, comparableExtras, mode, committedRevenue.total, asOf),
-    channelsByYear: channelsByYear(comparable, comparableExtras, asOf),
+    chart,
+    comparison,
+    channelsByYear: channelsByYear(bookings, extras, mode, asOf).filter((c) => keepYear(c.year)),
     /*
      * Les deux tableaux portent les séjours qui **recouvrent** la période, bornes comprises —
      * jamais un test sur la seule arrivée (défaut D3). Contrairement aux huit cartes, ils ne

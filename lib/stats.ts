@@ -281,6 +281,7 @@ export function buildRevenueChart(
 export function channelsByYear(
   bookings: SoldBooking[],
   extras: RevenueExtra[],
+  mode: RevenueMode,
   asOf?: string,
 ): ChannelYear[] {
   const perYear = new Map<number, Map<Channel, { stays: number; revenue: number }>>();
@@ -301,11 +302,16 @@ export function channelsByYear(
   // comptées en entier.
   const toDate = (day: string) => Number(day.slice(0, 4)) !== currentYear || day <= today;
 
+  // Le séjour compte une fois, dans l'année de son arrivée ; son argent tombe là où la
+  // convention le fait tomber, nuit par nuit (`spreadRevenue`). Jusqu'au Lot C le net entier
+  // suivait l'arrivée : un séjour du 28 décembre au 4 janvier mettait ses nuits de janvier dans
+  // l'année précédente — le défaut D3, dans le seul bloc où il survivait.
   for (const b of bookings) {
-    if (!toDate(b.arrival)) continue;
-    const e = entry(Number(b.arrival.slice(0, 4)), b.channel);
-    e.stays += 1;
-    e.revenue += b.net;
+    if (toDate(b.arrival)) entry(Number(b.arrival.slice(0, 4)), b.channel).stays += 1;
+    for (const { day, amount } of spreadRevenue(b, mode)) {
+      if (!toDate(day)) continue;
+      entry(Number(day.slice(0, 4)), b.channel).revenue += amount;
+    }
   }
   // Les recettes sans nuits apportent du revenu mais aucun séjour : le compteur de séjours
   // ne bouge pas, sinon le prix moyen par séjour serait divisé par des lignes qui n'en sont

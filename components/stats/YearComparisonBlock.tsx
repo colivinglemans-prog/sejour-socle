@@ -1,5 +1,5 @@
 import type { YearComparison } from "../../lib/stats";
-import { decimal, euros, tint } from "./format";
+import { decimal, euros, longDate, tint } from "./format";
 
 /**
  * « Comparaison annuelle » — deux blocs qu'il ne faut surtout pas confondre.
@@ -22,11 +22,16 @@ import { decimal, euros, tint } from "./format";
 export default function YearComparisonBlock({
   comparison,
   accent,
+  asOf,
 }: {
   comparison: YearComparison[];
   accent: string;
+  /** Le jour de référence : la fenêtre « à date » court du 1er janvier à ce jour, chaque année. */
+  asOf: string;
 }) {
   if (comparison.length === 0) return null;
+  // « 13 septembre », sans l'année : c'est le même jour de chaque année qui est comparé.
+  const sameDay = longDate(asOf).replace(/\s\d{4}$/, "");
 
   const closed = comparison.filter((c) => !c.ongoing && !c.upcoming);
   const upcoming = comparison.filter((c) => c.upcoming);
@@ -40,7 +45,7 @@ export default function YearComparisonBlock({
 
       <div className="mt-5">
         <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
-          À date — du 1ᵉʳ janvier au même jour de chaque année, à fenêtre égale
+          À date — du 1ᵉʳ janvier au {sameDay} de chaque année, à fenêtre égale
         </p>
 
         <div className="mt-3 space-y-2">

@@ -202,7 +202,11 @@ export default function StatsDashboard({
 
           <OccupancyByMonth monthly={stats.monthly} />
 
-          <YearComparisonBlock comparison={stats.comparison} accent={accent} />
+          <YearComparisonBlock
+            comparison={stats.comparison}
+            accent={accent}
+            asOf={stats.period.asOf}
+          />
 
           <ChannelsByYearChart data={stats.channelsByYear} />
 

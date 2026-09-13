@@ -419,6 +419,30 @@ const payload = computeDashboardStats({
 });
 
 check(
+  "C1 — l'annee tronquee est ecartee des comparaisons, jamais le sejour a cheval",
+  !payload.chart.years.includes(2025) &&
+    !payload.comparison.some((c) => c.year === 2025) &&
+    Number(payload.chart.byYear[0]["2026"]) === 570 &&
+    (payload.channelsByYear.find((c) => c.year === 2026)?.channels.find((c) => c.channel === "Booking.com")?.revenue ?? 0) >= 570,
+  `annees du graphe ${payload.chart.years.join("/")} · janvier 2026 = ${payload.chart.byYear[0]["2026"]} € (les 3 nuits du sejour de decembre 2025)`,
+);
+check(
+  "C1 — la comparaison a date de l'annee en cours est la carte « net encaisse »",
+  Math.abs((payload.comparison.find((c) => c.year === 2026)?.toDate ?? NaN) - payload.indicators.netRevenue) < 0.005,
+  `${payload.comparison.find((c) => c.year === 2026)?.toDate} vs ${payload.indicators.netRevenue}`,
+);
+check(
+  "C1 — la premiere annee gardee n'a pas de pourcentage contre l'annee tronquee",
+  payload.comparison[0].changeToDate === null && payload.comparison[0].changeYearTotal === null,
+  `${payload.comparison[0].year} : changeToDate ${payload.comparison[0].changeToDate}, changeYearTotal ${payload.comparison[0].changeYearTotal}`,
+);
+check(
+  "C2 — la charge utile porte sa date de reference",
+  payload.period.asOf === AS_OF,
+  `period.asOf = ${payload.period.asOf}`,
+);
+
+check(
   "les tableaux sont complets et le recouvrement rattrape le sejour a cheval",
   payload.recentStays.length === 6 && payload.recentStays.some((s) => s.ref === "cheval-nouvel-an"),
   `${payload.recentStays.length} lignes, dont le sejour du 2025-12-28 au 2026-01-04`,
