@@ -19,6 +19,7 @@
  */
 import type { SoldBooking } from "../booking-status";
 import { daysBetween } from "../dates";
+import { nightsInWindow, overlapsWindow } from "../stats";
 import { todayParis } from "../time";
 import type { BienFiscal } from "./config";
 
@@ -97,31 +98,38 @@ export interface RevenusBien {
 }
 
 /**
- * Répartit un montant rattaché à un séjour entre part réalisée (passé) et part confirmée
- * (futur), au prorata des nuits. Le CA et la commission passent tous deux par ici : l'argent
- * d'un séjour suit une seule règle d'imputation, quelle que soit sa nature.
+ * La part d'un montant de séjour qui revient à l'exercice, puis sa répartition entre réalisé
+ * (nuits passées) et confirmé (nuits à venir), **au prorata des nuits** — la convention
+ * « réparti par nuit » de la page de statistiques, et rien d'autre.
+ *
+ * Un séjour appartient à l'exercice dès qu'une de ses nuits y tombe, et seule cette part-là est
+ * comptée : c'est le défaut D3, qui était des deux côtés. Jusqu'au Lot C le fiscal ne prenait
+ * que les séjours **arrivés** dans l'année : un séjour du 15 décembre au 15 janvier n'entrait
+ * dans aucun exercice, et la page fiscale divergeait de la page de statistiques de 447,40 € de
+ * brut chez Barbusse — les 17 nuits de janvier de deux séjours de décembre. Le CA et la
+ * commission passent tous deux par ici : l'argent d'un séjour suit une seule règle
+ * d'imputation, quelle que soit sa nature.
+ *
+ * Une ligne sans nuit (arrivée = départ) compte en entier dans l'exercice de sa date.
  */
 function splitAmount(
   b: SoldBooking,
   amount: number,
   today: string,
-  yearEndStr: string,
+  yearStart: string,
+  yearEnd: string,
 ): { realized: number; upcoming: number } {
-  if (b.departure <= today) {
-    return { realized: amount, upcoming: 0 };
+  if (b.nights <= 0) {
+    if (b.arrival < yearStart || b.arrival > yearEnd) return { realized: 0, upcoming: 0 };
+    return b.arrival <= today ? { realized: amount, upcoming: 0 } : { realized: 0, upcoming: amount };
   }
-  if (b.arrival >= today) {
-    return { realized: 0, upcoming: amount };
-  }
-  const totalNights = Math.max(1, daysBetween(b.arrival, b.departure));
-  const pastNights = Math.max(0, daysBetween(b.arrival, today));
-  const futureEnd = b.departure > yearEndStr ? yearEndStr : b.departure;
-  const futureNights = Math.max(0, daysBetween(today, futureEnd));
-  const perNight = amount / totalNights;
-  return {
-    realized: perNight * pastNights,
-    upcoming: perNight * futureNights,
-  };
+  // Même règle que `spreadRevenue` en convention « réparti par nuit » : un montant égal par
+  // nuit, une nuit datée du soir où elle commence, et réalisée dès que ce soir est ≤ aujourd'hui.
+  const perNight = amount / b.nights;
+  const inYear = nightsInWindow(b, yearStart, yearEnd);
+  const pastNights =
+    today < yearStart ? 0 : nightsInWindow(b, yearStart, today < yearEnd ? today : yearEnd);
+  return { realized: perNight * pastNights, upcoming: perNight * (inYear - pastNights) };
 }
 
 async function computeBeds24Revenus(
@@ -137,12 +145,17 @@ async function computeBeds24Revenus(
   const currentYear = year === Number(today.slice(0, 4));
   const clampedToday = currentYear ? today : yearEnd;
 
-  const stays = (await deps.fetchStays({ arrivalFrom: from, arrivalTo: to })).filter(
+  // Fenêtre d'appel élargie d'un an en arrière : un séjour arrivé en décembre porte des nuits de
+  // janvier, et c'est le recouvrement qui décide de l'appartenance, pas l'arrivée.
+  const stays = (
+    await deps.fetchStays({ arrivalFrom: `${year - 1}-01-01`, arrivalTo: to })
+  ).filter(
     (b) =>
       b.propertyId != null &&
       bien.propertyIds.includes(b.propertyId) &&
       Boolean(b.arrival) &&
-      Boolean(b.departure),
+      Boolean(b.departure) &&
+      overlapsWindow(b, from, to),
   );
 
   let realized = 0;
@@ -152,10 +165,10 @@ async function computeBeds24Revenus(
   let commissionsUpcoming = 0;
 
   for (const b of stays) {
-    const ca = splitAmount(b, b.gross, clampedToday, yearEnd);
+    const ca = splitAmount(b, b.gross, clampedToday, yearStart, yearEnd);
     realized += ca.realized;
     confirmedUpcoming += ca.upcoming;
-    const com = splitAmount(b, b.commission, clampedToday, yearEnd);
+    const com = splitAmount(b, b.commission, clampedToday, yearStart, yearEnd);
     commissionsRealized += com.realized;
     commissionsUpcoming += com.upcoming;
     const start = b.arrival < yearStart ? yearStart : b.arrival;
