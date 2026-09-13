@@ -216,7 +216,9 @@ export function stayWindow(
  * Chaque champ absent de sa source est omis du nœud, jamais inventé.
  *
  * `offers.availability` vaut `InStock` en dur : c'est acceptable seulement parce que
- * `tickets` n'existe dans le catalogue que tant que la billetterie vend — voir le champ.
+ * `tickets` n'existe dans le catalogue que tant que la billetterie vend — voir le champ — et
+ * parce que `validThrough` borne l'offre à la fin de l'événement, pour qu'une page statique
+ * jamais rebâtie n'affirme pas « disponible » sur une billetterie close.
  */
 export function eventJsonLd(
   event: LocalEvent,
@@ -277,6 +279,9 @@ export function eventJsonLd(
             "@type": "Offer",
             url: event.tickets.url,
             availability: "https://schema.org/InStock",
+            // L'offre se périme avec l'événement : les pages sont statiques et rien ne se
+            // réévalue seul, sans cette borne un `InStock` survivrait à une billetterie fermée.
+            validThrough: `${event.end}T23:59:59`,
             ...(event.tickets.price
               ? {
                   price: event.tickets.price.amount,
