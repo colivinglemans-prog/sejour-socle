@@ -70,10 +70,13 @@ const FRENCH_POSTCODE_RE = /\b\d{5}\b/;
 /**
  * Libellé auquel se reconnaît une ligne de taxe de séjour dans les `invoiceItems`.
  *
- * Reconnaître au texte est fragile, et c'est assumé : Beds24 range la taxe parmi les extras,
- * au même `subType: 11` que le ménage et le linge — seul l'hébergement a un code propre
- * (`8`). Un item renommé fait donc **disparaître** la ligne du calcul plutôt que d'en fausser
- * le montant. Un silence vaut mieux qu'un chiffre faux sur une pièce déclarative.
+ * Reconnaître au texte est fragile, et c'est assumé : `subType` n'est pas une nomenclature
+ * Beds24 mais l'index de la grille de charges configurée dans chaque compte — sur le seul
+ * compte de Barbusse, la taxe sort en 3, 10 et 16, le ménage en 2, 11 et 15 (voir
+ * `beds24-types.ts`). Un item renommé fait donc **disparaître** la ligne du calcul plutôt que
+ * d'en fausser le montant. Un silence vaut mieux qu'un chiffre faux sur une pièce
+ * déclarative — et le remède est chez l'exploitant : un libellé « 3% » nu devient
+ * « Taxe de séjour 3% » dans Beds24, pas dans le code.
  */
 const LIBELLE_TAXE_SEJOUR_RE = /taxe de s[eé]jour/i;
 
