@@ -22,13 +22,26 @@
  * reprochait à `dynamicPricingRevenue`.
  */
 import type { BookingSource } from "./booking";
+import { unitsOf } from "./booking";
+import type { SoldBooking } from "./booking-status";
 import type { Channel } from "./channels";
 import { addDays } from "./dates";
+import {
+  buildMonthlySeries,
+  buildRevenueChart,
+  channelsByYear,
+  compareYears,
+  computeIndicators,
+  overlapsWindow,
+  windowRevenue,
+} from "./stats";
+import { todayParis } from "./time";
 import type {
   ChannelYear,
   Indicators,
   MonthlyPoint,
   RevenueChartData,
+  RevenueExtra,
   RevenueMode,
   WindowRevenue,
   YearComparison,
@@ -172,5 +185,248 @@ export interface DashboardStatsPayload {
   warnings: {
     archiveMissing: boolean;
     beds24Error: string | null;
+  };
+}
+
+/** Les quatre conventions d'imputation, dans l'ordre où les deux écrans les proposent. */
+export const REVENUE_MODES: RevenueMode[] = [
+  "averagedPerNight",
+  "byCheckIn",
+  "byCheckOut",
+  "byBookingDate",
+];
+
+/**
+ * Libellés affichés des conventions.
+ *
+ * Ce sont ceux d'Albiez, mot pour mot : les valeurs envoyées à l'API sont passées à l'anglais
+ * au Lot 3, les libellés à l'écran n'ont jamais bougé. Ils vivent ici et non dans `./stats`
+ * parce que c'est de l'écran, comme `STATS_PERIOD_LABELS` juste au-dessus, et que `./stats`
+ * ne connaît pas de page.
+ */
+export const REVENUE_MODE_LABELS: Record<RevenueMode, string> = {
+  averagedPerNight: "Réparti par nuit",
+  byCheckIn: "Par arrivée",
+  byCheckOut: "Par départ",
+  byBookingDate: "Par date de réservation",
+};
+
+/**
+ * Tout ce que la route doit fournir, et rien de plus.
+ *
+ * Le partage est celui de la règle 1 : le socle calcule, le site apporte ce que lui seul sait
+ * — ses deux sources fusionnées et déjà triées par statut, ses recettes sans nuits, son nombre
+ * de logements louables, et la façon dont il étiquette une ligne. Aucun `propertyId` n'entre
+ * ici, aucune date n'est lue en secret : `asOf` est un paramètre.
+ */
+export interface DashboardStatsInput {
+  /** Live + archive, déjà passés par `soldBookings()` — le tri par statut se fait une fois. */
+  bookings: SoldBooking[];
+  extras?: RevenueExtra[];
+  mode: RevenueMode;
+  period: StatsPeriod;
+  /** Logements louables du bien : 1 pour Albiez, 9 pour Barbusse. Donnée injectée. */
+  unitsTotal: number;
+  /** Défaut aujourd'hui à Paris. Injectable : le protocole rejoue à date fixe. */
+  asOf?: string;
+  /**
+   * Le **repère** d'une ligne : nom d'événement au Mans, « Hiver A+B » ou « Noël » en
+   * montagne. Défaut : `null`.
+   *
+   * Le catalogue d'événements et le calendrier des vacances scolaires restent chez leurs
+   * sites ; le socle ne reçoit que le résultat, et la colonne s'appelle `Repère` des deux
+   * côtés.
+   */
+  markerOf?: (b: SoldBooking) => string | null;
+  warnings: { archiveMissing: boolean; beds24Error: string | null };
+}
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * **L'assembleur de la charge utile unique.** Les deux routes n'ont plus qu'à lui donner leurs
+ * séjours ; elles ne calculent plus rien.
+ *
+ * Trois règles s'y appliquent, et elles répondent chacune à un écart mesuré :
+ *
+ * 1. **Rien n'est recalculé à côté.** Les indicateurs viennent de `computeIndicators`, le
+ *    revenu engagé de `windowRevenue`, la série mensuelle de `buildMonthlySeries` : une seule
+ *    fonction décide où tombe l'argent. C'est ce qui a fermé D4 — deux RevPAR sur la même page.
+ * 2. **Un seul périmètre pour le revenu engagé.** `le-dahu` a mesuré 30 € d'écart entre le bloc
+ *    « engagé » et la comparaison annuelle d'Albiez, parce que l'un était calculé sans les
+ *    recettes sans nuits et l'autre avec. Ici le montant engagé est calculé **une fois**, et
+ *    c'est ce nombre-là — `committedRevenue.total` — qui part dans `compareYears`. Les deux
+ *    blocs ne peuvent plus diverger : ils lisent la même variable.
+ * 3. **Les trois blocs de comparaison portent sur tout l'historique**, jamais sur la période :
+ *    comparer les années est leur seule raison d'être, et un filtre les réduirait à une barre.
+ */
+export function computeDashboardStats(input: DashboardStatsInput): DashboardStatsPayload {
+  const asOf = input.asOf ?? todayParis();
+  const extras = input.extras ?? [];
+  const { bookings, mode, unitsTotal } = input;
+  const markerOf = input.markerOf ?? (() => null);
+
+  /*
+   * Le premier séjour connu borne « tout l'historique » — jamais une année ronde : l'annonce
+   * d'Albiez n'existait pas avant novembre 2023, et dix mois de nuitées qui n'étaient pas en
+   * vente écraseraient le taux d'occupation.
+   *
+   * Le minimum, et non `bookings[0].arrival` comme le faisait la route d'Albiez : la même
+   * règle, mais qui ne suppose plus que l'appelant ait trié sa liste.
+   */
+  const firstStay = bookings.reduce<string | null>(
+    (min, b) => (min === null || b.arrival < min ? b.arrival : min),
+    null,
+  );
+
+  const { from, to } = periodBounds(input.period, asOf, firstStay);
+  const elapsedTo = to < asOf ? to : asOf;
+
+  const indicators = computeIndicators({
+    bookings,
+    extras,
+    mode,
+    from,
+    to,
+    unitsTotal,
+    asOf,
+  });
+
+  /*
+   * Le revenu engagé porte sur l'exercice en cours, que l'utilisateur regarde « l'exercice
+   * précédent » ou « 12 derniers mois » n'y change rien : c'est le carnet de l'année, pas
+   * celui de la période.
+   *
+   * Périmètre : séjours **et** recettes sans nuits, comme partout ailleurs. Les recettes
+   * restent dans les totaux — les retirer creuserait un trou de canal Direct sur 2024 et 2025.
+   */
+  const year = Number(asOf.slice(0, 4));
+  const engaged = windowRevenue(bookings, extras, mode, {
+    from: `${year}-01-01`,
+    to: `${year}-12-31`,
+    asOf,
+  });
+  const committedRevenue = {
+    year,
+    total: round2(engaged.total),
+    realized: round2(engaged.realized),
+    committed: round2(engaged.committed),
+  };
+
+  // L'occupation mois par mois et les barres mensuelles lisent la même série : un seul
+  // dénominateur, donc aucune façon de publier deux taux pour le même mois.
+  const monthly = buildMonthlySeries(bookings, extras, mode, {
+    from,
+    to,
+    unitsTotal,
+    asOf,
+  });
+
+  /*
+   * **Années comparables** — règle reprise telle quelle de la route d'Albiez.
+   *
+   * La première année d'activité est écartée des comparaisons quand elle est tronquée :
+   * l'annonce a ouvert fin novembre 2023, cinq semaines contre douze mois, et la mettre côte à
+   * côte ne dit rien d'autre que « l'activité n'avait pas commencé » tout en écrasant
+   * l'échelle du graphe. On garde à partir de la première année dont le premier séjour tombe
+   * en janvier ; la règle se maintient seule et ne demandera aucune retouche l'an prochain.
+   */
+  const firstComparableYear = firstStay
+    ? Number(firstStay.slice(0, 4)) + (firstStay.slice(5, 7) === "01" ? 0 : 1)
+    : 0;
+  const comparable = bookings.filter(
+    (b) => Number(b.arrival.slice(0, 4)) >= firstComparableYear,
+  );
+  const comparableExtras = extras.filter(
+    (r) => !r.date || Number(r.date.slice(0, 4)) >= firstComparableYear,
+  );
+
+  const stays = bookings.filter((b) => overlapsWindow(b, from, to));
+
+  return {
+    period: { key: input.period, from, to, elapsedTo },
+    revenueMode: mode,
+    unitsTotal,
+    indicators,
+    committedRevenue,
+    monthly,
+    chart: buildRevenueChart(comparable, comparableExtras, mode, asOf),
+    // `committedRevenue.total` et pas un second calcul : voir la règle 2 ci-dessus.
+    comparison: compareYears(comparable, comparableExtras, mode, committedRevenue.total, asOf),
+    channelsByYear: channelsByYear(comparable, comparableExtras, asOf),
+    /*
+     * Les deux tableaux portent les séjours qui **recouvrent** la période, bornes comprises —
+     * jamais un test sur la seule arrivée (défaut D3). Contrairement aux huit cartes, ils ne
+     * s'arrêtent pas à `elapsedTo` : « Réservations récentes » parle de prises de commande, et
+     * une réservation encaissée hier pour novembre est exactement ce qu'on vient y lire.
+     *
+     * Listes **complètes**, jamais tronquées : le composant affiche cinq lignes et propose
+     * « Voir les N », et un N calculé sur une liste plafonnée serait un chiffre faux. Les deux
+     * biens tiennent aujourd'hui en une centaine de lignes par période, quelques dizaines de
+     * kilo-octets ; le jour où ce ne sera plus vrai, c'est le plafond qui se discutera, pas le
+     * bouton.
+     */
+    recentStays: [...stays]
+      .sort((a, b) => (b.bookedAt ?? b.arrival).localeCompare(a.bookedAt ?? a.arrival))
+      .map((b) => toStayRow(b, markerOf)),
+    topStays: stays
+      .filter((b) => b.nights > 0)
+      .map((b) => toStayRow(b, markerOf))
+      .sort((a, b) => b.pricePerUnitNight - a.pricePerUnitNight),
+    warnings: input.warnings,
+  };
+}
+
+/**
+ * Une ligne de tableau.
+ *
+ * `net` est celui du séjour **entier**, pas sa part tombant dans la période : une ligne de
+ * tableau décrit une réservation, pas une tranche d'exercice. Les montants proratisés vivent
+ * dans les indicateurs et dans la série mensuelle, et eux seuls.
+ */
+function toStayRow(b: SoldBooking, markerOf: (b: SoldBooking) => string | null): StayRow {
+  const units = unitsOf(b);
+  const unitNights = b.nights * units;
+  return {
+    ref: b.ref,
+    arrival: b.arrival,
+    departure: b.departure,
+    nights: b.nights,
+    units,
+    channel: b.channel,
+    guests: b.guests ?? null,
+    marker: markerOf(b),
+    bookedAt: b.bookedAt ?? null,
+    // Aucun arrondi avant la dernière division : c'est le quotient qui s'arrondit, pas ses
+    // termes.
+    pricePerUnitNight: unitNights > 0 ? round2(b.net / unitNights) : 0,
+    net: round2(b.net),
+    source: b.source,
+    // Absente plutôt que posée à `undefined` : une ligne d'archive d'Albiez n'a jamais eu
+    // d'identifiant Beds24, et la charge utile doit pouvoir le dire par l'absence.
+    ...(b.id != null ? { id: b.id } : {}),
+  };
+}
+
+/**
+ * `?period=&mode=` vers deux valeurs sûres.
+ *
+ * Une valeur inconnue prend le défaut, elle ne lève pas : une URL bricolée à la main ne doit
+ * pas rendre 500 sur une page de chiffres, et les deux défauts — `currentYear` et
+ * `averagedPerNight` — sont ceux de l'arbitrage.
+ *
+ * Le nom des paramètres est `period` et `mode` des deux côtés. Albiez envoyait `periode` :
+ * c'est la photo de référence v2 qui a trouvé l'écart, une seule convention sur quatre étant
+ * réellement exercée jusque-là.
+ */
+export function parseStatsQuery(params: URLSearchParams): {
+  period: StatsPeriod;
+  mode: RevenueMode;
+} {
+  const period = params.get("period") as StatsPeriod | null;
+  const mode = params.get("mode") as RevenueMode | null;
+  return {
+    period: period && STATS_PERIODS.includes(period) ? period : "currentYear",
+    mode: mode && REVENUE_MODES.includes(mode) ? mode : "averagedPerNight",
   };
 }

@@ -21,6 +21,7 @@
 import type { Booking } from "../lib/booking";
 import type { RevenueExtra } from "../lib/stats";
 import { soldBookings } from "../lib/booking-status";
+import { computeDashboardStats, parseStatsQuery } from "../lib/dashboard-stats";
 import { buildMonthlySeries, computeIndicators, windowRevenue } from "../lib/stats";
 
 const AS_OF = "2026-09-12";
@@ -313,6 +314,182 @@ check(
   "les 90 nuits a venir : 6 nuits × 9 logements sur 810",
   near(ind.forwardOccupancy90, (54 / 810) * 100, 0.01),
   `${ind.forwardOccupancy90} %`,
+);
+
+
+// ── Lot C — la charge utile de la page, assemblée une fois ─────────────────────
+//
+// Ce bloc ne recalcule rien : il vérifie que l'assembleur et les fonctions d'indicateurs
+// racontent la même chose. Trois égalités et une liste de clés, et c'est tout ce qu'il faut
+// pour qu'un bloc de la page ne puisse plus diverger d'un autre — c'est exactement l'écart de
+// 30 € que `le-dahu` a mesuré chez Albiez entre le revenu engagé et la comparaison annuelle,
+// l'un calculé sans les recettes sans nuits et l'autre avec.
+console.log("\n── Lot C — la charge utile unique ────────────────────────────");
+
+const PAYLOAD_KEYS = [
+  "channelsByYear",
+  "chart",
+  "committedRevenue",
+  "comparison",
+  "indicators",
+  "monthly",
+  "period",
+  "recentStays",
+  "revenueMode",
+  "topStays",
+  "unitsTotal",
+  "warnings",
+];
+
+for (const mode of ["averagedPerNight", "byCheckIn", "byCheckOut", "byBookingDate"] as const) {
+  const payload = computeDashboardStats({
+    bookings: BOOKINGS,
+    extras: EXTRAS,
+    mode,
+    period: "currentYear",
+    unitsTotal: UNITS_TOTAL,
+    asOf: AS_OF,
+    markerOf: (b) => (b.ref === "maison-mars" ? "24 Heures" : null),
+    warnings: { archiveMissing: false, beds24Error: null },
+  });
+
+  // Le « diff des clés → vide » du protocole, joué sans serveur ni `jq` : la liste est figée
+  // ici, et toute clé ajoutée ou retirée casse le contrôle avant d'atteindre les deux routes.
+  const keys = Object.keys(payload).sort();
+  check(
+    `[${mode}] les cles de premier niveau sont exactement celles du type`,
+    keys.length === PAYLOAD_KEYS.length && keys.every((k, i) => k === PAYLOAD_KEYS[i]),
+    keys.join(", "),
+  );
+
+  // Sur l'exercice en cours, la carte « Net encaissé » **est** le segment réalisé du revenu
+  // engagé : même ventilation, même fenêtre, deux lectures. Égalité stricte, pas approchée.
+  check(
+    `[${mode}] la carte « net encaisse » est le realise du revenu engage`,
+    payload.indicators.netRevenue === payload.committedRevenue.realized,
+    `${eur(payload.indicators.netRevenue)} vs ${eur(payload.committedRevenue.realized)}`,
+  );
+
+  // INV-STATS-4 sur la charge utile : la somme des barres mensuelles déjà tombées retombe sur
+  // la carte. La tolérance suit le nombre de mois — chaque mois est publié arrondi au centime.
+  const realizedSum = payload.monthly.reduce((s, m) => s + m.realized, 0);
+  const wholeSum = payload.monthly.reduce((s, m) => s + m.realized + m.upcoming, 0);
+  const tolerance = 0.005 * payload.monthly.length + 0.005;
+  check(
+    `[${mode}] INV-STATS-4 — Σ des barres realisees = net encaisse`,
+    near(realizedSum, payload.indicators.netRevenue, tolerance),
+    `${eur(realizedSum)} vs ${eur(payload.indicators.netRevenue)} sur ${payload.monthly.length} mois`,
+  );
+  check(
+    `[${mode}] Σ de toutes les barres = minimum garanti`,
+    near(wholeSum, payload.committedRevenue.total, tolerance),
+    `${eur(wholeSum)} vs ${eur(payload.committedRevenue.total)}`,
+  );
+
+  // Un seul périmètre : le nombre que porte la comparaison annuelle **est** la variable du
+  // bloc « Revenu engagé », pas un second calcul qui lui ressemble.
+  const current = payload.comparison.find((c) => c.year === payload.committedRevenue.year);
+  check(
+    `[${mode}] la comparaison annuelle porte le meme montant engage`,
+    current != null && current.committedTotal === payload.committedRevenue.total,
+    `${current?.committedTotal != null ? eur(current.committedTotal) : "absent"} vs ${eur(payload.committedRevenue.total)}`,
+  );
+
+  check(
+    `[${mode}] la periode est bornee et la part ecoulee s'arrete a asOf`,
+    payload.period.from === FROM &&
+      payload.period.to === TO &&
+      payload.period.elapsedTo === AS_OF &&
+      payload.revenueMode === mode &&
+      payload.unitsTotal === UNITS_TOTAL,
+    `${payload.period.from} → ${payload.period.to}, mesuree jusqu'au ${payload.period.elapsedTo}`,
+  );
+}
+
+// Les deux tableaux, sur la convention par défaut.
+const payload = computeDashboardStats({
+  bookings: BOOKINGS,
+  extras: EXTRAS,
+  mode: "averagedPerNight",
+  period: "currentYear",
+  unitsTotal: UNITS_TOTAL,
+  asOf: AS_OF,
+  markerOf: (b) => (b.ref === "maison-mars" ? "24 Heures" : null),
+  warnings: { archiveMissing: false, beds24Error: null },
+});
+
+check(
+  "les tableaux sont complets et le recouvrement rattrape le sejour a cheval",
+  payload.recentStays.length === 6 && payload.recentStays.some((s) => s.ref === "cheval-nouvel-an"),
+  `${payload.recentStays.length} lignes, dont le sejour du 2025-12-28 au 2026-01-04`,
+);
+check(
+  "les reservations recentes sont triees par date de reservation decroissante",
+  payload.recentStays.every(
+    (s, i) =>
+      i === 0 ||
+      (payload.recentStays[i - 1].bookedAt ?? payload.recentStays[i - 1].arrival) >=
+        (s.bookedAt ?? s.arrival),
+  ),
+  payload.recentStays.map((s) => s.bookedAt ?? s.arrival).join(" ≥ "),
+);
+check(
+  "les meilleures nuitees sont triees par € / nuitee et excluent les lignes sans nuit",
+  payload.topStays.length === 5 &&
+    payload.topStays.every((s, i) => i === 0 || payload.topStays[i - 1].pricePerUnitNight >= s.pricePerUnitNight) &&
+    payload.topStays.every((s) => s.nights > 0),
+  payload.topStays.map((s) => eur(s.pricePerUnitNight)).join(" ≥ "),
+);
+check(
+  "le prix a la nuitee divise par nuits × logements, pas par nuits",
+  near(payload.topStays.find((s) => s.ref === "maison-mars")!.pricePerUnitNight, 2460 / 63, 0.005),
+  `${eur(payload.topStays.find((s) => s.ref === "maison-mars")!.pricePerUnitNight)} la nuitee-logement pour 414 € la nuit de maison`,
+);
+check(
+  "le repere vient du site et rien d'autre ne le calcule",
+  payload.recentStays.filter((s) => s.marker === "24 Heures").length === 1 &&
+    payload.recentStays.filter((s) => s.marker === null).length === 5,
+  "1 ligne etiquetee, 5 sans repere",
+);
+
+// « Tout l'historique » part du premier séjour connu, jamais d'une année ronde : dix mois de
+// nuitées qui n'étaient pas en vente écraseraient le taux d'occupation.
+const wholeHistory = computeDashboardStats({
+  bookings: BOOKINGS,
+  extras: EXTRAS,
+  mode: "averagedPerNight",
+  period: "all",
+  unitsTotal: UNITS_TOTAL,
+  asOf: AS_OF,
+  warnings: { archiveMissing: true, beds24Error: "timeout" },
+});
+check(
+  "« tout l'historique » commence au premier sejour connu",
+  wholeHistory.period.from === "2025-12-28" && wholeHistory.period.to === "2027-12-31",
+  `${wholeHistory.period.from} → ${wholeHistory.period.to}`,
+);
+check(
+  "les avertissements sont recopies tels quels",
+  wholeHistory.warnings.archiveMissing && wholeHistory.warnings.beds24Error === "timeout",
+  "archive manquante, Beds24 injoignable",
+);
+
+check(
+  "une valeur de requete inconnue prend le defaut, elle ne leve pas",
+  (() => {
+    const bogus = parseStatsQuery(new URLSearchParams("period=30d&mode=gross"));
+    const good = parseStatsQuery(new URLSearchParams("period=previousYear&mode=byCheckOut"));
+    const empty = parseStatsQuery(new URLSearchParams(""));
+    return (
+      bogus.period === "currentYear" &&
+      bogus.mode === "averagedPerNight" &&
+      good.period === "previousYear" &&
+      good.mode === "byCheckOut" &&
+      empty.period === "currentYear" &&
+      empty.mode === "averagedPerNight"
+    );
+  })(),
+  "30d → currentYear, gross → averagedPerNight, previousYear/byCheckOut conserves",
 );
 
 console.log(
