@@ -139,6 +139,7 @@ deux validations.
 | A | Convergence des stats — **les définitions** | `madame-soleil` | `v1.0.0` — **non consommable** |
 | B | Convergence des stats — **routes, brut par canal, fiscal sur le `Booking`, gardes** | `champollion`, `cerbere`, `le-percepteur` | `v2.0.0` |
 | C + D | Convergence des stats — **la charge utile unique et l'écran partagé** | `madame-soleil` | **`v3.0.0`** — le fiscal change des nombres publiés |
+| 5 (suite) | Vitrine — **i18n et SEO** : `lib/locales.ts`, `lib/seo.ts` (hreflang, JSON-LD d'article, négociation de langue) | `poisson-babel` | `v3.1.0` |
 | — | Veille des dates d'événements (`lib/events-watch.ts`) | — | `v0.7.0` |
 
 Plan détaillé : `C:\Users\alexa\.claude\plans\cheerful-toasting-rivest.md`.
@@ -597,6 +598,44 @@ cinq autres non confirmés, et au 2028-03-05 rappelle un catalogue vide alors qu
 aucune entrée à confirmer ; un événement déjà commencé et toujours non confirmé se lit « déjà
 commencé » ; une fenêtre qui chevauche le nouvel an tient ; un catalogue entièrement confirmé
 ne rappelle rien.
+
+### Lot 5 (suite) — i18n, SEO, moteur de blog
+
+| Chemin | Contenu | Vient de |
+|---|---|---|
+| `lib/locales.ts` | `Locale`, `LOCALES`, `DEFAULT_LOCALE`, `LOCALE_META` (`short` / `native` / `bcp47` / `og`), `isLocale`, `localeFromAcceptLanguage`. **Aucun import** — le fichier est chargé par le proxy (edge), les composants serveur et les composants client. | Albiez ; Barbusse ne l'avait pas |
+| `lib/seo.ts` | `PathFor`, `homePath`, `sectionPath`, `itemPath`, `openGraphLocales`, et `createSeo({siteUrl, siteName})` → `hreflangMap`, `alternatesFor`, `articleJsonLd`. | Albiez, déjà écrit générique |
+
+**Une seule abstraction : `PathFor`.** Une fonction `(locale) => chemin`. Elle suffit aux slugs
+traduits d'Albiez (`/fr/ete` ↔ `/en/summer`) comme aux slugs communs de Barbusse, et c'est
+elle qui garantit que le `<head>` d'une page et le sitemap construisent la **même** table
+`hreflang` : ils appellent tous les deux `hreflangMap`. Les deux jeux d'annotations décrivent
+le même ensemble et Google les lit tous les deux ; une clé présente d'un côté et absente de
+l'autre est une incohérence gratuite.
+
+**Ce qui ne monte pas :**
+
+- **Les dictionnaires** et le **contenu des articles**. Des valeurs.
+- **`apartmentJsonLd`** (Albiez) et le JSON-LD de logement de Barbusse. Ils décrivent deux
+  biens de nature différente — un appartement en station contre une maison de neuf suites —
+  avec des types schema.org, des champs et des nœuds distincts. Les factoriser donnerait une
+  signature à quinze paramètres optionnels, c'est-à-dire la donnée du site déguisée en
+  configuration (règle 2). Chaque site garde le sien.
+- **`BlogPostMeta`.** Le modèle de données est commun à 60 %, mais les deux extensions
+  (`season` chez Albiez ; `soldOut`, `nextEdition`, `supersededBy`, `imageCredit` chez
+  Barbusse) portent chacune des règles d'affichage que le socle n'a aucun moyen d'appliquer.
+  Le **motif** d'imports paresseux, lui, s'est propagé — mais un motif se recopie, il ne
+  s'importe pas.
+- **`SEASON_SLUGS`, `DATE_LOCALE`.** `LOCALE_META.bcp47` vise `en-GB` ; Barbusse formate ses
+  dates d'articles en `en-US`. Ce n'est pas la même chose qu'une étiquette de langue : c'est
+  un format affiché, et l'aligner changerait le texte des articles.
+
+**Le `<html lang>` correct impose deux layouts racines.** `app/layout.tsx` disparaît, le
+segment de langue devient le layout racine du site, et le dashboard prend le sien. C'est la
+seule façon d'écrire `lang` avec la vraie langue de la page en restant statique ; un
+`useEffect` qui corrige `document.documentElement.lang` après l'hydratation n'est vu ni par un
+moteur, ni par un lecteur d'écran. Conséquence à connaître : le `_not-found` global sort alors
+avec un `<html>` sans `lang` — c'est le cas des deux sites.
 
 ### Lot A — les définitions de la page de statistiques
 
