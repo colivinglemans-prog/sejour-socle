@@ -74,9 +74,11 @@ export interface Booking {
   /**
    * Taxe de séjour collectée sur ce séjour, en euros. Défaut `0`.
    *
-   * Absent quand la source ne permet pas de la séparer — l'archive d'Albiez n'a pas de lignes
-   * de facture, seulement `brut`/`net`/`commission` — et dans ce cas `gross` la contient sans
-   * qu'on puisse le dire. Posé par le `toBooking`, jamais recalculé en aval.
+   * Absent quand la source ne permet pas de la séparer, et dans ce cas `gross` la contient sans
+   * qu'on puisse le dire. L'archive d'Albiez la porte sur une partie de ses lignes seulement
+   * (`taxeSejourCollecteeParLeCanal`, 56 séjours sur 101, tous Airbnb) : la poser là ferait
+   * cohabiter deux définitions de brut dans la même colonne. Le `toBooking` de chaque site
+   * décide où il la sépare — c'est tranché au Lot B — et rien en aval ne la recalcule.
    */
   touristTax?: number;
 

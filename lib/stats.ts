@@ -216,6 +216,7 @@ export function buildRevenueChart(
   bookings: SoldBooking[],
   extras: RevenueExtra[],
   mode: RevenueMode,
+  asOf?: string,
 ): RevenueChartData {
   const byYearMonth = new Map<string, number>();
   const byChannelMonth = new Map<string, number>();
@@ -259,7 +260,7 @@ export function buildRevenueChart(
     });
   }
 
-  const today = todayParis();
+  const today = asOf ?? todayParis();
   return {
     byYear,
     byChannel,
@@ -277,7 +278,11 @@ export function buildRevenueChart(
  * revenu : un séjour appartient à un canal en entier, le découper entre deux années pour
  * quelques nuits de décembre n'apprendrait rien sur le mix de canaux.
  */
-export function channelsByYear(bookings: SoldBooking[], extras: RevenueExtra[]): ChannelYear[] {
+export function channelsByYear(
+  bookings: SoldBooking[],
+  extras: RevenueExtra[],
+  asOf?: string,
+): ChannelYear[] {
   const perYear = new Map<number, Map<Channel, { stays: number; revenue: number }>>();
   const entry = (year: number, channel: Channel) => {
     const m = perYear.get(year) ?? new Map<Channel, { stays: number; revenue: number }>();
@@ -287,7 +292,7 @@ export function channelsByYear(bookings: SoldBooking[], extras: RevenueExtra[]):
     return e;
   };
 
-  const today = todayParis();
+  const today = asOf ?? todayParis();
   const currentYear = Number(today.slice(0, 4));
 
   // L'année en cours est annoncée « à date » : elle doit donc s'arrêter à aujourd'hui, sans
@@ -341,8 +346,14 @@ export function compareYears(
   extras: RevenueExtra[],
   mode: RevenueMode,
   currentYearCommitted: number | null,
+  /**
+   * Défaut : aujourd'hui à Paris. Injectable comme partout ailleurs dans ce module : le
+   * protocole rejoue les invariants à date fixe, et une fonction qui lit l'horloge en secret
+   * est la seule qu'il ne peut pas rejouer — `le-dahu` a perdu 44,58 € à le découvrir.
+   */
+  asOf?: string,
 ): YearComparison[] {
-  const today = todayParis();
+  const today = asOf ?? todayParis();
   const currentYear = Number(today.slice(0, 4));
   const dayRank = daysBetween(`${currentYear}-01-01`, today); // 0 = 1er janvier
 
