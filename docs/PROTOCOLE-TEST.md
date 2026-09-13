@@ -202,6 +202,25 @@ Un événement `confirmed: true` émet un nœud `"@type":"Event"` ; un événeme
 curl -sL "$BASE/fr/guide/<slug>" | grep -c '"@type":"Event"'
 ```
 
+**Les champs recommandés (v3.1.0)** — `organizer`, `performer`, `offers` viennent du catalogue,
+`description` et `image` de l'article. Deux interdits à vérifier sur chaque nœud émis :
+
+```bash
+# 1. Aucune de nos URL de réservation ne doit apparaître dans offers : la billetterie est
+#    celle de l'organisateur, jamais notre hébergement. Attendu : 0.
+curl -sL "$BASE/fr/guide/<slug>" | grep -o '"offers":{[^}]*}' \
+  | grep -c 'booking2.php\|coliving-barbusse.fr\|albiez-aiguilles.fr'
+
+# 2. La description suit la langue de la page : les deux lignes doivent différer, preuve que
+#    l'i18n est restée chez l'appelant et non dans le socle.
+for l in fr en; do
+  curl -sL "$BASE/$l/guide/<slug>" | grep -o '"@type":"Event"[^<]*' | grep -o '"description":"[^"]*"'
+done
+```
+
+Et le site n'est **jamais** `organizer` : `grep -o '"organizer":{[^}]*}'` ne doit pas contenir le
+nom du site.
+
 ### Invariants permanents des statistiques (arbitrage du 2026-09-12)
 
 ```

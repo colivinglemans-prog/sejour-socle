@@ -57,6 +57,38 @@ export interface LocalEvent {
   commune?: string;
   /** Site de l'organisateur, quand il en existe un. */
   url?: string;
+  /**
+   * L'organisateur **véritable** de l'événement — l'ACO pour les 24 Heures, Peter Auto pour
+   * Le Mans Classic, un club pour un festival de village. Jamais le site qui l'annonce :
+   * nous ne sommes pas l'organisateur, et le déclarer serait faux. Renseigné seulement quand
+   * le catalogue le connaît ; sinon le nœud JSON-LD n'en porte pas.
+   */
+  organizer?: { name: string; url?: string };
+  /**
+   * Le plateau, quand il a un nom : pour une manche de championnat, c'est le championnat
+   * lui-même (FIA WEC pour les 24 Heures du Mans, FIM EWC pour les 24 Heures Motos). Émis
+   * en `Organization` et jamais en `Person` — un pilote nommé ferait entrer de l'affichage
+   * et du droit à l'image dans un catalogue de dates.
+   */
+  performer?: { name: string; url?: string };
+  /**
+   * La billetterie **officielle de l'organisateur**, jamais notre hébergement : Google
+   * interdit de marquer un logement comme offre d'un `Event`, et une réservation chez nous
+   * n'est pas un billet.
+   *
+   * Le prix est un sous-objet, pas deux champs indépendants : un `price` sans devise est un
+   * état que schema.org refuse, et le type le rend impossible plutôt que de le déconseiller.
+   * `validFrom` est le jour d'ouverture de la billetterie, au format `YYYY-MM-DD`.
+   *
+   * Ne renseigner ce champ que tant que la billetterie est **ouverte et vend** : le nœud
+   * émis affirme `InStock`. Une épreuve complète retire la donnée — c'est un fait sur
+   * l'événement, pas un booléen à ajouter ici.
+   */
+  tickets?: {
+    url: string;
+    price?: { amount: number; currency: string };
+    validFrom?: string;
+  };
 }
 
 /**
@@ -170,8 +202,21 @@ export function stayWindow(
  * date nue comme le début de ce jour, et un festival de quatre jours s'afficherait comme
  * terminé dès le matin du dernier.
  *
- * `organizer` est délibérément absent : nous ne sommes pas l'organisateur, et le déclarer
- * serait faux.
+ * Les champs que Google recommande sans les exiger — `organizer`, `performer`, `offers`,
+ * `description`, `image` — viennent de deux sources et de deux seulement :
+ *
+ * - **du catalogue**, pour ce qui est un fait sur l'événement : son organisateur véritable,
+ *   son plateau, sa billetterie officielle. Nous ne sommes jamais déclarés organisateur, et
+ *   notre hébergement n'est jamais une `offers` — Google interdit de marquer un logement
+ *   comme offre d'un `Event`, et ce serait de toute façon faux.
+ * - **de l'article** qui porte le nœud, via `article` : la description dans la langue de la
+ *   page et l'image de couverture. Le socle ne connaît pas l'i18n, c'est l'appelant qui sait
+ *   dans quelle langue il rend.
+ *
+ * Chaque champ absent de sa source est omis du nœud, jamais inventé.
+ *
+ * `offers.availability` vaut `InStock` en dur : c'est acceptable seulement parce que
+ * `tickets` n'existe dans le catalogue que tant que la billetterie vend — voir le champ.
  */
 export function eventJsonLd(
   event: LocalEvent,
@@ -183,6 +228,15 @@ export function eventJsonLd(
     /** Code pays ISO 3166-1 alpha-2. */
     country?: string;
   },
+  article: {
+    /** Description de l'événement dans la langue de la page — celle de l'article, en général. */
+    description?: string;
+    /**
+     * URL **absolue** de l'image de couverture. Une URL relative n'a pas de sens hors du
+     * document pour un consommateur de JSON-LD.
+     */
+    imageUrl?: string;
+  } = {},
 ): Record<string, unknown> | null {
   if (!event.confirmed) return null;
 
@@ -192,11 +246,47 @@ export function eventJsonLd(
     "@context": "https://schema.org",
     "@type": "Event",
     name: event.name,
+    ...(article.description ? { description: article.description } : {}),
+    ...(article.imageUrl ? { image: article.imageUrl } : {}),
     startDate: event.start,
     endDate: `${event.end}T23:59:59`,
     eventStatus: "https://schema.org/EventScheduled",
     eventAttendanceMode: "https://schema.org/OfflineEventAttendanceMode",
     ...(event.url ? { url: event.url } : {}),
+    ...(event.organizer
+      ? {
+          organizer: {
+            "@type": "Organization",
+            name: event.organizer.name,
+            ...(event.organizer.url ? { url: event.organizer.url } : {}),
+          },
+        }
+      : {}),
+    ...(event.performer
+      ? {
+          performer: {
+            "@type": "Organization",
+            name: event.performer.name,
+            ...(event.performer.url ? { url: event.performer.url } : {}),
+          },
+        }
+      : {}),
+    ...(event.tickets
+      ? {
+          offers: {
+            "@type": "Offer",
+            url: event.tickets.url,
+            availability: "https://schema.org/InStock",
+            ...(event.tickets.price
+              ? {
+                  price: event.tickets.price.amount,
+                  priceCurrency: event.tickets.price.currency,
+                }
+              : {}),
+            ...(event.tickets.validFrom ? { validFrom: event.tickets.validFrom } : {}),
+          },
+        }
+      : {}),
     // Sans commune, pas de nœud `Place` : une adresse réduite à une région ne situe rien et
     // Google rejette l'élément entier plutôt que le seul champ manquant.
     ...(commune

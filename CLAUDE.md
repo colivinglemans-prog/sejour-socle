@@ -510,7 +510,7 @@ Vercel :
 
 | Chemin | Contenu | Vient de |
 |---|---|---|
-| `lib/events.ts` | `LocalEvent`, `nextEdition`, `findEventByKey`, `findEventOnDay`, `findEventForStay`, `stayWindow`, `eventJsonLd`. **Le type et les fonctions ; jamais les données.** | Albiez pour la forme (écrit pour être extrait), Barbusse pour `findEventForStay` |
+| `lib/events.ts` | `LocalEvent`, `nextEdition`, `findEventByKey`, `findEventOnDay`, `findEventForStay`, `stayWindow`, `eventJsonLd`. Depuis v3.1.0, `LocalEvent` porte aussi `organizer`, `performer` et `tickets`, optionnels. **Le type et les fonctions ; jamais les données.** | Albiez pour la forme (écrit pour être extrait), Barbusse pour `findEventForStay` |
 | `lib/availability.ts` | `AvailabilityResponse`, `AvailabilityUrl`, `strictestMinStay`, `longestFreeRange`. | Barbusse (le CTA), généralisé |
 | `lib/stay-selection.ts` | `SelectionContext`, `isValidCheckIn`, `isValidCheckOut`, `cellState`, `selectionAfterClick`, `consecutiveFreeNights`. **Le cœur du tunnel, sorti d'un composant client pour devenir testable.** | les deux calendriers, identiques |
 | `lib/booking-url.ts` | `bookingUrl` — l'URL `booking2.php` composée à un seul endroit. | trois copies, mêmes paramètres dans le même ordre |
@@ -868,6 +868,39 @@ routes d'argent répondent 403 au rôle restreint, jamais une charge utile allé
 les 16 combinaisons ; 32/32 invariants ; Barbusse fiscal 2026 `realized` = stats `grossRevenue`
 écoulé = 66 260,42 €, commissions 7 732,79 des deux côtés ; Albiez `currentYear` net 12 555,31 €,
 `committedTotal` 2026 = 13 670,04 €. Le détail est dans `docs/PROTOCOLE-TEST.md`.
+
+### v3.1.0 — les champs recommandés du nœud `Event`
+
+Déclenché par la Search Console de Barbusse le 2026-09-13 : cinq avertissements non critiques
+sur les données structurées `Event` — `organizer`, `description`, `offers`, `image`,
+`performer` manquants. Albiez émet le même nœud par la même fonction et les aurait eus aussi.
+
+| Chemin | Contenu | Vient de |
+|---|---|---|
+| `lib/events.ts` | `LocalEvent.organizer`, `.performer`, `.tickets` (optionnels) ; `eventJsonLd(event, place, article?)` avec `article: { description?, imageUrl? }`. | écrit dans le socle, les deux appelants mis à jour le même jour |
+
+**Deux sources, et deux seulement.** Ce qui est un **fait sur l'événement** — son organisateur
+véritable, son plateau, sa billetterie officielle — est une donnée du catalogue de chaque site
+(règle 2 : jamais un drapeau, jamais un nom de site). Ce qui est **propre à la page** — la
+description dans sa langue, l'image de couverture — vient du troisième paramètre : le socle ne
+connaît pas l'i18n, c'est l'appelant qui sait dans quelle langue il rend. Un champ absent de sa
+source est omis du nœud, jamais inventé.
+
+**Trois interdits, dont le type porte deux.** Nous ne sommes jamais `organizer` — le
+commentaire de v0.6.0 disait « délibérément absent : nous ne sommes pas l'organisateur » ; il
+reste vrai, on déclare désormais l'organisateur **véritable** quand le catalogue le connaît.
+Notre hébergement n'est jamais `offers` : Google interdit de marquer un logement comme offre
+d'un `Event`, d'où le nom `tickets` et non `offers` sur `LocalEvent`, pour qu'on ne lise pas
+« notre offre ». Et `performer` s'émet en `Organization` seulement : un pilote nommé ferait
+entrer de l'affichage et du droit à l'image dans un catalogue de dates.
+
+**`tickets.price` est un sous-objet `{ amount, currency }`**, pas deux champs : un `price` sans
+`priceCurrency` est un état que schema.org refuse, et le type le rend impossible. `availability`
+vaut `InStock` en dur, acceptable parce que `tickets` n'existe que tant que la billetterie vend —
+une épreuve complète retire la donnée.
+
+Le protocole (`docs/PROTOCOLE-TEST.md`, « Les événements ») vérifie qu'aucune URL de réservation
+des sites n'apparaît dans `offers`, et que `description` change entre `/fr/` et `/en/`.
 
 ### Comment une application s'y branche
 
