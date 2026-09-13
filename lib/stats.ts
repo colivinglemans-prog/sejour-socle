@@ -1,6 +1,6 @@
 import type { Booking } from "./booking";
 import { unitsOf } from "./booking";
-import { countsAsSold } from "./booking-status";
+import type { SoldBooking } from "./booking-status";
 import type { Channel } from "./channels";
 import { CHANNELS } from "./channels";
 import { addDays, daysBetween, daysInMonthKey } from "./dates";
@@ -213,7 +213,7 @@ export function revenueMovements(
  * Cette fonction ne connaît ni bien, ni API : elle prend des séjours et rend des lignes.
  */
 export function buildRevenueChart(
-  bookings: Booking[],
+  bookings: SoldBooking[],
   extras: RevenueExtra[],
   mode: RevenueMode,
 ): RevenueChartData {
@@ -277,7 +277,7 @@ export function buildRevenueChart(
  * revenu : un séjour appartient à un canal en entier, le découper entre deux années pour
  * quelques nuits de décembre n'apprendrait rien sur le mix de canaux.
  */
-export function channelsByYear(bookings: Booking[], extras: RevenueExtra[]): ChannelYear[] {
+export function channelsByYear(bookings: SoldBooking[], extras: RevenueExtra[]): ChannelYear[] {
   const perYear = new Map<number, Map<Channel, { stays: number; revenue: number }>>();
   const entry = (year: number, channel: Channel) => {
     const m = perYear.get(year) ?? new Map<Channel, { stays: number; revenue: number }>();
@@ -337,7 +337,7 @@ export function channelsByYear(bookings: Booking[], extras: RevenueExtra[]): Cha
  * passage le 29 février : le rang existe dans toutes les années, la date non.
  */
 export function compareYears(
-  bookings: Booking[],
+  bookings: SoldBooking[],
   extras: RevenueExtra[],
   mode: RevenueMode,
   currentYearCommitted: number | null,
@@ -409,7 +409,7 @@ export function compareYears(
  * Une nuit, pas une *room-night* : un bien loué à la chambre pondère lui-même, cette
  * fonction ne connaît pas le nombre de chambres.
  */
-export function occupiedNights(bookings: Booking[], from: string, to: string): number {
+export function occupiedNights(bookings: SoldBooking[], from: string, to: string): number {
   const days = new Set<string>();
   for (const b of bookings) {
     for (const night of stayNights(b)) {
@@ -420,7 +420,7 @@ export function occupiedNights(bookings: Booking[], from: string, to: string): n
 }
 
 export function channelBreakdown(
-  bookings: Booking[],
+  bookings: SoldBooking[],
 ): { channel: string; stays: number; revenue: number }[] {
   const perChannel = new Map<Channel, { stays: number; revenue: number }>();
   for (const b of bookings) {
@@ -501,7 +501,7 @@ export function overlapsWindow(booking: Booking, from: string, to: string): bool
  * même nuit font bien neuf nuitées. C'est toute la différence entre les deux fonctions, et
  * c'est pourquoi celle-ci prend le relais partout où un taux se calcule.
  */
-export function soldUnitNights(bookings: Booking[], from: string, to: string): number {
+export function soldUnitNights(bookings: SoldBooking[], from: string, to: string): number {
   let total = 0;
   for (const b of bookings) total += nightsInWindow(b, from, to) * unitsOf(b);
   return total;
@@ -556,7 +556,7 @@ export interface WindowRevenue {
  * mode supplémentaire n'existe.
  */
 export function windowRevenue(
-  bookings: Booking[],
+  bookings: SoldBooking[],
   extras: RevenueExtra[],
   mode: RevenueMode,
   window: RevenueWindow,
@@ -565,16 +565,13 @@ export function windowRevenue(
 ): WindowRevenue {
   const asOf = window.asOf ?? todayParis();
   const out: WindowRevenue = { total: 0, realized: 0, committed: 0 };
-  // Le tri par statut est fait ici plutôt que chez l'appelant : c'est le défaut D2, et il est
-  // revenu une fois par endroit où le filtre était facultatif.
-  const acquired = bookings.filter((b) => countsAsSold(b.status));
   const add = (day: string, amount: number) => {
     if (day < window.from || day > window.to) return;
     out.total += amount;
     if (day <= asOf) out.realized += amount;
     else out.committed += amount;
   };
-  for (const b of acquired) {
+  for (const b of bookings) {
     for (const { day, amount } of spreadRevenue(b, mode, amountOf(b))) add(day, amount);
   }
   for (const r of extras) {
@@ -631,12 +628,12 @@ export interface MonthlySeriesOptions {
  * dont le dénominateur grandit d'un jour par jour ne se compare pas à celle d'à côté. Le
  * bornage à la part écoulée appartient aux indicateurs de période, pas à la saisonnalité.
  *
- * Le tri par statut est fait ici, comme dans `computeIndicators` : une demande de
- * renseignement n'a pas à peindre une barre, et un filtre qu'on laisse à l'appelant est un
- * filtre qu'on oublie une fois sur deux.
+ * Aucun tri par statut ici : l'entrée est déjà `SoldBooking[]`, et c'est le type qui garantit
+ * qu'une demande de renseignement ne peint pas une barre — le même jeu de séjours nourrit les
+ * cartes, la série et la comparaison annuelle, ou aucun des trois.
  */
 export function buildMonthlySeries(
-  bookings: Booking[],
+  bookings: SoldBooking[],
   extras: RevenueExtra[],
   mode: RevenueMode,
   options: MonthlySeriesOptions,
@@ -663,7 +660,7 @@ export function buildMonthlySeries(
     return b;
   };
 
-  for (const b of bookings.filter((x) => countsAsSold(x.status))) {
+  for (const b of bookings) {
     // Une ligne sans nuit apporte du revenu et n'occupe rien : elle entre dans les barres et
     // reste hors du numérateur du RevPAR, exactement comme dans `computeIndicators`.
     const occupies = b.nights > 0;
@@ -777,14 +774,12 @@ export interface Indicators {
 
 export interface IndicatorsInput {
   /**
-   * **Tous** les séjours connus, live et archive confondus, sans filtrage préalable.
-   *
-   * Le tri par statut (`countsAsSold`) et par recouvrement de période est fait ici : ce sont
-   * les défauts D2 et D3, et les laisser à l'appelant, c'est les laisser revenir.
-   * L'indicateur 7 regarde les 90 jours à venir, qui débordent de toute période passée — d'où
-   * un jeu complet en entrée plutôt qu'une liste déjà bornée.
+   * **Toutes** les nuits vendues connues, live et archive confondues, **sans bornage de
+   * période** — le tri par recouvrement (défaut D3) est fait ici, et l'indicateur 7 regarde les
+   * 90 jours à venir, qui débordent de toute période passée. Le tri par statut (défaut D2) est
+   * fait en amont, une fois, par `soldBookings` : c'est le type qui en porte la preuve.
    */
-  bookings: Booking[];
+  bookings: SoldBooking[];
   extras?: RevenueExtra[];
   mode: RevenueMode;
   from: string;
@@ -817,10 +812,9 @@ export interface IndicatorsInput {
 export function computeIndicators(input: IndicatorsInput): Indicators {
   const asOf = input.asOf ?? todayParis();
   const extras = input.extras ?? [];
-  const { from, to, unitsTotal, mode } = input;
+  const { bookings, from, to, unitsTotal, mode } = input;
   const elapsedTo = to < asOf ? to : asOf;
 
-  const acquired = input.bookings.filter((b) => countsAsSold(b.status));
   /*
    * **Deux sélections, et elles ne portent pas sur la même chose.**
    *
@@ -839,8 +833,8 @@ export function computeIndicators(input: IndicatorsInput): Indicators {
    * et du RevPAR, au même titre qu'une `RevenueExtra` : c'est la séparation qui garde
    * l'égalité `prix moyen × nuitées vendues = stayNet` vraie au centime.
    */
-  const occupying = acquired.filter((b) => b.nights > 0);
-  const noNightLines = acquired.filter((b) => b.nights <= 0);
+  const occupying = bookings.filter((b) => b.nights > 0);
+  const noNightLines = bookings.filter((b) => b.nights <= 0);
   const retained = occupying.filter((b) => overlapsWindow(b, from, elapsedTo));
   const windowExtras = extras.filter((r) => r.date && r.date >= from && r.date <= elapsedTo);
   const window: RevenueWindow = { from, to: elapsedTo, asOf: elapsedTo };
@@ -867,7 +861,7 @@ export function computeIndicators(input: IndicatorsInput): Indicators {
   ).total;
 
   const forwardEnd = addDays(asOf, 89);
-  const forwardSold = soldUnitNights(acquired, asOf, forwardEnd);
+  const forwardSold = soldUnitNights(bookings, asOf, forwardEnd);
   const forwardAvailable = availableUnitNights(unitsTotal, asOf, forwardEnd);
 
   const withBookedAt = retained.filter((b) => b.bookedAt);

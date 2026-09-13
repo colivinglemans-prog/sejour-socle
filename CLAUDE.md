@@ -611,10 +611,11 @@ consomme encore**. Les deux apps restent épinglées sur `v0.7.0` (tête de `vei
 | Chemin | Contenu | Vient de |
 |---|---|---|
 | `lib/commissions.ts` *(nouveau)* | `commissionOf`, `commissionFromInvoiceItems`, `isCommissionLine`, `COMMISSION_LINE_RE`, `invoiceLineTotal`, `listCommissionLines`. **La définition unique du commissionnement.** | `lib/fiscal/commissions.ts`, qui la réexporte et garde ses helpers de CA |
-| `lib/booking-status.ts` *(+)* | `countsAsSold` = ni exclu, ni provisoire | les deux routes de stats |
-| `lib/booking.ts` *(+)* | `units?: number` et `unitsOf(b)` — le poids d'une ligne en logements, défaut 1 | Barbusse le pose, Albiez laisse le défaut |
+| `lib/booking-status.ts` *(+)* | `countsAsSold` = ni exclu, ni provisoire — et **`new` compte** ; `soldBookings()` et le type marqué `SoldBooking`, seule entrée des agrégations | les deux routes de stats |
+| `lib/booking.ts` *(+)* | `units?: number` et `unitsOf(b)` — le poids d'une ligne en logements, défaut 1 ; `touristTax?: number` et `touristTaxOf(b)`, et **`gross` redéfini hors taxe de séjour** | Barbusse le pose, Albiez laisse le défaut |
+| `lib/taxe-sejour.ts` *(+)* | `isTouristTaxLine`, `touristTaxFromInvoiceItems` — **la définition unique** d'une ligne de taxe ; `fiscal/commissions.ts` l'importe au lieu de recopier le motif | deux copies de `TAX_DESCRIPTION_RE` |
 | `lib/dates.ts` *(+)* | `daysInMonthKey("YYYY-MM")` ; `daysInMonth` existait déjà | trois copies de `new Date(y, m, 0)` |
-| `lib/stats.ts` *(+)* | `nightsInWindow`, `overlapsWindow`, `soldUnitNights`, `availableUnitNights`, `windowRevenue`, `buildMonthlySeries`, `computeIndicators`, et le renommage `YearComparison.projection` → `committedTotal` | écrit ici |
+| `lib/stats.ts` *(+)* | `nightsInWindow`, `overlapsWindow`, `soldUnitNights`, `availableUnitNights`, `windowRevenue`, `buildMonthlySeries`, `computeIndicators`, et le renommage `YearComparison.projection` → `committedTotal`. **Les neuf agrégations ne prennent plus que `SoldBooking[]`** | écrit ici |
 | `lib/dashboard-stats.ts` *(nouveau)* | `DashboardStatsPayload`, `StayRow`, `StatsPeriod`, `periodBounds` — la charge utile **unique** des deux routes | écrit ici |
 | `scripts/verifier-indicateurs.ts` | La vérification de cohérence, exécutable **sans serveur ni Beds24** : `npm run verifier` | écrit ici |
 
@@ -639,10 +640,50 @@ n'a aucune nuit : c'est exactement ce que la convention dit, et le sélecteur es
 au-dessus des cartes. La vérification de cohérence rejoue les quatre conventions pour cette
 raison.
 
+**Le filtre par statut vit une fois, à l'entrée, et le type l'impose.** `le-dahu` a mesuré ce
+que donnait un filtre posé dans trois fonctions sur huit : 12 287,78 € sur une carte et
+12 510,73 € sur la barre annuelle du même écran, plus une colonne 2027 pour une réservation que
+les cartes déclaraient non vendue. Filtrer dans chaque fonction n'aurait fait que reproduire le
+défaut — la neuvième fonction aurait oublié le filtre. `soldBookings()` rend un `SoldBooking[]`
+que rien d'autre ne sait produire, et les agrégations de `stats.ts` n'acceptent que lui : un
+appelant qui oublie le tri a une erreur `tsc`, pas un écart de 222,95 € six mois plus tard.
+Corollaire refusé d'avance : pas de paramètre `includeUnsold` (règle 2).
+
+**`new` compte comme vendu ; `request`, `inquiry`, `black`, `cancelled` non.** Sur un canal OTA,
+`new` est le statut d'arrivée tant que l'hôte n'a pas cliqué « Confirmed » dans Beds24 : un acte
+de rangement, l'OTA a déjà confirmé. Les quatre `new` de Barbusse étaient des Airbnb **déjà
+effectués**, importés après coup ; les deux d'Albiez étaient son carnet entier (1 797,40 € de
+net, occupation à 90 jours de 30 % → 0 % si on les excluait). `provisionalKind` (affichage) et
+`countsAsSold` (argent) divergent donc sciemment sur `new`, et c'est écrit dans les deux JSDoc.
+Conséquences à attendre au Lot B : un `new` s'affiche ferme sur le calendrier de Barbusse, et
+le rôle `viewer` voit les `new` dans `/api/dashboard/bookings` (le DTO filtre `isProvisional`)
+— l'invariant « 50 réservations, 14 813 octets » du protocole bougera, pas les 15 clés ni le
+zéro `NUKI_PIN`.
+
+**`gross` est hors taxe de séjour, et un seul prédicat reconnaît une ligne de taxe.** Une taxe
+collectée pour la commune n'est ni un produit ni une charge ; un « net encaissé » montré à un
+banquier ne la contient pas. La séparation se fait dans le `toBooking` (Lot B), qui pose
+`touristTax` ; aucun calcul ne soustrait rien. `TAX_DESCRIPTION_RE` vivait en deux copies —
+`taxe-sejour.ts` et `fiscal/commissions.ts` —, exactement l'histoire du motif de commission qui
+a produit D1. Mesuré sur les 61 lignes de Barbusse avant/après : CA fiscal **81 301,68 €**
+inchangé, 58 919,45 € sur les 55 acquises ; taxe 779,01 € sur les 55 acquises.
+
+⚠️ **Ce que la mesure a révélé pour le Lot B** : l'écart de 4 594,11 € entre `Σ price` et le CA
+fiscal des 55 lignes acquises n'est **pas** la taxe de séjour — elle n'en fait que 779,01 €. Les
+3 815,10 € restants sont Airbnb : sur ce canal, `price` = Σ lignes de facture **+ commission**
+(4 280,70 € d'écart sur 37 lignes, pour 4 474,44 € de commissions), c'est-à-dire que les lignes
+de facture Airbnb sont **déjà nettes** de la commission, là où celles de Booking.com sont brutes
+(écart 0,00 €) et celles du direct incluent une taxe que `price` n'inclut pas (−465,60 €).
+`computeCAFromInvoiceItems` rend donc un net pour Airbnb et un brut pour Booking.com. Le critère
+« +7 076,89 € de commissions, CA brut inchangé » compterait la commission Airbnb **deux fois**.
+Le Lot B doit d'abord définir le brut **par canal** dans le `toBooking` (`champollion` +
+`le-percepteur`), et le critère de réconciliation stats ↔ fiscal sera re-dérivé de là.
+
 **Ce que la vérification garantit.** `npm run verifier` compile le module et son graphe
-d'imports en CommonJS dans `.verif/`, puis exécute 48 contrôles sur un jeu de séjours écrit à la
-main, contenant exprès les quatre pièges du lot — un statut `inquiry`, un séjour à cheval sur le
-1er janvier, une ligne sans nuit, une réservation prise le jour de l'arrivée :
+d'imports en CommonJS dans `.verif/`, puis exécute 50 contrôles sur un jeu de séjours écrit à la
+main, contenant exprès les pièges du lot — une `inquiry`, une `cancelled`, un `black` et un `new`,
+un séjour à cheval sur le 1er janvier, une ligne sans nuit, une réservation prise le jour de
+l'arrivée :
 
 ```
 prix moyen × nuitées vendues     = net des séjours

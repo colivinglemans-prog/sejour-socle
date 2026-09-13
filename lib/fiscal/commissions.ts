@@ -14,6 +14,7 @@
  * pour que les appelants existants n'aient rien à changer.
  */
 import type { Beds24Booking } from "../beds24-types";
+import { isTouristTaxLine } from "../taxe-sejour";
 import {
   commissionFromInvoiceItems,
   commissionOf,
@@ -41,12 +42,6 @@ export const listCommissionsBooking = listCommissionLines;
 export function sumCommissions(bookings: Beds24Booking[]): number {
   return bookings.reduce((sum, b) => sum + computeCommissionBooking(b), 0);
 }
-
-/**
- * Taxes de séjour et taxes additionnelles — collectées/reversées par la plateforme,
- * ne sont ni produit ni charge pour l'hôte. Reprise du pattern lib/taxe-sejour.ts.
- */
-const TAX_DESCRIPTION_RE = /\btax(es?)?\b|\btaxes?\s*\d/i;
 
 /**
  * Lignes informatives à ignorer (n'entrent pas dans le CA) : payout attendu,
@@ -79,7 +74,9 @@ export function computeCAFromInvoiceItems(b: Beds24Booking): number | null {
     if (type === "payment") continue;
     const desc = item.description ?? "";
     if (!desc) continue;
-    if (TAX_DESCRIPTION_RE.test(desc)) continue;
+    // Taxe de séjour : collectée pour la commune, ni produit ni charge. Un seul prédicat pour
+    // la déclaration de taxe, le CA et le `toBooking` — plus de motif recopié.
+    if (isTouristTaxLine(item)) continue;
     if (isCommissionLine(desc)) continue;
     if (INFO_ITEM_RE.test(desc)) continue;
     const line = invoiceLineTotal(item);

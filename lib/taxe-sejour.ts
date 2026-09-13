@@ -82,21 +82,43 @@ interface CollectedTaxResult {
   descriptions: string[];
 }
 
+/**
+ * **Cette ligne de facture est-elle une taxe de séjour ?** La seule définition, pour les trois
+ * lecteurs : la déclaration de taxe, le CA fiscal, et le `toBooking` qui pose `touristTax`.
+ *
+ * Elle vivait en deux copies — ici et dans `fiscal/commissions.ts` — et deux motifs séparés
+ * dérivent : c'est l'histoire de la commission, qui a rendu 0 € sur une page et 7 076,89 € sur
+ * l'autre. Le motif exclusif (frais de service, ménage, TVA) ne changeait rien sur les données
+ * réelles au 2026-09-12 : zéro ligne ne cochait les deux.
+ */
+export function isTouristTaxLine(item: Beds24InvoiceItem): boolean {
+  if ((item.type ?? "").toLowerCase() === "payment") return false;
+  const desc = item.description ?? "";
+  return desc !== "" && TAX_DESCRIPTION_RE.test(desc) && !TAX_EXCLUDE_RE.test(desc);
+}
+
+function taxLineTotal(item: Beds24InvoiceItem): number {
+  const qty = typeof item.qty === "number" ? item.qty : 1;
+  const amount = typeof item.amount === "number" ? item.amount : 0;
+  return typeof item.lineTotal === "number" ? item.lineTotal : amount * qty;
+}
+
+/** La taxe de séjour d'une réservation, lue dans ses lignes de facture. `0` si rien. */
+export function touristTaxFromInvoiceItems(items?: Beds24InvoiceItem[]): number {
+  if (!items || items.length === 0) return 0;
+  const total = items.filter(isTouristTaxLine).reduce((s, it) => s + taxLineTotal(it), 0);
+  return Math.round(total * 100) / 100;
+}
+
 function detectCollectedTax(items?: Beds24InvoiceItem[]): CollectedTaxResult | null {
   if (!items || items.length === 0) return null;
   let total = 0;
   const descriptions: string[] = [];
   for (const item of items) {
-    if ((item.type ?? "").toLowerCase() === "payment") continue;
-    const desc = item.description ?? "";
-    if (!desc) continue;
-    if (!TAX_DESCRIPTION_RE.test(desc)) continue;
-    if (TAX_EXCLUDE_RE.test(desc)) continue;
-    const qty = typeof item.qty === "number" ? item.qty : 1;
-    const amount = typeof item.amount === "number" ? item.amount : 0;
-    const line = typeof item.lineTotal === "number" ? item.lineTotal : amount * qty;
+    if (!isTouristTaxLine(item)) continue;
+    const line = taxLineTotal(item);
     total += line;
-    descriptions.push(`${desc.trim()} → ${line.toFixed(2)} €`);
+    descriptions.push(`${(item.description ?? "").trim()} → ${line.toFixed(2)} €`);
   }
   if (descriptions.length === 0) return null;
   return { total: Math.round(total * 100) / 100, descriptions };

@@ -20,6 +20,7 @@
  */
 import type { Booking } from "../lib/booking";
 import type { RevenueExtra } from "../lib/stats";
+import { soldBookings } from "../lib/booking-status";
 import { buildMonthlySeries, computeIndicators, windowRevenue } from "../lib/stats";
 
 const AS_OF = "2026-09-12";
@@ -37,7 +38,7 @@ const stay = (b: Partial<Booking> & Pick<Booking, "ref" | "arrival" | "departure
   ...b,
 });
 
-const BOOKINGS: Booking[] = [
+const RAW: Booking[] = [
   // Maison entière, en plein exercice : 7 nuits × 9 logements.
   stay({
     ref: "maison-mars",
@@ -125,7 +126,34 @@ const BOOKINGS: Booking[] = [
     net: 120,
     status: "confirmed",
   }),
+  // `new` — arrivé d'un canal, pas encore rangé en « Confirmed » : vendu quand même.
+  stay({
+    ref: "new-juin",
+    arrival: "2026-06-20",
+    departure: "2026-06-22",
+    nights: 2,
+    units: 9,
+    gross: 600,
+    commission: 100,
+    net: 500,
+    status: "new",
+    bookedAt: "2026-06-10",
+  }),
+  // `black` — dates tenues pendant une négociation : jamais dans les chiffres.
+  stay({
+    ref: "option-black",
+    arrival: "2026-07-01",
+    departure: "2026-07-04",
+    nights: 3,
+    units: 9,
+    gross: 900,
+    net: 900,
+    status: "black",
+  }),
 ];
+
+// Le tri par statut se fait une fois, ici, et nulle part dans les calculs.
+const BOOKINGS = soldBookings(RAW);
 
 const EXTRAS: RevenueExtra[] = [
   { date: "2026-02-05", channel: "Direct", net: 80, gross: 100 },
@@ -214,7 +242,7 @@ for (const mode of ["averagedPerNight", "byCheckIn", "byCheckOut", "byBookingDat
     `Σ stayNet ${eur(sumStayNet)} vs ${eur(ind.stayNet)} · Σ nuitees ${sumSold} vs ${ind.soldUnitNights}`,
   );
   check(
-    "la serie mensuelle retombe sur le net encaisse",
+    "INV-STATS-4 — la serie mensuelle retombe sur le net encaisse",
     near(sumAll, ind.netRevenue, 0.02),
     `Σ barres ${eur(sumAll)} vs ${eur(ind.netRevenue)}`,
   );
@@ -247,18 +275,18 @@ const ind = computeIndicators({
 });
 
 check(
-  "D2 — inquiry et cancelled ne comptent pas",
-  ind.stays === 3,
-  `${ind.stays} sejours retenus sur 7 lignes`,
+  "D2 — inquiry, cancelled et black ne comptent pas ; new compte",
+  BOOKINGS.length === RAW.length - 3 && ind.stays === 4,
+  `${BOOKINGS.length} nuits vendues sur ${RAW.length} lignes, ${ind.stays} sejours retenus`,
 );
 check(
   "D3 — le sejour a cheval laisse 3 nuits et 570,00 € a l'exercice 2026",
-  ind.soldUnitNights === 95 && near(ind.stayNet, 3530, 0.005),
+  ind.soldUnitNights === 113 && near(ind.stayNet, 4030, 0.005),
   `${ind.soldUnitNights} nuitees vendues · net des sejours ${eur(ind.stayNet)}`,
 );
 check(
-  "la nuitee-logement pondere : 7×9 + 5×1 + 3×9",
-  ind.soldUnitNights === 63 + 5 + 27,
+  "la nuitee-logement pondere : 7×9 + 5×1 + 3×9 + 2×9",
+  ind.soldUnitNights === 63 + 5 + 27 + 18,
   `${ind.soldUnitNights} nuitees`,
 );
 check(
@@ -273,12 +301,12 @@ check(
 );
 check(
   "D8 — le delai de reservation a un plancher a 0, pas a 1",
-  ind.avgLeadTime !== null && near(ind.avgLeadTime, (45 + 0 + 56) / 3, 0.005),
+  ind.avgLeadTime !== null && near(ind.avgLeadTime, (45 + 0 + 56 + 10) / 4, 0.005),
   `${ind.avgLeadTime} jours en moyenne, dont une reservation le jour meme`,
 );
 check(
   "la part du direct se mesure sur le net des sejours",
-  near(ind.directRevenueShare, (500 / 3530) * 100, 0.01),
+  near(ind.directRevenueShare, (500 / 4030) * 100, 0.01),
   `${ind.directRevenueShare} % du net · ${ind.directStayShare} % des sejours`,
 );
 check(

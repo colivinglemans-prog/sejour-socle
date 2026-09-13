@@ -54,13 +54,31 @@ export interface Booking {
   /** Nuits vendues. Peut valoir 0 : une recette sans dates n'est pas une erreur. */
   nights: number;
 
-  /** Ce que paie le voyageur, avant prélèvement du canal. */
+  /**
+   * Ce qui revient à l'exploitant avant prélèvement du canal — **hors taxe de séjour**.
+   *
+   * La taxe est collectée pour la commune, elle n'est ni un produit ni une charge : un « net
+   * encaissé » qui la contiendrait serait majoré d'un argent qui ne reste pas. La séparation se
+   * fait à la frontière d'entrée, dans le `toBooking` de chaque site, là où l'on sait encore
+   * lire les lignes de facture (`touristTaxFromInvoiceItems`) ; **aucun calcul ne soustrait
+   * rien**, ils lisent `gross`. Redéfini ainsi le 2026-09-12 — jusque-là `gross` valait
+   * `price` de Beds24, taxe comprise.
+   */
   gross: number;
 
-  /** Ce qui reste après commission du canal. */
+  /** Ce qui reste après commission du canal. `gross − commission`, hors taxe de séjour. */
   net: number;
 
   commission: number;
+
+  /**
+   * Taxe de séjour collectée sur ce séjour, en euros. Défaut `0`.
+   *
+   * Absent quand la source ne permet pas de la séparer — l'archive d'Albiez n'a pas de lignes
+   * de facture, seulement `brut`/`net`/`commission` — et dans ce cas `gross` la contient sans
+   * qu'on puisse le dire. Posé par le `toBooking`, jamais recalculé en aval.
+   */
+  touristTax?: number;
 
   source: BookingSource;
 
@@ -169,4 +187,10 @@ export function nightsBetween(arrival: string, departure: string): number {
 export function unitsOf(booking: Pick<Booking, "units">): number {
   const u = booking.units;
   return typeof u === "number" && Number.isFinite(u) && u > 0 ? u : 1;
+}
+
+/** La taxe de séjour d'une ligne, défaut `0` — même raison d'exister que `unitsOf`. */
+export function touristTaxOf(booking: Pick<Booking, "touristTax">): number {
+  const t = booking.touristTax;
+  return typeof t === "number" && Number.isFinite(t) ? t : 0;
 }

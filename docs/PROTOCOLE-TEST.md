@@ -161,6 +161,13 @@ C'est la seule carte tournée vers l'avant, et son libellé le dit.
 INV-STATS-3 — Les huit cartes se mesurent sur la part écoulée [du, min(au, aujourd'hui)].
 Un euro déjà réservé au-delà d'elapsedTo apparaît UNE fois, dans « Revenu engagé », segment
 Confirmé — jamais aussi dans « Net encaissé ».
+
+INV-STATS-4 — À période et convention égales, indicators.netRevenue et la somme des barres de
+la série mensuelle sur [du, elapsedTo] coïncident à 0,00 €. Le même SoldBooking[] nourrit les
+cartes, la série, la comparaison annuelle et les canaux — ou aucun des quatre. Le tri par statut
+s'applique une fois, par soldBookings(), jamais dans un calcul.
+
+INV-STATS-5 — new compte comme vendu ; request, inquiry, black et cancelled, jamais.
 ```
 
 `npm run verifier` dans le socle rejoue INV-STATS-1 sur les quatre conventions, plus
@@ -172,19 +179,27 @@ Confirmé — jamais aussi dans « Net encaissé ».
 `computeCommissionBooking` devient `commissionOf`. Écart attendu sur `/api/dashboard/fiscal` de
 Barbusse : **+7 076,89 € de commissions**, net fiscal diminué d'autant ; **le CA brut ne bouge
 pas** (`computeCAFromInvoiceItems` exclut déjà les mêmes lignes via `isCommissionLine`). Sur
-`/api/dashboard/stats`, **en net** (la série de référence du socle) : −404,72 € (`inquiry`, sans
-commission) et **−302,31 €** (`new` : 371,40 € de brut, 69,09 € de commission), −25 nuitées ;
-**+364,17 €** (447,40 € de brut) et +17 nuitées sur l'exercice 2026 — deux séjours à cheval sur le
-1er janvier. Bornes de fenêtre **incluses des deux côtés** dans le socle, là où la route de Barbusse
+`/api/dashboard/stats`, **en net** (la série de référence du socle) : **−404,72 € et −15 nuitées**
+(l'`inquiry` directe seule — les quatre `new`, 302,31 € de net et 10 nuitées, **restent** : ce sont
+des Airbnb effectués) ; **+364,17 €** (447,40 € de brut) et +17 nuitées sur l'exercice 2026 — deux
+séjours à cheval sur le 1er janvier. Albiez : rien ne sort ; `forwardOccupancy90` reste à 30 % et
+`committedRevenue.committed` reste non nul — un zéro y serait une régression. Le rôle `viewer`
+voit désormais les `new` : l'invariant « 50 réservations, 14 813 octets » bouge (+4 lignes chez
+Barbusse dans la fenêtre du test), **pas** les 15 clés ni le zéro `NUKI_PIN`. Bornes de fenêtre **incluses des deux côtés** dans le socle, là où la route de Barbusse
 excluait la droite : **+9 nuitées-logement de dénominateur par fenêtre**, et +2 de numérateur sur
 2025 (la nuit du 31/12) ; l'occupation 2026 passe de 38,84 % à 38,69 %. Tout autre écart est une
 régression.
 
-⚠️ **Le test de réconciliation stats/fiscal n'est pas « à l'euro près » sans décision** :
-`Booking.gross` vaut `b.price`, **taxe de séjour incluse**, alors que `computeCABooking` l'exclut.
-Écart mesuré sur les 55 lignes acquises de Barbusse : **4 594,11 €**. À trancher au Lot B avant
-d'écrire le test — commissions à l'euro près dans tous les cas ; pour le CA, soit les stats passent
-sur `computeCABooking`, soit le critère devient « à la taxe de séjour près ». L'invariant `77246.92` ci-dessus devient faux par construction ; la nouvelle
+⚠️ **Le critère « +7 076,89 € de commissions, CA brut inchangé » est faux tel quel**, et le test
+de réconciliation stats ↔ fiscal ne peut pas encore être écrit. Décomposition de l'écart de
+4 594,11 € entre `Σ price` et le CA fiscal des 55 lignes acquises de Barbusse (2026-09-13) :
+779,01 € de taxe de séjour (→ `Booking.touristTax`, tranché) et **3 815,10 € qui sont la
+commission Airbnb** — sur ce canal `price` = Σ lignes de facture + commission, donc les lignes
+Airbnb sont déjà **nettes** et `computeCAFromInvoiceItems` y rend un net (Booking.com : écart
+0,00 €, lignes brutes ; direct : −465,60 €, les lignes portent une taxe que `price` n'a pas).
+Basculer la page fiscale sur `commissionOf` sans redéfinir son CA compterait 4 474,44 € de
+commission Airbnb **deux fois**. Le Lot B commence par définir le brut par canal dans le
+`toBooking` ; le critère sera re-dérivé et écrit ici avant la première ligne de code de la route. L'invariant `77246.92` ci-dessus devient faux par construction ; la nouvelle
 valeur sera relevée et consignée avec sa justification.
 
 ⚠️ **`v1.0.0` n'est pas un tag consommable** : la page fiscale y garde l'ancienne sémantique. Le
