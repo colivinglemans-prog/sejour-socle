@@ -161,7 +161,9 @@ locale. Une fenêtre étroite ne prouve rien.
 
 | Route | anonyme | viewer | admin |
 |---|---|---|---|
-| `/dashboard` | 307 | 200 | 200 |
+| `/dashboard` | 307 → connexion | 307 → calendrier | 307 → calendrier |
+| `/dashboard/calendar` (Barbusse), `/dashboard/calendrier` (Albiez) | 307 | 200 | 200 |
+| `/dashboard/stats` (Barbusse), `/dashboard/statistiques` (Albiez) | 307 | **307 → calendrier** | 200 |
 | `/api/dashboard/bookings` | 401 | 200 réduit | 200 complet |
 | `/api/dashboard/stats` | 401 | **403** | 200 |
 | `/api/dashboard/fiscal`, `taxe-sejour`, `invoices/prefill` | 401 | **403** | 200 |
