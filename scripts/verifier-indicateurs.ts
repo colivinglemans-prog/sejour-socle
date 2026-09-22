@@ -21,7 +21,7 @@
 import type { Booking } from "../lib/booking";
 import type { RevenueExtra } from "../lib/stats";
 import { soldBookings } from "../lib/booking-status";
-import { computeDashboardStats, parseStatsQuery } from "../lib/dashboard-stats";
+import { STATS_PERIODS, computeDashboardStats, parseStatsQuery } from "../lib/dashboard-stats";
 import { buildMonthlySeries, computeIndicators, windowRevenue } from "../lib/stats";
 
 const AS_OF = "2026-09-12";
@@ -459,7 +459,7 @@ check(
 );
 
 check(
-  "les tableaux sont complets et le recouvrement rattrape le sejour a cheval",
+  "les tableaux sont complets et portent le sejour a cheval",
   payload.recentStays.length === 6 && payload.recentStays.some((s) => s.ref === "cheval-nouvel-an"),
   `${payload.recentStays.length} lignes, dont le sejour du 2025-12-28 au 2026-01-04`,
 );
@@ -530,6 +530,97 @@ check(
     );
   })(),
   "30d → currentYear, gross → averagedPerNight, previousYear/byCheckOut conserves",
+);
+
+/*
+ * **Les deux tableaux portent tout l'historique, quel que soit le selecteur de periode.**
+ *
+ * Releve sur Albiez le 2026-09-22 : la reservation la plus recente, prise quelques jours plus
+ * tot pour un sejour de fevrier 2027, etait absente de la table sur « Exercice en cours ». Le
+ * filtre par recouvrement de sejour la rejetait — une station de montagne vend l'hiver suivant
+ * des septembre, et la ligne manquante est justement celle qu'on vient lire en tete. Deux
+ * regles de fenetre ont ete essayees avant que l'exploitant ne tranche : plus de fenetre du
+ * tout sur ces deux listes, qui sont des inventaires et non des mesures.
+ *
+ * Jeu d'essai separe : ajouter ces lignes au jeu principal decalerait tous les comptes ci-dessus.
+ */
+const CARNET: Booking[] = [
+  // Le premier sejour connu, qui borne « tout l'historique ».
+  stay({
+    ref: "ouverture",
+    arrival: "2025-12-20",
+    departure: "2025-12-27",
+    nights: 7,
+    units: 9,
+    gross: 900,
+    net: 900,
+    status: "confirmed",
+    bookedAt: "2025-10-01",
+  }),
+  // La commande de l'exercice pour un sejour de l'exercice suivant : horodatage Beds24 complet.
+  stay({
+    ref: "hiver-suivant",
+    arrival: "2027-02-06",
+    departure: "2027-02-13",
+    nights: 7,
+    units: 9,
+    gross: 1400,
+    net: 1400,
+    status: "new",
+    bookedAt: "2026-09-20T14:31:02",
+  }),
+  // Ligne d'archive sans date de reservation : elle ne doit pas disparaitre pour autant.
+  stay({
+    ref: "archive-sans-date",
+    arrival: "2026-02-14",
+    departure: "2026-02-21",
+    nights: 7,
+    units: 9,
+    gross: 1200,
+    net: 1200,
+    status: "confirmed",
+    source: "archive",
+  }),
+];
+const parPeriode = STATS_PERIODS.map((period) => ({
+  period,
+  payload: computeDashboardStats({
+    bookings: soldBookings(CARNET),
+    mode: "averagedPerNight",
+    period,
+    unitsTotal: UNITS_TOTAL,
+    asOf: AS_OF,
+    warnings: { archiveMissing: false, beds24Error: null },
+  }),
+}));
+const carnet = parPeriode[0].payload;
+const refs = (rows: { ref: string }[]) => rows.map((r) => r.ref).join(" | ") || "(vide)";
+
+check(
+  "une commande de l'exercice pour un sejour de l'annee suivante est en tete des recentes",
+  carnet.recentStays[0]?.ref === "hiver-suivant",
+  refs(carnet.recentStays),
+);
+check(
+  "une ligne d'archive sans date de reservation reste dans les recentes",
+  carnet.recentStays.some((s) => s.ref === "archive-sans-date"),
+  `${carnet.recentStays.length} lignes`,
+);
+check(
+  "les meilleures nuitees portent tout l'historique, sejours a venir compris",
+  carnet.topStays.length === 3 && carnet.topStays.some((s) => s.ref === "hiver-suivant"),
+  refs(carnet.topStays),
+);
+// L'invariant qui remplace les deux regles de fenetre essayees le 2026-09-22 : le selecteur
+// pilote les cartes et les series, jamais ces deux inventaires.
+check(
+  "les deux tableaux sont identiques sur les quatre periodes",
+  parPeriode.every(
+    ({ payload }) =>
+      refs(payload.recentStays) === refs(carnet.recentStays) &&
+      refs(payload.topStays) === refs(carnet.topStays),
+  ),
+  parPeriode.map(({ period, payload }) => `${period}: ${payload.recentStays.length}`).join(", "),
 );
 
 console.log(

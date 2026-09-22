@@ -212,15 +212,19 @@ export default function StatsDashboard({
 
           {/* Pleine largeur et non côte à côte : sur une demi-colonne, les colonnes du tableau
               imposaient un défilement horizontal qui masquait le prix et le net. */}
+          {/* Les deux tableaux ignorent le sélecteur de période : ce sont des inventaires, pas
+              des mesures. Leur note doit le dire, sinon l'écran ment par son titre. */}
           <StaysTable
             title="Réservations récentes"
             stays={stats.recentStays}
-            footnote={`Les tableaux couvrent toute la période, séjours à venir compris ; les cartes s'arrêtent au ${longDate(stats.period.elapsedTo)}.`}
+            emptyLabel="Aucune réservation enregistrée."
+            footnote={`Ce tableau porte tout l'historique, quelle que soit la période choisie : une commande d'aujourd'hui pour l'an prochain y figure avec ses dates. Les cartes, elles, s'arrêtent au ${longDate(stats.period.elapsedTo)} et imputent chaque séjour selon la convention choisie.`}
           />
           <StaysTable
             title="Meilleures nuitées"
             stays={stats.topStays}
-            footnote={`Les tableaux couvrent toute la période, séjours à venir compris ; les cartes s'arrêtent au ${longDate(stats.period.elapsedTo)}.`}
+            emptyLabel="Aucun séjour enregistré."
+            footnote={`Ce tableau porte tout l'historique, quelle que soit la période choisie ; les cartes, elles, s'arrêtent au ${longDate(stats.period.elapsedTo)}.`}
           />
         </div>
       )}

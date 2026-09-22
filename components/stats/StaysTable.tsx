@@ -31,11 +31,31 @@ export default function StaysTable({
   title,
   stays,
   footnote,
+  emptyLabel = "Aucun séjour enregistré.",
 }: {
   title: string;
   stays: StayRow[];
-  /** Ce que le tableau couvre et que les cartes ne couvrent pas — écrit, pas déduit. */
+  /**
+   * Ce que le tableau couvre et que les cartes ne couvrent pas — écrit, pas déduit.
+   *
+   * **La note doit dire que le tableau ignore le sélecteur de période.** Depuis le 2026-09-22
+   * les deux listes portent tout l'historique (décision de l'exploitant, motivée dans
+   * `lib/dashboard-stats.ts`) : une ligne de février 2027 s'affiche sous un écran titré
+   * « Exercice en cours », et ce n'est une erreur que si rien ne l'annonce. Le titre de la page
+   * ne suffit pas, la colonne `Séjour` non plus — c'est la note qui porte la définition
+   * opposable, et c'est cet écran qu'on tend à un banquier.
+   *
+   * La note ne dit pas si le montant d'une ligne est dans les cartes : il **dépend du
+   * sélecteur**. En « Par date de réservation », `spreadRevenue` impute tout le net sur
+   * `bookedAt`, donc une commande de septembre pour février suivant tombe dans la fenêtre et
+   * jusque dans le réalisé — 12 600 € sous la carte « Net encaissé » pour un séjour dont pas
+   * une nuit n'a été dormie (mesuré par `chef-de-stand`, 2026-09-22). Une note est un littéral,
+   * elle ne connaît pas le mode ; elle renvoie donc à la convention plutôt que d'affirmer sur
+   * les quatre ce qui n'est vrai que sur trois.
+   */
   footnote?: string;
+  /** Liste vide : ce que le tableau n'a pas trouvé, dans ses propres termes. */
+  emptyLabel?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
   const visible = expanded ? stays : stays.slice(0, PREVIEW);
@@ -65,7 +85,7 @@ export default function StaysTable({
       <h3 className="mb-4 text-base font-semibold text-slate-900">{title}</h3>
 
       {stays.length === 0 && (
-        <p className="py-6 text-center text-slate-400">Aucun séjour sur la période.</p>
+        <p className="py-6 text-center text-slate-400">{emptyLabel}</p>
       )}
 
       {/* Cartes — petits écrans */}

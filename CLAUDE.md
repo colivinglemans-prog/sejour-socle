@@ -143,6 +143,7 @@ deux validations.
 | 5 (suite) | Vitrine — **i18n et SEO** : `lib/locales.ts`, `lib/seo.ts` (hreflang, JSON-LD d'article, négociation de langue) | `poisson-babel` | `v3.1.0` |
 | 5 (suite) | Événements — **les champs recommandés du nœud `Event`** (`organizer`, `performer`, `tickets`, `article`) | `le-douanier`, `chef-de-stand`, `le-dahu` | `v3.2.0` |
 | 5 (suite) | Événements — **le CTA annonce les dates provisoires** (`EventBookingLabels.provisionalDates`) | `le-douanier`, `chef-de-stand` | `v3.3.0` |
+| — | Dashboard — **les deux tableaux de séjours portent tout l'historique** | `madame-soleil`, `le-dahu`, `chef-de-stand` | `v3.4.0` |
 | — | Veille des dates d'événements (`lib/events-watch.ts`) | — | `v0.7.0` |
 
 Plan détaillé : `C:\Users\alexa\.claude\plans\cheerful-toasting-rivest.md`.
@@ -929,6 +930,49 @@ là-bas il remplace les dates, ici il les complète.
 fournit de toute façon, et imposé à Albiez cinq traductions pour un composant qu'il ne monte
 pas. Le type ne protège de rien (`""` compile) : le garde-fou est le protocole, qui vérifie que
 l'article non confirmé porte à la fois **zéro** nœud `Event` et **un** CTA avec la phrase.
+
+### v3.4.0 — les deux tableaux de séjours portent tout l'historique
+
+Relevé par l'exploitant sur Albiez le 2026-09-22 : **la réservation la plus récente n'apparaissait
+pas dans « Réservations récentes »**. Prise le 20 septembre 2026 pour un séjour de février 2027,
+elle ne recouvrait pas la fenêtre d'« Exercice en cours », qui s'arrête au 31 décembre 2026. La
+première ligne qu'on vient lire dans un carnet de commandes manquait.
+
+| Chemin | Contenu | Vient de |
+|---|---|---|
+| `lib/dashboard-stats.ts` | `recentStays` et `topStays` se calculent sur `bookings` entier. La variable `stays` et l'usage d'`overlapsWindow` disparaissent. | — |
+| `components/StatsDashboard.tsx` | Une note par tableau, disant que la liste ignore le sélecteur. | — |
+| `components/stats/StaysTable.tsx` | `emptyLabel?`, pour que chaque tableau nomme ce qu'il n'a pas trouvé. | — |
+
+**Le sélecteur de période pilote les mesures, pas les inventaires.** Deux règles de fenêtre ont
+été essayées le même jour et écartées l'une après l'autre : le recouvrement de séjour, puis
+l'union « commandes prises dans la période ou séjours qui la recouvrent ». Aucune ne survivait
+sans exception — `bookedAt` est absent de 41 des 101 lignes d'archive d'Albiez, et sur « Tout
+l'historique » la fenêtre commence au premier séjour connu, donc une commande antérieure en
+tombait. Arbitrage de l'exploitant : **plus de fenêtre du tout sur ces deux listes**. Les huit
+cartes, les séries et les blocs de comparaison ne changent pas d'un centime.
+
+**Les deux biens vendent loin devant**, et c'est ce qui rend la règle nécessaire des deux côtés :
+une station de montagne place l'hiver suivant dès septembre, et les 12 600 € des 24 Heures 2027
+ont été signés en août 2026 — la plus grosse vente jamais faite par Barbusse était absente du
+carnet de l'exercice où elle a été conclue.
+
+**Les notes de bas de tableau font partie du correctif, pas de la décoration.** Les deux
+responsables de site ont opposé leur veto, le même jour et sans s'être lus, sur une note partagée
+devenue fausse ; puis `le-dahu` a démonté la note de remplacement, qui affirmait qu'un montant
+hors période n'était pas dans les cartes — faux en « Par date de réservation », où `spreadRevenue`
+impute tout le net sur `bookedAt`. Mesuré par `chef-de-stand` : 12 600 € sous la carte « Net
+encaissé » pour un séjour dont pas une nuit n'a été dormie. Une note est un littéral, elle ne
+connaît pas le mode sélectionné : elle renvoie à la convention au lieu d'affirmer.
+
+**Invariant ajouté** à `scripts/verifier-indicateurs.ts` (88 vérifications) : *les deux tableaux
+sont identiques sur les quatre périodes*. Il remplace les deux règles de fenêtre essayées, et
+échoue si l'une d'elles revient.
+
+**Limite connue, assumée par l'exploitant le 2026-09-22.** Les deux routes de statistiques ne
+demandent à Beds24 que les arrivées jusqu'à `année courante + 1`. Une réservation pour 2028 n'est
+donc ramenée par aucune requête, et les tableaux qui annoncent tout l'historique la tairaient en
+silence. Jugé peu probable à cet horizon ; à rouvrir si un séjour à +2 ans se présente.
 
 ### Comment une application s'y branche
 

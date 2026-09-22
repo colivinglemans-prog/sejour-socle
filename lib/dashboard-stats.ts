@@ -32,7 +32,6 @@ import {
   channelsByYear,
   compareYears,
   computeIndicators,
-  overlapsWindow,
   windowRevenue,
 } from "./stats";
 import { todayParis } from "./time";
@@ -386,8 +385,6 @@ export function computeDashboardStats(input: DashboardStatsInput): DashboardStat
     .filter((c) => keepYear(c.year))
     .map((c, i) => (i === 0 ? { ...c, changeToDate: null, changeYearTotal: null } : c));
 
-  const stays = bookings.filter((b) => overlapsWindow(b, from, to));
-
   return {
     period: { key: input.period, from, to, elapsedTo, asOf },
     revenueMode: mode,
@@ -399,21 +396,39 @@ export function computeDashboardStats(input: DashboardStatsInput): DashboardStat
     comparison,
     channelsByYear: channelsByYear(bookings, extras, mode, asOf).filter((c) => keepYear(c.year)),
     /*
-     * Les deux tableaux portent les séjours qui **recouvrent** la période, bornes comprises —
-     * jamais un test sur la seule arrivée (défaut D3). Contrairement aux huit cartes, ils ne
-     * s'arrêtent pas à `elapsedTo` : « Réservations récentes » parle de prises de commande, et
-     * une réservation encaissée hier pour novembre est exactement ce qu'on vient y lire.
+     * **Les deux tableaux portent tout l'historique, quelle que soit la période choisie.**
+     * Décision de l'exploitant, 2026-09-22 — et elle remplace deux règles antérieures, dont
+     * une qui datait du matin même.
+     *
+     * Le filtre par recouvrement de séjour a été essayé, puis l'union « commandes de la
+     * période ou séjours qui la recouvrent ». Les deux échouaient sur le même cas : chez
+     * Albiez, la réservation la plus récente — prise le 2026-09-20 pour un séjour de février
+     * 2027 — était absente de « Réservations récentes » sur « Exercice en cours », dont la
+     * fenêtre s'arrête au 31 décembre 2026, alors que c'est la première ligne qu'on vient y
+     * lire. Les deux biens vendent loin devant : une station de montagne place l'hiver suivant
+     * dès septembre, et les 12 600 € des 24 Heures 2027 ont été signés en août 2026. Un
+     * carnet de commandes qui se vide quand on change de sélecteur ne sert à rien.
+     *
+     * Aucune règle de fenêtre ne survivait à ce constat sans exception : `bookedAt` est absent
+     * des lignes d'archive d'Albiez — 41 sur 101 —, et sur « Tout l'historique » la fenêtre
+     * commence au premier séjour connu, donc une commande antérieure en tombait. Le sélecteur
+     * de période **pilote les huit cartes et les séries**, qui sont des mesures et des
+     * engagements datés ; il ne pilote plus ces deux listes, qui sont des inventaires.
+     *
+     * Conséquence à ne pas perdre de vue : les notes de bas de tableau doivent le dire, et
+     * elles le disent. Une ligne de février 2027 lue sous un écran titré « Exercice en cours »
+     * n'est une erreur que si rien ne l'annonce.
      *
      * Listes **complètes**, jamais tronquées : le composant affiche cinq lignes et propose
      * « Voir les N », et un N calculé sur une liste plafonnée serait un chiffre faux. Les deux
-     * biens tiennent aujourd'hui en une centaine de lignes par période, quelques dizaines de
-     * kilo-octets ; le jour où ce ne sera plus vrai, c'est le plafond qui se discutera, pas le
-     * bouton.
+     * biens tiennent aujourd'hui en une centaine de lignes, quelques dizaines de kilo-octets ;
+     * le jour où ce ne sera plus vrai, c'est le plafond qui se discutera, pas le bouton.
      */
-    recentStays: [...stays]
+    recentStays: bookings
+      .slice()
       .sort((a, b) => (b.bookedAt ?? b.arrival).localeCompare(a.bookedAt ?? a.arrival))
       .map((b) => toStayRow(b, markerOf)),
-    topStays: stays
+    topStays: bookings
       .filter((b) => b.nights > 0)
       .map((b) => toStayRow(b, markerOf))
       .sort((a, b) => b.pricePerUnitNight - a.pricePerUnitNight),
