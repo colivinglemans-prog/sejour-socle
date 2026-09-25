@@ -13,6 +13,7 @@
 import type { Beds24Booking } from "./beds24-types";
 import { countsAsSold } from "./booking-status";
 import { normalizeChannel } from "./channels";
+import { touristTaxFromInvoiceItems } from "./taxe-sejour";
 
 /**
  * Un encaissement déjà constaté, quel qu'en soit le prestataire.
@@ -86,6 +87,17 @@ export interface InvoicePayload {
   amount: number;
   description: string;
   paymentDueDate: string;
+  /**
+   * Part de `amount` qui est de la taxe de séjour, imprimée sur sa propre ligne : elle n'est
+   * pas le prix de la prestation et n'a rien à faire dans le « Total HT ». Facture standard
+   * seulement — un acompte ou un solde est un forfait, sans ventilation.
+   */
+  touristTax: number;
+  /**
+   * Mention imprimée sous le tableau quand la taxe a été collectée par un tiers (Airbnb) et ne
+   * figure donc pas sur la facture — le total est alors inférieur au reçu de la plateforme.
+   */
+  touristTaxNote: string;
 
   // Acompte / solde
   kind: InvoiceKind;
@@ -102,6 +114,16 @@ export interface InvoicePayload {
   paidMethod: string;     // ex : « Carte bancaire via Stripe »
   paidReference: string;  // ex: pi_3M... / ch_3M...
 }
+
+/** Pas de taxe de séjour ventilée, pas de mention. */
+const NO_TOURIST_TAX = { touristTax: 0, touristTaxNote: "" };
+
+/**
+ * Airbnb collecte et reverse lui-même la taxe de séjour : `price` ne la contient pas (aucune
+ * ligne de taxe sur les 48 réservations Airbnb de Barbusse, vérifié le 2026-09-25).
+ */
+export const AIRBNB_TOURIST_TAX_NOTE =
+  "Taxe de séjour collectée et reversée directement par Airbnb : elle n'est pas incluse dans cette facture.";
 
 /** Valeurs par défaut : une facture couvre la totalité du séjour. */
 const WHOLE_STAY = {
@@ -250,6 +272,10 @@ export function beds24ToPayload(booking: Beds24Booking): InvoicePayload {
 
   const company = (booking.company ?? "").trim() || companyFromTitle(booking.title);
   const platform = platformPaymentOf(booking);
+  const channel = normalizeChannel(booking.referer, booking.channel);
+  // Lue dans les lignes de facture, donc `0` si l'appelant ne les a pas demandées : la
+  // facture retombe alors sur une ligne unique, comme avant.
+  const touristTax = touristTaxFromInvoiceItems(booking.invoiceItems);
 
   return {
     company,
@@ -274,6 +300,8 @@ export function beds24ToPayload(booking: Beds24Booking): InvoicePayload {
     amount: Number(booking.price ?? 0),
     description,
     paymentDueDate: platform ? platform.paidAt : defaultPaymentDueDate(booking.arrival),
+    touristTax,
+    touristTaxNote: channel === "Airbnb" && touristTax === 0 ? AIRBNB_TOURIST_TAX_NOTE : "",
     ...WHOLE_STAY,
 
     // Payée sur une plateforme : facture acquittée, sans IBAN — le voyageur ne doit pas
@@ -315,6 +343,9 @@ export function beds24PaymentToPayload(
     phone: base.phone || payment.phone || "",
     // Montant effectivement réglé
     amount: payment.amount,
+    // La taxe de la réservation n'est ventilée que si l'encaissement couvre tout le séjour :
+    // sur un paiement partiel, on ne sait pas quelle part de taxe il porte.
+    touristTax: payment.amount + 0.01 >= base.amount ? base.touristTax : 0,
     // Paiement déjà effectué
     paid: true,
     paidAt: payment.createdAt,
@@ -359,6 +390,7 @@ export function paymentToPayload(p: InvoicePaymentDetail): InvoicePayload {
     amount: p.amount,
     description,
     paymentDueDate: p.createdAt,
+    ...NO_TOURIST_TAX,
     ...WHOLE_STAY,
 
     paid: true,
@@ -391,6 +423,7 @@ export function emptyPayload(): InvoicePayload {
     amount: 0,
     description: "",
     paymentDueDate: today,
+    ...NO_TOURIST_TAX,
     ...WHOLE_STAY,
     paid: false,
     paidAt: "",
@@ -473,6 +506,8 @@ export function validateInvoicePayload(
     amount: num("amount", true),
     description: str("description", true),
     paymentDueDate: date("paymentDueDate", true),
+    touristTax: Math.round(Math.max(0, num("touristTax")) * 100) / 100,
+    touristTaxNote: str("touristTaxNote"),
     kind: INVOICE_KINDS.includes(r.kind as InvoiceKind) ? (r.kind as InvoiceKind) : "standard",
     stayTotal: num("stayTotal"),
     priorInvoiceNumber: str("priorInvoiceNumber"),
@@ -502,7 +537,15 @@ export function validateInvoicePayload(
     } else if (payload.amount > payload.stayTotal + 0.01) {
       errors.push({ field: "amount", message: "Le montant dépasse le total du séjour" });
     }
+    // Un forfait ne se ventile pas.
+    payload.touristTax = 0;
   } else {
+    if (payload.touristTax >= payload.amount && payload.amount > 0) {
+      errors.push({
+        field: "touristTax",
+        message: "La taxe de séjour doit être inférieure au montant total",
+      });
+    }
     payload.stayTotal = 0;
     payload.priorInvoiceNumber = "";
     payload.priorInvoiceDate = "";

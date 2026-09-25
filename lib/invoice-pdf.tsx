@@ -313,7 +313,10 @@ function InvoiceDocument({
   // afficher « 6 nuits à 337,65 € » pour un acompte de 30 % ferait lire au client
   // un séjour à 2 025,90 € au lieu de 6 753 €.
   const quantity = partial ? "1" : String(nights);
-  const unitPrice = partial ? payload.amount : nights > 0 ? payload.amount / nights : payload.amount;
+  // La taxe de séjour a sa ligne et sort du Total HT : elle n'est pas le prix du séjour.
+  const touristTax = partial ? 0 : payload.touristTax;
+  const stayAmount = payload.amount - touristTax;
+  const unitPrice = partial ? payload.amount : nights > 0 ? stayAmount / nights : stayAmount;
   const sharePercent = staySharePercent(payload);
   const remaining = remainingAfter(payload);
   const cityLine = [payload.postcode, payload.city].filter(Boolean).join(" ");
@@ -466,9 +469,20 @@ function InvoiceDocument({
             <Text style={styles.colDesc}>{payload.description}</Text>
             <Text style={styles.colQty}>{quantity}</Text>
             <Text style={styles.colUnit}>{formatEur(unitPrice)}</Text>
-            <Text style={styles.colTotal}>{formatEur(payload.amount)}</Text>
+            <Text style={styles.colTotal}>{formatEur(stayAmount)}</Text>
           </View>
+          {touristTax > 0 ? (
+            <View style={styles.tableRow}>
+              <Text style={styles.colDesc}>Taxe de séjour (collectée pour la collectivité)</Text>
+              <Text style={styles.colQty}>1</Text>
+              <Text style={styles.colUnit}>{formatEur(touristTax)}</Text>
+              <Text style={styles.colTotal}>{formatEur(touristTax)}</Text>
+            </View>
+          ) : null}
         </View>
+        {payload.touristTaxNote ? (
+          <Text style={styles.vatNotice}>{payload.touristTaxNote}</Text>
+        ) : null}
 
         {/* wrap={false} : sans ça le bandeau Total TTC se coupe en deux au saut de page. */}
         <View wrap={false}>
@@ -519,12 +533,18 @@ function InvoiceDocument({
             )}
             <View style={styles.totalsLine}>
               <Text>Total HT</Text>
-              <Text>{formatEur(payload.amount)}</Text>
+              <Text>{formatEur(stayAmount)}</Text>
             </View>
             <View style={styles.totalsLine}>
               <Text>TVA (0%)</Text>
               <Text>{formatEur(0)}</Text>
             </View>
+            {touristTax > 0 ? (
+              <View style={styles.totalsLine}>
+                <Text>Taxe de séjour</Text>
+                <Text>{formatEur(touristTax)}</Text>
+              </View>
+            ) : null}
               <View style={styles.totalTtcLine}>
                 <Text>Total TTC</Text>
                 <Text>{formatEur(payload.amount)}</Text>

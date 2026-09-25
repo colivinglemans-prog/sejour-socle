@@ -145,6 +145,7 @@ deux validations.
 | 5 (suite) | Événements — **le CTA annonce les dates provisoires** (`EventBookingLabels.provisionalDates`) | `le-douanier`, `chef-de-stand` | `v3.3.0` |
 | — | Dashboard — **les deux tableaux de séjours portent tout l'historique** | `madame-soleil`, `le-dahu`, `chef-de-stand` | `v3.4.0` |
 | — | Factures — **une réservation payée sur une plateforme est pré-remplie comme acquittée** (`platformPaymentOf`) | `le-percepteur`, `le-douanier` | `v3.5.0`, puis `v3.5.1` (Abritel retiré) |
+| — | Factures — **la taxe de séjour a sa ligne, et la mention Airbnb** (`touristTax`, `touristTaxNote`) | `le-percepteur` | `v3.6.0` |
 | — | Veille des dates d'événements (`lib/events-watch.ts`) | — | `v0.7.0` |
 
 Plan détaillé : `C:\Users\alexa\.claude\plans\cheerful-toasting-rivest.md`.
@@ -385,7 +386,7 @@ pas du **transport**, où toute ligne en a un.
 |---|---|---|
 | `lib/invoice-config.ts` | `InvoiceIssuerConfig` lu dans les `INVOICE_*`, plus `InvoiceBranding`, `InvoiceMentions`, `InvoiceLogo`, `InvoiceTemplateConfig`. | Barbusse (seul à facturer), branding et mentions extraits du gabarit |
 | `lib/invoice-number.ts` | `PREVIEW_NUMBER`, `InvoiceCounterStore`, `createInvoiceNumbering`. **Clé préfixée par entité**, avec reprise de la série antérieure. | Barbusse, préfixe et reprise ajoutés |
-| `lib/invoice-payload.ts` | `InvoicePayload`, `InvoiceKind`, `InvoicePaymentDetail`, `beds24ToPayload`, `platformPaymentOf`, `PlatformPayment`, `beds24PaymentToPayload`, `paymentToPayload`, `emptyPayload`, `validateInvoicePayload`, `computeNights`, `staySharePercent`, `remainingAfter`. | Barbusse, logique pure, montée telle quelle |
+| `lib/invoice-payload.ts` | `InvoicePayload`, `InvoiceKind`, `InvoicePaymentDetail`, `beds24ToPayload`, `platformPaymentOf`, `PlatformPayment`, `AIRBNB_TOURIST_TAX_NOTE`, `beds24PaymentToPayload`, `paymentToPayload`, `emptyPayload`, `validateInvoicePayload`, `computeNights`, `staySharePercent`, `remainingAfter`. | Barbusse, logique pure, montée telle quelle |
 | `lib/invoice-pdf.tsx` | `renderInvoicePdf` — gabarit React-PDF paramétré par `InvoiceTemplateConfig`. | Barbusse |
 | `lib/taxe-sejour.ts` | `TaxeSejourBareme`, `computeTaxeSejour`, **`ecartDeCollecte`**, `Provenance`, `groupByQuarter`, `groupByChannel`, `TaxeSejourLine`, `MonthTotals`. | **les deux** — moteur de Barbusse, exonération des mineurs d'Albiez |
 | `lib/fiscal/*` | 8 fichiers : `config`, `revenus`, `commissions`, `bic`, `ir`, `lmp-test`, `cotisations`, `orientations`. | Barbusse |
@@ -1026,6 +1027,30 @@ par Beds24 (`CARDFAILSTRIPE`), 1 344 € réglés par facture Stripe le 22/02 ap
 Une réservation Abritel reste donc « à payer » au pré-remplissage ; la facture acquittée se
 fait depuis l'onglet Stripe, qui porte la vraie date. `v3.5.0` n'a été consommé par aucun
 déploiement.
+
+### v3.6.0 — la taxe de séjour a sa ligne sur la facture
+
+Le PDF imprimait `amount` sur une ligne unique « Location saisonnière », donc **taxe de séjour
+comprise dans le « Total HT »** — pour Booking.com (« City tax ») et le direct (« Taxe de
+séjour €2,20… »), dont le `price` Beds24 contient la taxe. Or elle n'est pas le prix de la
+prestation : elle est collectée pour la collectivité.
+
+| Chemin | Contenu |
+|---|---|
+| `lib/invoice-payload.ts` | `InvoicePayload.touristTax` (part d'`amount`, lue par `touristTaxFromInvoiceItems`) et `touristTaxNote` ; `AIRBNB_TOURIST_TAX_NOTE`. Validation : `0 ≤ touristTax < amount`, forcée à 0 sur acompte / solde. |
+| `lib/invoice-pdf.tsx` | Ligne « Taxe de séjour » dans le tableau, **Total HT = amount − taxe**, ligne « Taxe de séjour » entre TVA et Total TTC, mention sous le tableau. Total TTC inchangé. |
+
+- **Airbnb n'a pas de ligne de taxe** : `price` = séjour + commission, la taxe est collectée et
+  reversée par Airbnb (0 ligne de taxe sur 48 réservations, vérifié le 2026-09-25). La facture
+  porte alors `AIRBNB_TOURIST_TAX_NOTE`, pour qu'un client rapproche un total inférieur à
+  son reçu Airbnb.
+- **Sans `invoiceItems`, rien ne change** : `touristTax = 0`, ligne unique comme avant.
+- `beds24PaymentToPayload` ne ventile que si l'encaissement couvre tout le séjour — sur un
+  paiement partiel on ne sait pas quelle part de taxe il porte.
+- **Un acompte ou un solde ne se ventile pas** : c'est un forfait.
+- Champs requis ajoutés au type : mineur quand même, `InvoicePayload` n'est construit que par
+  les fabriques du socle et par `validateInvoicePayload`, qui prend 0 / "" par défaut — un
+  client qui n'envoie pas ces champs retombe sur l'ancienne facture.
 
 ### Comment une application s'y branche
 
