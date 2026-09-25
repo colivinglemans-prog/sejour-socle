@@ -144,6 +144,7 @@ deux validations.
 | 5 (suite) | Événements — **les champs recommandés du nœud `Event`** (`organizer`, `performer`, `tickets`, `article`) | `le-douanier`, `chef-de-stand`, `le-dahu` | `v3.2.0` |
 | 5 (suite) | Événements — **le CTA annonce les dates provisoires** (`EventBookingLabels.provisionalDates`) | `le-douanier`, `chef-de-stand` | `v3.3.0` |
 | — | Dashboard — **les deux tableaux de séjours portent tout l'historique** | `madame-soleil`, `le-dahu`, `chef-de-stand` | `v3.4.0` |
+| — | Factures — **une réservation payée sur une plateforme est pré-remplie comme acquittée** (`platformPaymentOf`) | `le-percepteur`, `le-douanier` | `v3.5.0` |
 | — | Veille des dates d'événements (`lib/events-watch.ts`) | — | `v0.7.0` |
 
 Plan détaillé : `C:\Users\alexa\.claude\plans\cheerful-toasting-rivest.md`.
@@ -384,7 +385,7 @@ pas du **transport**, où toute ligne en a un.
 |---|---|---|
 | `lib/invoice-config.ts` | `InvoiceIssuerConfig` lu dans les `INVOICE_*`, plus `InvoiceBranding`, `InvoiceMentions`, `InvoiceLogo`, `InvoiceTemplateConfig`. | Barbusse (seul à facturer), branding et mentions extraits du gabarit |
 | `lib/invoice-number.ts` | `PREVIEW_NUMBER`, `InvoiceCounterStore`, `createInvoiceNumbering`. **Clé préfixée par entité**, avec reprise de la série antérieure. | Barbusse, préfixe et reprise ajoutés |
-| `lib/invoice-payload.ts` | `InvoicePayload`, `InvoiceKind`, `InvoicePaymentDetail`, `beds24ToPayload`, `beds24PaymentToPayload`, `paymentToPayload`, `emptyPayload`, `validateInvoicePayload`, `computeNights`, `staySharePercent`, `remainingAfter`. | Barbusse, logique pure, montée telle quelle |
+| `lib/invoice-payload.ts` | `InvoicePayload`, `InvoiceKind`, `InvoicePaymentDetail`, `beds24ToPayload`, `platformPaymentOf`, `PlatformPayment`, `beds24PaymentToPayload`, `paymentToPayload`, `emptyPayload`, `validateInvoicePayload`, `computeNights`, `staySharePercent`, `remainingAfter`. | Barbusse, logique pure, montée telle quelle |
 | `lib/invoice-pdf.tsx` | `renderInvoicePdf` — gabarit React-PDF paramétré par `InvoiceTemplateConfig`. | Barbusse |
 | `lib/taxe-sejour.ts` | `TaxeSejourBareme`, `computeTaxeSejour`, **`ecartDeCollecte`**, `Provenance`, `groupByQuarter`, `groupByChannel`, `TaxeSejourLine`, `MonthTotals`. | **les deux** — moteur de Barbusse, exonération des mineurs d'Albiez |
 | `lib/fiscal/*` | 8 fichiers : `config`, `revenus`, `commissions`, `bic`, `ir`, `lmp-test`, `cotisations`, `orientations`. | Barbusse |
@@ -973,6 +974,47 @@ sont identiques sur les quatre périodes*. Il remplace les deux règles de fenê
 demandent à Beds24 que les arrivées jusqu'à `année courante + 1`. Une réservation pour 2028 n'est
 donc ramenée par aucune requête, et les tableaux qui annoncent tout l'historique la tairaient en
 silence. Jugé peu probable à cet horizon ; à rouvrir si un séjour à +2 ans se présente.
+
+### v3.5.0 — une réservation payée sur une plateforme est pré-remplie comme acquittée
+
+Relevé par l'exploitant le 2026-09-25 : pour facturer une réservation Airbnb, Booking.com ou
+Abritel, il fallait trouver soi-même la date de paiement. Pire, `beds24ToPayload` mettait
+`paid: false` sur **toute** réservation Beds24 : la facture d'un voyageur qui avait déjà payé
+la plateforme portait l'IBAN et « Paiement attendu avant… ».
+
+| Chemin | Contenu |
+|---|---|
+| `lib/invoice-payload.ts` | `platformPaymentOf(booking)` → `PlatformPayment` (`channel`, `paidAt`, `method`, `reference`, `caveat`) ou `null`. `beds24ToPayload` s'en sert : `paid`, `paidAt`, `paidMethod` (« Via Airbnb »…), `paidReference` (`apiReference`), `paymentDueDate`. |
+
+**La date est celle de la réservation, au jour de Paris**, et c'est une approximation assumée :
+Beds24 ne transmet la date du débit **sur aucun des trois canaux** (vérifié sur l'API le
+2026-09-25 : ni ligne `payment` dans `invoiceItems`, ni date dans les `infoItems`). Juste
+pour Airbnb dans la plupart des cas (sauf « payer une partie maintenant »), à vérifier pour un
+tarif flexible Booking.com et pour l'échéancier Abritel. `caveat` porte cette phrase, que
+l'écran de saisie affiche sous la date — la plateforme encaisse pour le compte de l'hôte, c'est
+le paiement du voyageur à la plateforme qui éteint sa dette (art. 1342-2 C. civ.), pas le
+versement à l'hôte.
+
+**Séjour à venir : la date reste pré-remplie, l'avertissement se renforce.** Un paiement en
+plusieurs fois (échéancier Abritel, « payer une partie maintenant », tarif flexible Booking.com)
+peut ne pas être complet avant l'arrivée ; une facture « Paiement reçu » émise entre-temps
+affirmerait le contraire. `le-percepteur` proposait de laisser la date vide dans ce cas ;
+l'exploitant a choisi le 2026-09-25 de toujours pré-remplir, le contrôle reposant sur
+l'avertissement. `platformPaymentOf(booking, today)` l'ajoute quand `arrival > today` —
+`today` fourni par l'appelant, le module ne lit pas l'horloge.
+
+**Trois refus, tous du côté prudent** — une facture « à payer » se corrige d'une case à cocher,
+une facture acquittée à tort est une pièce fausse :
+- statut non vendu au sens de `countsAsSold` (demande, inquiry, option `black`, annulée) ;
+- Booking.com **sans** l'info `BOOKINGCOMBANKTRANS` : hors « Payments by Booking.com », le
+  voyageur paie l'hôte, pas Booking. Le test suppose les `infoItems` demandés ;
+- `bookingTime` illisible.
+
+Additif, donc mineur : **changement de valeur de retour de `beds24ToPayload`, pas de
+signature** — elle rend désormais `paid: true` pour une réservation de plateforme.
+`beds24PaymentToPayload` réécrase les champs de paiement et ne change pas. Albiez ne facture
+pas (aucun import d'`invoice-payload`), Barbusse est le seul appelant : validation de
+`chef-de-stand`, celle de `le-dahu` est sans objet.
 
 ### Comment une application s'y branche
 

@@ -11,6 +11,8 @@
  * facture, il n'aura qu'à rendre la même forme.
  */
 import type { Beds24Booking } from "./beds24-types";
+import { countsAsSold } from "./booking-status";
+import { normalizeChannel } from "./channels";
 
 /**
  * Un encaissement déjà constaté, quel qu'en soit le prestataire.
@@ -144,11 +146,106 @@ function formatDateFr(iso: string): string {
   return `${d}/${m}/${y}`;
 }
 
+/** Le jour de Paris d'un horodatage ISO, `AAAA-MM-JJ` (`en-CA` rend ce format). */
+function parisDay(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Paris",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+}
+
+/**
+ * Un séjour réglé sur une plateforme, tel que Beds24 permet de le constater.
+ *
+ * La plateforme encaisse pour le compte de l'hôte : le voyageur est quitte le jour où il la
+ * paie, et c'est cette date — pas celle du versement à l'hôte — qui va sur la facture.
+ */
+export interface PlatformPayment {
+  channel: "Airbnb" | "Booking.com" | "Abritel";
+  /**
+   * Jour de la réservation à Paris, `AAAA-MM-JJ`. `bookingTime` arrive de Beds24 en UTC
+   * suffixé `Z` (vérifié le 2026-09-25) : le jour se lit sans dépendre du fuseau du serveur.
+   */
+  paidAt: string;
+  /** Libellé imprimé à la ligne « Méthode » de la facture acquittée. */
+  method: string;
+  /** Numéro de confirmation de la plateforme, s'il est connu. */
+  reference: string;
+  /**
+   * Pourquoi la date est à vérifier. Beds24 ne transmet **la date du débit sur aucun des
+   * trois canaux** : la date proposée est celle de la réservation, qui coïncide le plus
+   * souvent, jamais toujours.
+   */
+  caveat: string;
+}
+
+const PLATFORM_CAVEAT: Record<PlatformPayment["channel"], string> = {
+  Airbnb:
+    "Date de réservation : juste dans la plupart des cas. Si le voyageur a choisi « payer une partie maintenant, le reste plus tard », le solde est débité plus tard — voir le détail de la réservation sur Airbnb.",
+  "Booking.com":
+    "Date de réservation. Booking.com débite le voyageur selon le tarif : à la réservation pour un non-remboursable, parfois plus tard pour un tarif flexible — à vérifier dans l'extranet Booking.com.",
+  Abritel:
+    "Date de réservation. Abritel débite souvent un premier versement à la réservation et le solde avant l'arrivée — voir l'échéancier de la réservation sur Abritel.",
+};
+
+/**
+ * Ajoutée au `caveat` d'un séjour à venir : un paiement en plusieurs fois n'est peut-être
+ * pas encore complet, et la facture dirait « Paiement reçu » pour la totalité.
+ */
+const UPCOMING_CAVEAT =
+  "Séjour à venir : si le voyageur paie en plusieurs fois, le solde n'est peut-être pas encore débité — vérifiez sur la plateforme avant d'émettre une facture acquittée.";
+
+/**
+ * La réservation a-t-elle été payée sur une plateforme ? `null` si rien ne permet de le dire :
+ * réservation directe, statut non vendu, ou Booking.com sans « Payments by Booking.com ».
+ *
+ * Booking.com n'encaisse que si la réservation porte l'info `BOOKINGCOMBANKTRANS` (le
+ * virement que Booking fera à l'hôte). Sans elle, le voyageur paie l'hôte directement, et
+ * annoncer une facture acquittée serait faux. Ce test suppose les `infoItems` demandés à
+ * Beds24 ; s'ils manquent, la réservation Booking.com reste « à payer » — l'erreur prudente.
+ *
+ * `today` (`AAAA-MM-JJ`, fourni par l'appelant : le module ne lit pas l'horloge) renforce
+ * l'avertissement quand l'arrivée est à venir. La date reste pré-remplie — arbitrage de
+ * l'exploitant du 2026-09-25 : le contrôle est à l'écran, pas dans un champ vide.
+ */
+export function platformPaymentOf(
+  booking: Beds24Booking,
+  today?: string,
+): PlatformPayment | null {
+  // Une demande, une inquiry ou une option n'a rien encaissé.
+  if (!countsAsSold(booking.status)) return null;
+  const channel = normalizeChannel(booking.referer, booking.channel);
+  if (channel !== "Airbnb" && channel !== "Booking.com" && channel !== "Abritel") return null;
+  if (
+    channel === "Booking.com" &&
+    !(booking.infoItems ?? []).some((i) => i.code === "BOOKINGCOMBANKTRANS")
+  ) {
+    return null;
+  }
+  const paidAt = parisDay(booking.bookingTime);
+  if (!paidAt) return null;
+  return {
+    channel,
+    paidAt,
+    method: `Via ${channel}`,
+    reference: (booking.apiReference ?? "").trim(),
+    caveat:
+      today && booking.arrival > today
+        ? `${PLATFORM_CAVEAT[channel]} ${UPCOMING_CAVEAT}`
+        : PLATFORM_CAVEAT[channel],
+  };
+}
+
 export function beds24ToPayload(booking: Beds24Booking): InvoicePayload {
   const nights = nightsBetween(booking.arrival, booking.departure);
   const description = `Location saisonnière du ${formatDateFr(booking.arrival)} au ${formatDateFr(booking.departure)}\n(${nights} nuit${nights > 1 ? "s" : ""})`;
 
   const company = (booking.company ?? "").trim() || companyFromTitle(booking.title);
+  const platform = platformPaymentOf(booking);
 
   return {
     company,
@@ -172,13 +269,15 @@ export function beds24ToPayload(booking: Beds24Booking): InvoicePayload {
 
     amount: Number(booking.price ?? 0),
     description,
-    paymentDueDate: defaultPaymentDueDate(booking.arrival),
+    paymentDueDate: platform ? platform.paidAt : defaultPaymentDueDate(booking.arrival),
     ...WHOLE_STAY,
 
-    paid: false,
-    paidAt: "",
-    paidMethod: "",
-    paidReference: "",
+    // Payée sur une plateforme : facture acquittée, sans IBAN — le voyageur ne doit pas
+    // lire qu'il reste à régler un séjour qu'il a déjà payé.
+    paid: Boolean(platform),
+    paidAt: platform?.paidAt ?? "",
+    paidMethod: platform?.method ?? "",
+    paidReference: platform?.reference ?? "",
   };
 }
 
