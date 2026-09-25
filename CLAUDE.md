@@ -144,7 +144,7 @@ deux validations.
 | 5 (suite) | Événements — **les champs recommandés du nœud `Event`** (`organizer`, `performer`, `tickets`, `article`) | `le-douanier`, `chef-de-stand`, `le-dahu` | `v3.2.0` |
 | 5 (suite) | Événements — **le CTA annonce les dates provisoires** (`EventBookingLabels.provisionalDates`) | `le-douanier`, `chef-de-stand` | `v3.3.0` |
 | — | Dashboard — **les deux tableaux de séjours portent tout l'historique** | `madame-soleil`, `le-dahu`, `chef-de-stand` | `v3.4.0` |
-| — | Factures — **une réservation payée sur une plateforme est pré-remplie comme acquittée** (`platformPaymentOf`) | `le-percepteur`, `le-douanier` | `v3.5.0` |
+| — | Factures — **une réservation payée sur une plateforme est pré-remplie comme acquittée** (`platformPaymentOf`) | `le-percepteur`, `le-douanier` | `v3.5.0`, puis `v3.5.1` (Abritel retiré) |
 | — | Veille des dates d'événements (`lib/events-watch.ts`) | — | `v0.7.0` |
 
 Plan détaillé : `C:\Users\alexa\.claude\plans\cheerful-toasting-rivest.md`.
@@ -1015,6 +1015,17 @@ signature** — elle rend désormais `paid: true` pour une réservation de plate
 `beds24PaymentToPayload` réécrase les champs de paiement et ne change pas. Albiez ne facture
 pas (aucun import d'`invoice-payload`), Barbusse est le seul appelant : validation de
 `chef-de-stand`, celle de `le-dahu` est sans objet.
+
+### v3.5.1 — Abritel n'est pas une plateforme qui encaisse
+
+`v3.5.0` traitait Abritel comme Airbnb (« Via Abritel », date de réservation). C'est faux ici :
+le voyageur Abritel paie **l'hôte** par carte via Stripe — échéancier de Beds24, ou facture
+Stripe quand la carte est refusée — et Abritel prélève sa commission après coup. Relevé par
+l'exploitant le 2026-09-25 et vérifié : réservation 82631846, réservée le 20/02, carte refusée
+par Beds24 (`CARDFAILSTRIPE`), 1 344 € réglés par facture Stripe le 22/02 après sept échecs.
+Une réservation Abritel reste donc « à payer » au pré-remplissage ; la facture acquittée se
+fait depuis l'onglet Stripe, qui porte la vraie date. `v3.5.0` n'a été consommé par aucun
+déploiement.
 
 ### Comment une application s'y branche
 

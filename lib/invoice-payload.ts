@@ -163,9 +163,15 @@ function parisDay(iso: string): string {
  *
  * La plateforme encaisse pour le compte de l'hôte : le voyageur est quitte le jour où il la
  * paie, et c'est cette date — pas celle du versement à l'hôte — qui va sur la facture.
+ *
+ * **Abritel n'en est pas** : chez l'exploitant, le voyageur Abritel paie l'hôte par carte
+ * (Stripe, via l'échéancier de Beds24 ou une facture Stripe), et Abritel prélève sa
+ * commission ensuite. Constaté le 2026-09-25 sur la réservation 82631846 : réservée le 20/02,
+ * carte refusée par Beds24, réglée par facture Stripe le 22/02. C'est l'onglet Stripe qui
+ * donne cette date, et « Via Abritel » aurait été faux.
  */
 export interface PlatformPayment {
-  channel: "Airbnb" | "Booking.com" | "Abritel";
+  channel: "Airbnb" | "Booking.com";
   /**
    * Jour de la réservation à Paris, `AAAA-MM-JJ`. `bookingTime` arrive de Beds24 en UTC
    * suffixé `Z` (vérifié le 2026-09-25) : le jour se lit sans dépendre du fuseau du serveur.
@@ -177,7 +183,7 @@ export interface PlatformPayment {
   reference: string;
   /**
    * Pourquoi la date est à vérifier. Beds24 ne transmet **la date du débit sur aucun des
-   * trois canaux** : la date proposée est celle de la réservation, qui coïncide le plus
+   * deux canaux** : la date proposée est celle de la réservation, qui coïncide le plus
    * souvent, jamais toujours.
    */
   caveat: string;
@@ -188,8 +194,6 @@ const PLATFORM_CAVEAT: Record<PlatformPayment["channel"], string> = {
     "Date de réservation : juste dans la plupart des cas. Si le voyageur a choisi « payer une partie maintenant, le reste plus tard », le solde est débité plus tard — voir le détail de la réservation sur Airbnb.",
   "Booking.com":
     "Date de réservation. Booking.com débite le voyageur selon le tarif : à la réservation pour un non-remboursable, parfois plus tard pour un tarif flexible — à vérifier dans l'extranet Booking.com.",
-  Abritel:
-    "Date de réservation. Abritel débite souvent un premier versement à la réservation et le solde avant l'arrivée — voir l'échéancier de la réservation sur Abritel.",
 };
 
 /**
@@ -219,7 +223,7 @@ export function platformPaymentOf(
   // Une demande, une inquiry ou une option n'a rien encaissé.
   if (!countsAsSold(booking.status)) return null;
   const channel = normalizeChannel(booking.referer, booking.channel);
-  if (channel !== "Airbnb" && channel !== "Booking.com" && channel !== "Abritel") return null;
+  if (channel !== "Airbnb" && channel !== "Booking.com") return null;
   if (
     channel === "Booking.com" &&
     !(booking.infoItems ?? []).some((i) => i.code === "BOOKINGCOMBANKTRANS")
