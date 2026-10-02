@@ -178,3 +178,29 @@ export function periodTooltip(band: BandePeriode): string {
     .map((p) => `${p.nom}${p.zone === "Toutes" ? "" : ` — ${p.zone}`} · ${p.debut} → ${p.fin}`)
     .join("\n");
 }
+
+/**
+ * La grille des semaines — les classes que les deux calendriers posent sur leur squelette.
+ *
+ * Le défaut corrigé : **on se trompait de semaine en lisant une barre.** Les séjours
+ * s'empilent en bas de leur semaine, collés aux numéros de la suivante, et l'œil rattache une
+ * barre à ce qui est le plus proche d'elle. Trois réponses, aucune par un fond de case :
+ * Albiez en a déjà deux (domaine ouvert, saison du lac), un troisième s'y mêlerait.
+ *
+ * - `row` — **chaque semaine dans son propre cadre**, séparée de la suivante par un vide de
+ *   6 px. Un simple séparateur ne suffisait pas : une semaine chargée — deux événements du
+ *   circuit au-dessus d'un séjour — repousse la barre si loin de ses numéros qu'elle reste
+ *   plus près de ceux d'en dessous, quel que soit le trait. Le vide entre deux cadres, lui,
+ *   coupe la proximité. Le cadre est un pseudo-élément placé au-dessus des cases : posé sur
+ *   la semaine elle-même, l'anneau passerait sous les fonds de saison de la ligne des
+ *   numéros. Il fonce au survol. Une hauteur minimale commune, tassée en haut
+ *   (`content-start`), garde un rythme régulier sans imposer à toutes la hauteur de la plus
+ *   chargée.
+ * - `columnRule` — le filet de colonne, inchangé, mais au même ton des deux côtés.
+ * - `barsBlock` — l'espace sous la dernière barre, pour qu'elle ne colle pas au bas du cadre.
+ */
+export const WEEK_GRID = {
+  row: "relative mt-1.5 grid min-h-[5.5rem] grid-cols-7 content-start overflow-hidden rounded-lg after:pointer-events-none after:absolute after:inset-0 after:rounded-lg after:ring-1 after:ring-inset after:ring-slate-300 after:transition-colors hover:after:ring-2 hover:after:ring-slate-400",
+  columnRule: "border-r border-slate-200",
+  barsBlock: "col-span-7 px-0.5 pb-2",
+} as const;

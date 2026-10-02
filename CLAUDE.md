@@ -146,6 +146,7 @@ deux validations.
 | — | Dashboard — **les deux tableaux de séjours portent tout l'historique** | `madame-soleil`, `le-dahu`, `chef-de-stand` | `v3.4.0` |
 | — | Factures — **une réservation payée sur une plateforme est pré-remplie comme acquittée** (`platformPaymentOf`) | `le-percepteur`, `le-douanier` | `v3.5.0`, puis `v3.5.1` (Abritel retiré) |
 | — | Factures — **la taxe de séjour a sa ligne, et la mention Airbnb** (`touristTax`, `touristTaxNote`) | `le-percepteur` | `v3.6.0` |
+| — | Dashboard — **chaque semaine du calendrier dans son cadre** (`WEEK_GRID`) | `madame-soleil` | `v3.7.0` |
 | — | Veille des dates d'événements (`lib/events-watch.ts`) | — | `v0.7.0` |
 
 Plan détaillé : `C:\Users\alexa\.claude\plans\cheerful-toasting-rivest.md`.
@@ -1051,6 +1052,21 @@ prestation : elle est collectée pour la collectivité.
 - Champs requis ajoutés au type : mineur quand même, `InvoicePayload` n'est construit que par
   les fabriques du socle et par `validateInvoicePayload`, qui prend 0 / "" par défaut — un
   client qui n'envoie pas ces champs retombe sur l'ancienne facture.
+
+### v3.7.0 — chaque semaine du calendrier dans son cadre
+
+`lib/calendar-lanes.ts` exporte `WEEK_GRID` : les classes du squelette des deux calendriers de
+dashboard (`row`, `columnRule`, `barsBlock`). Additif, mineur.
+
+Le défaut : **on se trompait de semaine en lisant une barre.** Les séjours s'empilent en bas de
+leur semaine ; une semaine chargée (vacances + deux événements du circuit au-dessus d'un séjour,
+du 5 au 11 octobre 2026 chez Barbusse) repousse la barre plus près des numéros de la semaine
+suivante que des siens. Trois pistes écartées : griser les nuits occupées (Albiez a déjà deux
+fonds de case, domaine ouvert et saison du lac), un séparateur plus épais (essayé : ne suffit
+pas sur une semaine chargée), un cadre au seul survol (absent sur mobile). Retenu : un cadre
+permanent par semaine et un vide de 6 px entre deux cadres — c'est le vide qui coupe la
+proximité. Le cadre est un pseudo-élément `after:` au-dessus des cases, pour ne pas passer
+sous les fonds de saison. Validé à l'écran par l'utilisateur sur les deux sites.
 
 ### Comment une application s'y branche
 
