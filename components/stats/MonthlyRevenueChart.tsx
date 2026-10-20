@@ -52,6 +52,46 @@ const SERIES_LABELS: Record<string, string> = {
 
 type View = "month" | "year" | "channel";
 
+type MonthRow = { month: string; realized: number; upcoming: number; revpar: number };
+
+/**
+ * Infobulle de la vue « Par mois » : les deux barres empilées, **leur total**, puis le RevPAR.
+ * Le total évite d'additionner de tête réalisé et à venir ; il n'est pas une série du graphe,
+ * il est recalculé ici à partir de la ligne survolée.
+ */
+function MonthTooltip({
+  active,
+  payload,
+  label,
+}: {
+  active?: boolean;
+  payload?: ReadonlyArray<{ payload?: MonthRow; color?: string; dataKey?: unknown }>;
+  label?: string | number;
+}) {
+  const row = payload?.[0]?.payload;
+  if (!active || !row) return null;
+  const colour = (key: keyof MonthRow) =>
+    payload?.find((entry) => entry.dataKey === key)?.color;
+  const line = (key: "realized" | "upcoming" | "revpar") => (
+    <div className="flex justify-between gap-6" style={{ color: colour(key) }}>
+      <span>{SERIES_LABELS[key]}</span>
+      <span className="tabular-nums">{chartEuro(row[key])}</span>
+    </div>
+  );
+  return (
+    <div className="bg-white px-3 py-2" style={CHART_TOOLTIP_STYLE}>
+      <p className="mb-1 text-slate-700">{label}</p>
+      {line("realized")}
+      {line("upcoming")}
+      <div className="mt-1 flex justify-between gap-6 border-t border-slate-100 pt-1 font-semibold text-slate-900">
+        <span>Total</span>
+        <span className="tabular-nums">{chartEuro(row.realized + row.upcoming)}</span>
+      </div>
+      <div className="mt-1">{line("revpar")}</div>
+    </div>
+  );
+}
+
 export default function MonthlyRevenueChart({
   monthly,
   chart,
@@ -73,7 +113,7 @@ export default function MonthlyRevenueChart({
   const visibleYears = chart.years.filter((y) => !hidden.has(y));
   const channelRows = chart.byChannel[String(channelYear)] ?? [];
 
-  const monthRows = monthly.map((m) => ({
+  const monthRows: MonthRow[] = monthly.map((m) => ({
     month: monthLabel(m.month),
     realized: m.realized,
     upcoming: m.upcoming,
@@ -182,13 +222,7 @@ export default function MonthlyRevenueChart({
                 {...chartAxisIn(REVPAR_COLOUR)}
                 tickFormatter={(v) => `${v} €`}
               />
-              <Tooltip
-                formatter={(value, name) => [
-                  chartEuro(Number(value)),
-                  SERIES_LABELS[String(name)] ?? String(name),
-                ]}
-                contentStyle={CHART_TOOLTIP_STYLE}
-              />
+              <Tooltip content={MonthTooltip} />
               <Legend
                 {...CHART_LEGEND}
                 formatter={(value) => SERIES_LABELS[String(value)] ?? String(value)}

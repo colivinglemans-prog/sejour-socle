@@ -1068,6 +1068,13 @@ permanent par semaine et un vide de 6 px entre deux cadres — c'est le vide qui
 proximité. Le cadre est un pseudo-élément `after:` au-dessus des cases, pour ne pas passer
 sous les fonds de saison. Validé à l'écran par l'utilisateur sur les deux sites.
 
+### v3.7.1 — le total du mois dans l'infobulle des revenus mensuels
+
+`MonthlyRevenueChart`, vue « Par mois » : l'infobulle affiche `Réalisé`, `À venir`, puis une
+ligne **Total** (somme des deux, recalculée à partir de la ligne survolée, ce n'est pas une série
+du graphe), puis le `RevPAR`. Demandé par l'utilisateur pour ne plus additionner de tête.
+Aucun export ni type public touché : correctif.
+
 ### Comment une application s'y branche
 
 ```jsonc
