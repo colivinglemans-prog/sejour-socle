@@ -20,6 +20,7 @@ import { quoteStay, type StayQuote, type StayQuoteConfig, type StayQuoteDeps } f
 import { findStays, nearbyStays } from "../lib/stay-search";
 import type { StayAgentConfig, StayAgentDeps } from "../lib/stay-agent";
 import { createAgentRoute, runTool } from "../lib/stay-agent-http";
+import { loadQuotePage } from "../lib/quote-page";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail = ""): void {
@@ -407,6 +408,30 @@ async function main() {
   const api = (await runTool("openapi", AGENT, agentDeps(), {})).body as Record<string, any>;
   check("openapi : 4 opérations, serveur du site", Object.keys(api.paths).length === 4 && api.servers[0].url === "https://www.exemple.fr/api/agent");
   check("outil inconnu : 404", (await runTool("book", AGENT, agentDeps(), {})).status === 404);
+
+  // ─── Page de devis ────────────────────────────────────────────────────────────────────
+  console.log("\n— Page de devis");
+  const live = await signQuote(payload, keys);
+  const pv = await loadQuotePage(live, 303771, BARBUSSE, deps(), keys);
+  check("devis relu : valable, prix inchangé, bouton de réservation", pv.status === "valid" && "bookUrl" in pv);
+  // Beyond a remonté les nuits à 400 € : un vrai changement de tarif, cohérent avec la grille.
+  const repriced = async (r: RoomPriceRequest): Promise<RoomPrice> => ({
+    total: round2(800 * 0.93 + 280 + 15 * 9 + 2.2 * 9 * 2),
+    nightly: { [r.checkIn]: 400, [addDays(r.checkIn, 1)]: 400 },
+    warn: "",
+  });
+  const pc = await loadQuotePage(live, 303771, BARBUSSE, deps({ price: repriced }), keys);
+  check("prix Beds24 changé : nouveau prix affiché", pc.status === "price-changed" && pc.current?.total === 1198.6,
+    pc.status === "price-changed" ? String(pc.current?.total) : pc.status);
+  const pu = await loadQuotePage(live, 303771, BARBUSSE, deps({ availability: fakeAvailability({ booked: ["2027-01-16"] }) }), keys);
+  check("dates prises depuis : indisponible, avec alternatives", pu.status === "unavailable" && pu.alternatives.length > 0, pu.status);
+  const pd = await loadQuotePage(live, 303771, BARBUSSE, deps({ availability: fakeAvailability({ down: true }) }), keys);
+  check("Beds24 en panne à l'affichage : devis montré, non revérifié", pd.status === "unchecked");
+  check("jeton d'un autre site : invalide", (await loadQuotePage(live, 346417, BARBUSSE, deps(), keys)).status === "invalid");
+  check("jeton falsifié : invalide", (await loadQuotePage(forged, 303771, BARBUSSE, deps(), keys)).status === "invalid");
+  const old = await signQuote(payload, keys, new Date(Date.now() - 8 * 86_400_000));
+  const pe = await loadQuotePage(old, 303771, BARBUSSE, deps(), keys);
+  check("devis expiré : dates relues pour pré-remplir le calendrier", pe.status === "expired" && pe.quote.checkIn === "2027-01-15");
 
   const route = createAgentRoute(AGENT, () => agentDeps());
   const res = await route.GET(new Request("https://www.exemple.fr/api/agent/quote?checkIn=2027-01-15&checkOut=2027-01-17&adults=9"), {
