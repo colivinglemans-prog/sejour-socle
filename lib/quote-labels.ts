@@ -15,7 +15,7 @@ export const QUOTE_LABELS: Record<string, Generic> = {
     nights: (n) => plural(n, "nuit", "nuits"),
     guests: (a, c) => [plural(a, "adulte", "adultes"), c ? plural(c, "enfant", "enfants") : ""].filter(Boolean).join(", "),
     total: "Total à payer",
-    stay: "Séjour (nuits, ménage, taxe de séjour)",
+    stay: "Séjour",
     perPersonPerNight: "par personne et par nuit",
     book: "Réserver ces dates",
     validUntil: (d) => `Devis valable jusqu'au ${d} ; les dates ne sont pas bloquées tant que la réservation n'est pas payée`,
@@ -33,7 +33,7 @@ export const QUOTE_LABELS: Record<string, Generic> = {
     nights: (n) => plural(n, "night", "nights"),
     guests: (a, c) => [plural(a, "adult", "adults"), c ? plural(c, "child", "children") : ""].filter(Boolean).join(", "),
     total: "Total to pay",
-    stay: "Stay (nights, cleaning, tourist tax)",
+    stay: "Stay",
     perPersonPerNight: "per person per night",
     book: "Book these dates",
     validUntil: (d) => `Quote valid until ${d}; dates are not held until the booking is paid`,
@@ -51,7 +51,7 @@ export const QUOTE_LABELS: Record<string, Generic> = {
     nights: (n) => plural(n, "Nacht", "Nächte"),
     guests: (a, c) => [plural(a, "Erwachsener", "Erwachsene"), c ? plural(c, "Kind", "Kinder") : ""].filter(Boolean).join(", "),
     total: "Gesamtbetrag",
-    stay: "Aufenthalt (Nächte, Reinigung, Kurtaxe)",
+    stay: "Aufenthalt",
     perPersonPerNight: "pro Person und Nacht",
     book: "Diese Daten buchen",
     validUntil: (d) => `Angebot gültig bis ${d}; die Daten sind erst mit der bezahlten Buchung reserviert`,
@@ -69,7 +69,7 @@ export const QUOTE_LABELS: Record<string, Generic> = {
     nights: (n) => plural(n, "noche", "noches"),
     guests: (a, c) => [plural(a, "adulto", "adultos"), c ? plural(c, "niño", "niños") : ""].filter(Boolean).join(", "),
     total: "Total a pagar",
-    stay: "Estancia (noches, limpieza, tasa turística)",
+    stay: "Estancia",
     perPersonPerNight: "por persona y noche",
     book: "Reservar estas fechas",
     validUntil: (d) => `Presupuesto válido hasta el ${d}; las fechas no quedan bloqueadas hasta que se pague la reserva`,
@@ -87,7 +87,7 @@ export const QUOTE_LABELS: Record<string, Generic> = {
     nights: (n) => plural(n, "notte", "notti"),
     guests: (a, c) => [plural(a, "adulto", "adulti"), c ? plural(c, "bambino", "bambini") : ""].filter(Boolean).join(", "),
     total: "Totale da pagare",
-    stay: "Soggiorno (notti, pulizia, tassa di soggiorno)",
+    stay: "Soggiorno",
     perPersonPerNight: "a persona per notte",
     book: "Prenota queste date",
     validUntil: (d) => `Preventivo valido fino al ${d}; le date non sono bloccate finché la prenotazione non è pagata`,
@@ -152,6 +152,10 @@ const CANCEL: Record<string, CancelWords> = {
 /**
  * La politique d'annulation en une phrase, **tirée de la configuration** du site (les constantes
  * que contrôle aussi `llms.policies`) : « Annulation : 100 % remboursés jusqu'à 30 jours… ».
+ *
+ * Les paliers sont attendus **du plus favorable au moins favorable** (`minDaysBefore`
+ * décroissant), comme le documente `CancellationPolicy`. Une politique sans palier remboursable
+ * ni délai de grâce rend une chaîne vide : rien à rappeler plutôt qu'« Annulation : . ».
  */
 export function cancellationText(policy: CancellationPolicy, lang: string): string {
   const c = CANCEL[lang] ?? CANCEL.fr;
@@ -160,6 +164,7 @@ export function cancellationText(policy: CancellationPolicy, lang: string): stri
   const parts = paid.map(c.tier);
   if (last && policy.tiers.some((t) => t.refundPct === 0)) parts.push(c.none(last.minDaysBefore));
   if (policy.gracePeriod) parts.push(c.grace(policy.gracePeriod.hoursAfterBooking, policy.gracePeriod.minDaysBefore));
+  if (parts.length === 0) return "";
   // Typographie française : espace avant le point-virgule ; pas dans les autres langues.
   return `${c.lead} ${parts.join(lang === "fr" || !CANCEL[lang] ? " ; " : "; ")}.`;
 }

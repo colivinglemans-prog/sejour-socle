@@ -11,7 +11,7 @@
  *   // app/api/agent/[tool]/route.ts
  *   export const { GET, OPTIONS } = createAgentRoute(agentConfig, agentDeps);
  */
-import { MAX_SEARCH_DAYS } from "./stay-search";
+import { MAX_SEARCH_DAYS, MAX_STAY_NIGHTS } from "./stay-search";
 import { find, propertyInfo, quote, availability, type StayAgentConfig, type StayAgentDeps, type ToolParams, type ToolResult } from "./stay-agent";
 
 export const AGENT_TOOLS = ["info", "availability", "quote", "find", "openapi"] as const;
@@ -134,7 +134,7 @@ export function openApi(cfg: StayAgentConfig): Record<string, unknown> {
       "/find": op("find_stays", "Séjours libres et chiffrés quand les dates sont floues (« un week-end en mars »)", [
         q("from", day("Première arrivée envisagée"), true),
         q("to", day("Dernière arrivée envisagée"), true),
-        q("nights", int("Nombre de nuits", { minimum: 1, maximum: 60 }), true),
+        q("nights", int("Nombre de nuits", { minimum: 1, maximum: MAX_STAY_NIGHTS }), true),
         q("weekdays", str("Jours d'arrivée acceptés, ex. fri ou fri,sat")),
         q("near", day("Trier autour de ce jour")),
         q("limit", int("Résultats au plus", { minimum: 1, maximum: 8, default: 5 })),

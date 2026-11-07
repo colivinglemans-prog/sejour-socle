@@ -42,15 +42,16 @@ export interface StaySearch {
   /** Motif déclaré, transmis au refus propre au site. */
   purpose?: string;
   /**
-   * Durée adaptée à chaque arrivée : au moins le séjour minimum imposé ce jour-là, et prolongée
-   * jusqu'au premier jour de départ ouvert (rotation du samedi). Sert aux alternatives : à Noël,
-   * une demande de 2 nuits doit pouvoir rebondir sur « 3 nuits du 21 au 24 ».
+   * Nuits que l'on peut ajouter à chaque arrivée, au-delà de `nights` et du séjour minimum du
+   * jour, pour atteindre le premier jour de départ ouvert (rotation du samedi). Absent ou 0 :
+   * durée fixe. Sert aux alternatives : à Noël, une demande de 2 nuits doit pouvoir rebondir sur
+   * « 3 nuits du 21 au 24 » ; chez Albiez, un lundi fermé sur la semaine samedi → samedi.
    */
-  adaptNights?: boolean;
+  maxExtraNights?: number;
 }
 
-/** Prolongation au plus, au-delà du séjour minimum, pour atteindre un jour de départ ouvert. */
-const MAX_EXTRA_NIGHTS = 7;
+/** Durée maximale d'un séjour chiffré — la même borne que le paramètre `nights` de l'API. */
+export const MAX_STAY_NIGHTS = 60;
 
 export type PricedStay = Extract<StayQuote, { ok: true }>;
 
@@ -72,6 +73,7 @@ export async function findStays(
 ): Promise<StaySearchResult> {
   // `NaN` (paramètre illisible) ferait sauter le plafond d'appels : seul un entier est retenu.
   const limit = Number.isInteger(q.limit) ? Math.min(Math.max(q.limit as number, 1), 8) : 5;
+  const extraNights = Number.isInteger(q.maxExtraNights) ? Math.min(Math.max(q.maxExtraNights as number, 0), 14) : 0;
   // Entrée publique : un jour mal formé rendrait `daysBetween` NaN, et la boucle d'arrivées
   // `d <= q.to` ne s'arrêterait plus. Tout est vérifié avant le moindre calcul.
   const badDay = !isDay(q.from) || !isDay(q.to) || (q.near !== undefined && !isDay(q.near));
@@ -83,7 +85,7 @@ export async function findStays(
     span > MAX_SEARCH_DAYS ||
     !Number.isInteger(q.nights) ||
     q.nights < 1 ||
-    q.nights > 60
+    q.nights > MAX_STAY_NIGHTS
   ) {
     return {
       stays: [],
@@ -112,7 +114,7 @@ export async function findStays(
   let avail: AvailabilityResponse;
   try {
     // Dès la veille, pour le décalage d'un jour des `minStay` Beds24 (voir `quoteStay`).
-    const reach = q.nights + (q.adaptNights ? 2 * MAX_EXTRA_NIGHTS : 0);
+    const reach = q.nights + 2 * extraNights;
     avail = await deps.availability(addDays(from, -1), addDays(q.to, reach));
   } catch {
     return {
@@ -125,9 +127,9 @@ export async function findStays(
 
   /** La durée retenue pour une arrivée, ou `null` si aucune n'est réservable. */
   const nightsFor = (d: string): number | null => {
-    if (!q.adaptNights) return checkStayRules(ctx, d, addDays(d, q.nights)) ? null : q.nights;
+    if (!extraNights) return checkStayRules(ctx, d, addDays(d, q.nights)) ? null : q.nights;
     const first = Math.max(q.nights, ctx.minStayOf(d));
-    for (let n = first; n <= first + MAX_EXTRA_NIGHTS && n <= 60; n++) {
+    for (let n = first; n <= first + extraNights && n <= MAX_STAY_NIGHTS; n++) {
       const broken = checkStayRules(ctx, d, addDays(d, n));
       if (!broken) return n;
       // Seul un départ fermé se règle en restant plus longtemps.
@@ -202,7 +204,7 @@ export async function nearbyStays(
     near: req.checkIn,
     limit,
     purpose: req.purpose,
-    adaptNights: true,
+    maxExtraNights: 7,
   });
   return stays;
 }

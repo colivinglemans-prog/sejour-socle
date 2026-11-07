@@ -483,6 +483,8 @@ async function main() {
     limitedEn === "Cancellation: 100% refunded up to 14 days before arrival; 50% refunded up to 7 days before arrival; nothing within 7 days.", limitedEn);
   const withKids = openApi({ ...AGENT, childrenDescription: "mineurs, de 0 à 17 ans" }) as Record<string, any>;
   const kidsParam = withKids.paths["/quote"].get.parameters.find((x: { name: string }) => x.name === "children");
+  check("politique sans remboursement ni grâce : aucun rappel, pas « Annulation : . »",
+    cancellationText({ name: "non-remboursable", tiers: [{ minDaysBefore: 0, refundPct: 0 }] }, "fr") === "");
   check("OpenAPI : la description des enfants vient du site", kidsParam.schema.description === "Enfants : mineurs, de 0 à 17 ans");
   check("info : la description des enfants est servie",
     (propertyInfo({ ...AGENT, childrenDescription: "mineurs" }, {}).body.booking as Record<string, unknown>).children === "mineurs");

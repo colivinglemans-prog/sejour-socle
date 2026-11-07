@@ -1219,16 +1219,19 @@ sans réseau). Pièges payés : la taxe de séjour de Barbusse ne porte que sur 
 rend les `minStay` décalés d'un jour ; la page `booking2.php` contient en dur « Pas de
 disponibilité » (masqué), qu'un agent qui lit le HTML prend au pied de la lettre — d'où l'API.
 
-### v3.11.1 — retours des tests voyageur
+### v3.12.0 — retours des tests voyageur
 
-- `nearbyStays` adapte la durée à chaque arrivée (`StaySearch.adaptNights`) : au moins le séjour
-  minimum du jour, prolongé jusqu'au premier départ ouvert (≤ 7 nuits de plus). À Noël, 2 nuits
-  refusées rebondissent sur « 3 nuits du 21 au 24 » ; chez Albiez, un lundi fermé sur la semaine
-  samedi → samedi. `findStays` sans l'option est inchangé.
+- `nearbyStays` adapte la durée à chaque arrivée (`StaySearch.maxExtraNights: 7`) : au moins le
+  séjour minimum du jour, prolongé jusqu'au premier départ ouvert. À Noël, 2 nuits refusées
+  rebondissent sur « 3 nuits du 21 au 24 » ; chez Albiez, un lundi fermé sur la semaine
+  samedi → samedi. `findStays` sans ce champ (ou à 0) garde une durée fixe. `purpose` est
+  transmis à `nearbyStays`, donc au refus propre au site. `MAX_STAY_NIGHTS` (60) borne à la fois
+  la recherche et le paramètre `nights` de l'API.
 - Le `warn` « minimum N » de Beds24 devient `minStayText(n, lang)` (5 langues), plus le texte brut.
 - `QuoteSummary` : détail du prix quand un supplément est choisi (`labels.stay` + lignes), rappel
   d'annulation en prop `cancellation` — à construire par `cancellationText(policy, lang)`
-  (`quote-labels`), tiré des constantes du site —, année sur la validité, prix par personne et
+  (`quote-labels`), tiré des constantes du site, paliers du plus au moins favorable ; chaîne vide
+  sans palier remboursable ni grâce —, année sur la validité, prix par personne et
   par nuit sans centimes. Nouveau libellé obligatoire `stay` (fourni par `QUOTE_LABELS`).
 - `StayAgentConfig.childrenDescription` (facultatif) : ce que le site compte comme enfant, servi
   par `info` et la description OpenAPI de `children`.
