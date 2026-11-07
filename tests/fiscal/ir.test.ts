@@ -57,11 +57,9 @@ describe("computeIR", () => {
     expect(computeIR(10000, 2, plat)).toBe(1000);
   });
 
-  // Bug suspecté — `BASE_PARTS_COUPLE = 2` est en dur : pour une personne seule (1 part),
-  // `demiPartsExcedentaires` vaut −2, le « plafond » devient −3 582 € et s'**ajoute** à un
-  // impôt calculé au quotient conjugal. Résultat : 4 353 € au lieu de 2 165 € pour 30 000 €.
-  // Sans conséquence chez l'unique consommateur (foyer marié, 3 parts), mais la signature
-  // accepte n'importe quel `nbParts`.
+  // Non corrigé : sans effet pour un foyer en couple, décision du 2026-11-07.
+  // (`BASE_PARTS_COUPLE = 2` est en dur : pour une personne seule, 1 part, 30 000 € donnent
+  // 4 353 € au lieu de 2 165 €.)
   it.skip("personne seule, 1 part, 30 000 € : barème direct sans quotient conjugal", () => {
     expect(computeIR(30000, 1)).toBe(2165);
   });
