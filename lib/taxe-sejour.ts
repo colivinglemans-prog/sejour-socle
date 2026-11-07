@@ -204,11 +204,19 @@ export function ecartDeCollecte(
   const occupants = (booking.numAdult ?? 0) + enfants;
   if (enfants <= 0 || occupants <= 0) return null;
 
-  const ligne = (booking.invoiceItems ?? []).find((l) =>
-    LIBELLE_TAXE_SEJOUR_RE.test(l.description ?? ""),
-  );
-  const collectee = Number(ligne?.lineTotal ?? 0);
-  if (collectee <= 0) return null;
+  // Toutes les lignes de taxe, pas la première (une prolongation en ajoute une), et chacune
+  // lue par `taxLineTotal` comme partout ailleurs dans le module : `lineTotal`, à défaut
+  // `amount × qty`. Les lignes de paiement sont écartées, comme dans `isTouristTaxLine` :
+  // un encaissement libellé « Taxe de séjour » n'est pas une taxe facturée.
+  const somme = (booking.invoiceItems ?? [])
+    .filter(
+      (l) =>
+        (l.type ?? "").toLowerCase() !== "payment" &&
+        LIBELLE_TAXE_SEJOUR_RE.test(l.description ?? ""),
+    )
+    .reduce((s, l) => s + taxLineTotal(l), 0);
+  const collectee = Math.round(somme * 100) / 100;
+  if (!(collectee > 0)) return null;
 
   const due = (collectee * (occupants - enfants)) / occupants;
   return { collectee, due, ecart: collectee - due };

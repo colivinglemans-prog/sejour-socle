@@ -358,10 +358,9 @@ describe("ecartDeCollecte", () => {
     expect(r).toEqual({ collectee: 6, due: 0, ecart: 6 });
   });
 
-  // Bug suspecté — `ecartDeCollecte` ne lit que `lineTotal`, alors que tout le reste du module
-  // (`taxLineTotal`) retombe sur `amount × qty` quand Beds24 ne pré-calcule pas le total. Une
-  // ligne sans `lineTotal` rend aujourd'hui `null` : l'écart disparaît en silence.
-  it.skip("une ligne sans lineTotal devrait être lue en amount × qty", () => {
+  // Corrigé le 2026-11-07 — `ecartDeCollecte` ne lisait que `lineTotal`, alors que tout le
+  // reste du module (`taxLineTotal`) retombe sur `amount × qty`.
+  it("une ligne sans lineTotal devrait être lue en amount × qty", () => {
     const r = ecartDeCollecte({
       numAdult: 2,
       numChild: 2,
@@ -370,10 +369,9 @@ describe("ecartDeCollecte", () => {
     expect(r).toEqual({ collectee: 10, due: 5, ecart: 5 });
   });
 
-  // Bug suspecté — seule la **première** ligne « Taxe de séjour » est lue (`find`), alors que
-  // `touristTaxFromInvoiceItems` les somme toutes. Deux lignes (ex. une par nuit ou une
-  // modification de séjour) sous-estiment le collecté et l'écart.
-  it.skip("plusieurs lignes « Taxe de séjour » devraient être sommées", () => {
+  // Corrigé le 2026-11-07 — seule la **première** ligne « Taxe de séjour » était lue (`find`),
+  // alors que `touristTaxFromInvoiceItems` les somme toutes.
+  it("plusieurs lignes « Taxe de séjour » devraient être sommées", () => {
     const r = ecartDeCollecte({
       numAdult: 1,
       numChild: 1,
@@ -383,6 +381,87 @@ describe("ecartDeCollecte", () => {
       ],
     });
     expect(r).toEqual({ collectee: 6, due: 3, ecart: 3 });
+  });
+});
+
+describe("ecartDeCollecte — lecture des lignes (cas limites)", () => {
+  it("lineTotal prime sur amount × qty quand les deux sont présents", () => {
+    const r = ecartDeCollecte({
+      numAdult: 1,
+      numChild: 1,
+      invoiceItems: [{ description: "Taxe de séjour", amount: 2.5, qty: 4, lineTotal: 8 }],
+    });
+    expect(r).toEqual({ collectee: 8, due: 4, ecart: 4 });
+  });
+
+  it("sans qty, amount compte pour une unité", () => {
+    const r = ecartDeCollecte({
+      numAdult: 1,
+      numChild: 1,
+      invoiceItems: [{ description: "Taxe de séjour", amount: 6 }],
+    });
+    expect(r).toEqual({ collectee: 6, due: 3, ecart: 3 });
+  });
+
+  it("mélange lineTotal et amount × qty, et ignore les autres lignes", () => {
+    const r = ecartDeCollecte({
+      numAdult: 3,
+      numChild: 1,
+      invoiceItems: [
+        { description: "Nuitées", lineTotal: 600 },
+        { description: "Taxe de séjour", lineTotal: 5 },
+        { description: "Ménage", lineTotal: 80 },
+        { description: "Taxe de sejour (ajout)", amount: 1.5, qty: 2 },
+      ],
+    });
+    expect(r).toEqual({ collectee: 8, due: 6, ecart: 2 });
+  });
+
+  it("une ligne de paiement libellée « Taxe de séjour » n'est pas une taxe facturée", () => {
+    const r = ecartDeCollecte({
+      numAdult: 1,
+      numChild: 1,
+      invoiceItems: [
+        { description: "Taxe de séjour", lineTotal: 4 },
+        { description: "Taxe de séjour", type: "payment", lineTotal: -4 },
+      ],
+    });
+    expect(r).toEqual({ collectee: 4, due: 2, ecart: 2 });
+  });
+
+  it("le collecté est arrondi au centime (sommes flottantes)", () => {
+    const r = ecartDeCollecte({
+      numAdult: 1,
+      numChild: 1,
+      invoiceItems: [
+        { description: "Taxe de séjour", lineTotal: 0.1 },
+        { description: "Taxe de séjour", lineTotal: 0.2 },
+      ],
+    });
+    expect(r?.collectee).toBe(0.3);
+  });
+
+  it("des lignes qui s'annulent (avoir) rendent null", () => {
+    expect(
+      ecartDeCollecte({
+        numAdult: 1,
+        numChild: 1,
+        invoiceItems: [
+          { description: "Taxe de séjour", lineTotal: 4 },
+          { description: "Taxe de séjour (annulation)", lineTotal: -4 },
+        ],
+      }),
+    ).toBeNull();
+  });
+
+  it("le collecté coïncide avec touristTaxFromInvoiceItems sur des libellés « Taxe de séjour »", () => {
+    const items = [
+      { description: "Taxe de séjour", lineTotal: 4 },
+      { description: "Taxe de séjour (prolongation)", amount: 1, qty: 3 },
+    ];
+    expect(ecartDeCollecte({ numAdult: 2, numChild: 1, invoiceItems: items })?.collectee).toBe(
+      touristTaxFromInvoiceItems(items),
+    );
   });
 });
 
