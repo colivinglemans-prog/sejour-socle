@@ -31,7 +31,7 @@ export function toMcpResult(r: ToolResult) {
     structuredContent: r.body,
     // Un refus métier (dates prises, séjour trop court) est une **réponse**, pas une erreur :
     // seuls une requête mal formée et une panne sont signalées comme telles.
-    ...(r.status >= 400 && r.status !== 404 ? { isError: true } : {}),
+    ...(r.status >= 400 ? { isError: true } : {}),
   };
 }
 
@@ -63,8 +63,18 @@ export function buildMcpServer(cfg: StayAgentConfig, deps: () => StayAgentDeps):
         RELAY,
     },
   );
-  const call = async (tool: string, args: Record<string, unknown>) =>
-    toMcpResult(await runTool(tool, cfg, deps(), asParams(args)));
+  const call = async (tool: string, args: Record<string, unknown>) => {
+    try {
+      return toMcpResult(await runTool(tool, cfg, deps(), asParams(args)));
+    } catch {
+      // Une exception imprévue (dépendance du site, secret manquant…) ne sort jamais telle quelle :
+      // son message peut citer un chemin ou une configuration interne.
+      return toMcpResult({
+        status: 503,
+        body: { ok: false, reason: "service-unavailable", detail: "Le service ne répond pas. Réessayez dans quelques minutes." },
+      });
+    }
+  };
 
   const lang = z.enum(cfg.locales as [string, ...string[]]).optional().describe("Langue des libellés");
   const src = z.string().optional().describe("Nom de l'assistant (chatgpt, claude…), pour la mesure");
@@ -166,13 +176,37 @@ function withCors(res: Response): Response {
   return new Response(res.body, { status: res.status, headers });
 }
 
+/** Réponse directe, sans passer par le transport. */
+function plain(status: number, body: unknown, extra: Record<string, string> = {}): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json", "Cache-Control": "no-store", "X-Robots-Tag": "noindex", ...CORS, ...extra },
+  });
+}
+
 /**
- * La route Next du serveur MCP. Sans état : un serveur et un transport par requête. `GET` (flux
- * de notifications du serveur) et `DELETE` (fin de session) n'ont pas d'objet sans session : le
- * transport répond lui-même 405, ce que les clients savent interpréter.
+ * La route Next du serveur MCP. Sans état : un serveur et un transport par requête, `POST`
+ * seulement. `GET` (flux de notifications du serveur) et `DELETE` (fin de session) n'ont pas
+ * d'objet sans session : ils rendent **405** ici même, sans passer par le transport — qui, lui,
+ * ouvrirait un flux SSE vide ou accepterait une « suppression » de session inexistante.
  */
 export function createMcpRoute(cfg: StayAgentConfig, deps: () => StayAgentDeps) {
-  const handle = async (request: Request): Promise<Response> => {
+  const notAllowed = (): Response =>
+    plain(405, { jsonrpc: "2.0", error: { code: -32000, message: "Method not allowed: POST only (stateless)." }, id: null }, {
+      Allow: "POST, OPTIONS",
+    });
+  const post = async (request: Request): Promise<Response> => {
+    // Un lot JSON-RPC (tableau) multiplierait les appels Beds24 dans une seule requête, hors de
+    // portée de la limite par IP : refusé.
+    let body: unknown;
+    try {
+      body = await request.clone().json();
+    } catch {
+      body = undefined;
+    }
+    if (Array.isArray(body)) {
+      return plain(400, { jsonrpc: "2.0", error: { code: -32600, message: "Batch requests are not supported." }, id: null });
+    }
     const server = buildMcpServer(cfg, deps);
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
@@ -180,16 +214,17 @@ export function createMcpRoute(cfg: StayAgentConfig, deps: () => StayAgentDeps) 
     });
     await server.connect(transport);
     try {
-      return withCors(await transport.handleRequest(request));
+      return withCors(await transport.handleRequest(request, body === undefined ? undefined : { parsedBody: body }));
     } finally {
       // La réponse JSON est entièrement produite : on libère serveur et transport.
       void server.close();
     }
   };
   return {
-    GET: handle,
-    POST: handle,
-    DELETE: handle,
+    GET: notAllowed,
+    POST: post,
+    DELETE: notAllowed,
     OPTIONS: (): Response => new Response(null, { status: 204, headers: CORS }),
   };
 }
+

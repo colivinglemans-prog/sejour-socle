@@ -35,7 +35,7 @@
     "react-dom": "^19",
     "recharts": "^3",
     "vitest": ">=4",
-    "zod": "^3.25 || ^4"
+    "zod": "^4"
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "1.32.2",
@@ -56,13 +56,13 @@
     "zod": "4.6.7"
   },
   "peerDependenciesMeta": {
+    "@modelcontextprotocol/sdk": {
+      "optional": true
+    },
     "@react-pdf/renderer": {
       "optional": true
     },
     "vitest": {
-      "optional": true
-    },
-    "@modelcontextprotocol/sdk": {
       "optional": true
     },
     "zod": {

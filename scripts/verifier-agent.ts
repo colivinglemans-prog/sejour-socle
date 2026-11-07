@@ -598,6 +598,38 @@ async function main() {
     !callTaken.json.result?.isError && (callTaken.json.result?.structuredContent?.alternatives?.length ?? 0) > 0);
   const callFind = await rpc("tools/call", { name: "find_stays", arguments: { from: "2027-03-01", to: "2027-03-31", nights: 2, adults: 14, weekdays: "fri" } });
   check("MCP find_stays : séjours chiffrés", (callFind.json.result?.structuredContent?.stays?.length ?? 0) > 0);
+  const getRes = await mcp.GET();
+  const delRes = await mcp.DELETE();
+  check("MCP GET et DELETE : 405, Allow: POST, OPTIONS, CORS",
+    getRes.status === 405 && delRes.status === 405 && getRes.headers.get("allow") === "POST, OPTIONS" &&
+      getRes.headers.get("access-control-allow-origin") === "*", `${getRes.status} / ${delRes.status}`);
+  const batchRes = await mcp.POST(new Request("https://www.exemple.fr/api/mcp", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+    body: JSON.stringify([
+      { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "get_quote", arguments: { checkin: "2027-01-15", checkout: "2027-01-17", adults: 9 } } },
+      { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "get_quote", arguments: { checkin: "2027-01-22", checkout: "2027-01-24", adults: 9 } } },
+    ]),
+  }));
+  check("MCP lot JSON-RPC (tableau) : 400", batchRes.status === 400, String(batchRes.status));
+  const mcpBoom = createMcpRoute(AGENT, () => agentDeps({ price: async () => { throw new TypeError("secret interne /var/beds24/token"); }, availability: async () => { throw new TypeError("secret interne /var/beds24/token"); } }));
+  const boomRes = await mcpBoom.POST(new Request("https://www.exemple.fr/api/mcp", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 7, method: "tools/call", params: { name: "find_stays", arguments: { from: "2027-03-01", to: "2027-03-31", nights: 2, adults: 4 } } }),
+  }));
+  const boomText = await boomRes.text();
+  check("MCP panne des dépendances : isError, sans le message d'origine",
+    boomText.includes('"isError":true') && boomText.includes("service-unavailable") && !boomText.includes("secret interne"), boomText.slice(0, 160));
+  const mcpThrow = createMcpRoute(AGENT, () => { throw new Error("secret interne : QUOTE_SIGNING_SECRET"); });
+  const throwRes = await mcpThrow.POST(new Request("https://www.exemple.fr/api/mcp", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 8, method: "tools/call", params: { name: "get_property_info", arguments: {} } }),
+  }));
+  const throwText = await throwRes.text();
+  check("MCP exception de la fabrique deps : isError générique, sans fuite",
+    throwText.includes('"isError":true') && !throwText.includes("secret interne"), throwText.slice(0, 160));
 
   const route = createAgentRoute(AGENT, () => agentDeps());
   const res = await route.GET(new Request("https://www.exemple.fr/api/agent/quote?checkIn=2027-01-15&checkOut=2027-01-17&adults=9"), {
