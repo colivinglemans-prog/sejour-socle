@@ -173,6 +173,7 @@ deux validations.
 | — | Correctifs de dates et de chiffres fiscaux | `le-percepteur`, `tonton-tuyau` | `v3.8.1` |
 | — | Surveillance — moteur `testing/deploy`, workflow `deploy-checks.yml`, `alert-state`, `heartbeat` | `tonton-tuyau`, `champollion`, `poisson-babel`, `cerbere` | `v3.9.0` |
 | — | Arrivées — santé Nuki, `listLogSince`, `missedArrivals`, `arrival-readiness` (exception règle 6) | `chef-de-stand` | `v3.10.0` |
+| — | Contrôles — `excludedPaths` comparé par segments entiers (`pathHasFragment`) | `chef-de-stand` | `v3.10.1` |
 | — | Veille des dates d'événements (`lib/events-watch.ts`) | — | `v0.7.0` |
 
 Plan détaillé : `C:\Users\alexa\.claude\plans\cheerful-toasting-rivest.md`.

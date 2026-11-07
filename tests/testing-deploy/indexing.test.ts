@@ -259,3 +259,13 @@ describe("indexing.aiCrawlers", () => {
     expect(r.metrics?.divergentStatus).toBe(1);
   });
 });
+
+describe("pathHasFragment — segments entiers", () => {
+  it("un slug périmé ne couvre pas l'édition en cours qui le prolonge", async () => {
+    const { pathHasFragment } = await import("../../testing/deploy/checks/indexing");
+    expect(pathHasFragment("/fr/blog/motogp-france-le-mans", "blog/motogp-france-le-mans")).toBe(true);
+    expect(pathHasFragment("/fr/blog/motogp-france-le-mans-2027", "blog/motogp-france-le-mans")).toBe(false);
+    expect(pathHasFragment("/de/guide-arrivee", "/guide-arrivee/")).toBe(true);
+    expect(pathHasFragment("/de/guide-arrivee-bis", "guide-arrivee")).toBe(false);
+  });
+});

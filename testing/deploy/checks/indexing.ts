@@ -231,6 +231,17 @@ function stripSlashes(fragment: string): string {
   return fragment.replace(/^\/+/, "").replace(/\/+$/, "");
 }
 
+/**
+ * Le chemin contient-il le fragment **en segments entiers** ? `blog/motogp-france-le-mans` ne
+ * doit pas couvrir `blog/motogp-france-le-mans-2027` : une comparaison par sous-chaîne excluait
+ * à tort l'édition en cours avec l'édition périmée dont le slug la préfixe.
+ */
+export function pathHasFragment(pathname: string, fragment: string): boolean {
+  const f = stripSlashes(fragment);
+  if (!f) return false;
+  return `/${stripSlashes(pathname)}/`.includes(`/${f}/`);
+}
+
 function isRedirect(status: number): boolean {
   return status >= 300 && status < 400;
 }
@@ -332,7 +343,7 @@ async function checkSitemapUrls(ctx: CheckContext): Promise<CheckOutcome> {
   const local = sitemap.urls.filter((u) => isCanonical(ctx, u.loc));
   const excludedListed = local.filter((u) => {
     const p = new URL(u.loc).pathname;
-    return excluded.some((f) => p.includes(f));
+    return excluded.some((f) => pathHasFragment(p, f));
   }).length;
 
   const counts = { notOk: 0, redirected: 0, unreachable: 0, noindex: 0, wrongLang: 0, wrongCanonical: 0, invalidJsonLd: 0 };
