@@ -506,3 +506,88 @@ function describeDays(days: number): string {
   if (days === 1) return "demain";
   return `dans ${days} jours`;
 }
+
+/** Ce qu'on sait de l'arrivée d'un voyageur, sans nom ni PIN. */
+export type ArrivalStatus = "arrived" | "missing" | "unknown";
+
+/** Un séjour arrivant le jour J, tel que `missedArrivals` le regarde. */
+export interface ArrivalWatch {
+  bookingId: number;
+  /** `id` Nuki du code posé pour ce séjour, s'il est connu. Sinon, la jointure se fait par le nom. */
+  authId?: string | null;
+}
+
+/** Fenêtre d'observation : en pratique de J à l'heure d'ouverture du code jusqu'à J+1 au matin. */
+export interface ArrivalWindow {
+  from: Date;
+  until: Date;
+}
+
+/** Actions du journal qui ouvrent la porte : déverrouillage, entrebâillement, « lock'n'go » avec entrebâillement. */
+const OPENING_ACTIONS = new Set([1, 3, 5]);
+
+/**
+ * Le voyageur est-il entré ? Pour chaque séjour passé (l'appelant ne passe que les séjours
+ * confirmés arrivant à J), `arrived`, `missing` ou `unknown`.
+ *
+ * **Seule une ouverture réussie avec le code du séjour compte**, entre `from` (inclus) et
+ * `until` (exclu). Il n'y a pas de clé physique et aucune raison d'ouvrir de l'intérieur : une
+ * ouverture par l'application, par le bouton ou par un code manuel (`# …`, ou tout code dont le
+ * nom ne porte pas le numéro du séjour) ne prouve rien sur ce voyageur.
+ *
+ * La jointure se fait par l'`authId` du code quand l'appelant le connaît, et par la convention
+ * de nommage `<n° de réservation>: Prénom` dans tous les cas.
+ *
+ * **Une entrée au clavier par un code manuel rend `unknown`.** Un code saisi à la main, ni géré
+ * (`<n° de réservation>:`) ni protégé (`# …`), n'est repris par la synchro que si son PIN est
+ * dans Beds24 : sinon le voyageur entre avec lui, son code géré reste inutilisé, et on le
+ * dirait absent. Le prénom ne suffit pas à l'attribuer (un ami de passage, un artisan) : on
+ * ne conclut ni `arrived` ni `missing`, on dit « contrôle impossible ».
+ *
+ * **Un journal illisible ne rend jamais `missing`.** `null`, une réponse qui n'est pas une
+ * liste, ou une ligne à la date illisible : tout séjour sans ouverture trouvée devient
+ * `unknown` (« contrôle impossible »). Dire « voyageur absent » à tort, c'est appeler
+ * quelqu'un qui dort dans la maison.
+ */
+export function missedArrivals(
+  bookings: readonly ArrivalWatch[],
+  logEntries: readonly NukiLogEntry[] | null | undefined,
+  window: ArrivalWindow,
+): Array<{ bookingId: number; status: ArrivalStatus }> {
+  const from = window.from.getTime();
+  const until = window.until.getTime();
+  if (!Array.isArray(logEntries) || !Number.isFinite(from) || !Number.isFinite(until)) {
+    return bookings.map((b) => ({ bookingId: b.bookingId, status: "unknown" as const }));
+  }
+  let unreadable = false;
+  let manualKeypad = false;
+  const arrived = new Set<number>();
+  const byAuth = new Map<string, number>();
+  for (const b of bookings) if (b.authId) byAuth.set(b.authId, b.bookingId);
+
+  for (const entry of logEntries) {
+    if (entry === null || typeof entry !== "object") {
+      unreadable = true;
+      continue;
+    }
+    const t = Date.parse(entry.date);
+    if (!Number.isFinite(t)) {
+      unreadable = true;
+      continue;
+    }
+    if (t < from || t >= until) continue;
+    if (entry.state !== 0 || !OPENING_ACTIONS.has(entry.action)) continue;
+    const name = entry.name ?? "";
+    if (isProtectedName(name)) continue;
+    const byName = entry.trigger === 255 ? managedBookingId(name) : null;
+    const viaAuth = entry.authId ? byAuth.get(entry.authId) : undefined;
+    if (viaAuth !== undefined) arrived.add(viaAuth);
+    if (byName !== null) arrived.add(byName);
+    if (entry.trigger === 255 && byName === null && viaAuth === undefined) manualKeypad = true;
+  }
+
+  return bookings.map((b) => ({
+    bookingId: b.bookingId,
+    status: arrived.has(b.bookingId) ? "arrived" : unreadable || manualKeypad ? "unknown" : "missing",
+  }));
+}

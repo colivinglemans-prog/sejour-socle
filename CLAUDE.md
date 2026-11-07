@@ -88,6 +88,7 @@ Décisions prises une fois, à ne pas rediscuter à chaque lot.
 | Accueil du dashboard | **Le calendrier**, sur les deux sites. `/dashboard` redirige vers `/dashboard/calendar` (Barbusse) ou `/dashboard/calendrier` (Albiez) ; les statistiques ont leur propre chemin. Une **redirection**, jamais le calendrier rendu sur `/dashboard` : `allowedPaths` se lit par préfixe, et `/dashboard` dans cette liste ouvrirait tout ce qui le prolonge. | 2026-09-22 |
 | Où tombe l'argent | **Une seule fonction décide** : `spreadRevenue` pour l'imputation, `availableUnitNights` pour le dénominateur. Aucune page ne recalcule. Le RevPAR est **défini comme un quotient** ; son égalité avec « prix moyen × occupation » est une conséquence arithmétique, plus une seconde formule qui peut diverger. | 2026-09-12 |
 | Exception aux règles 6 et « n'entre jamais » : serrure Nuki | `lib/nuki.ts` et `lib/access-codes.ts` montent avec **un seul consommateur** (Barbusse), par décision de l'utilisateur : un prochain logement pourrait avoir une Nuki. Albiez n'est pas tenu de s'en servir (boîte à clés mécanique, code fixe). L'exception couvre ce client d'appareil **et lui seul** : `heatzy.ts` / `cozytouch.ts` restent dehors, et la tâche planifiée qui synchronise reste chez le site. Motif et portée dans la section v3.8.0. | 2026-11-07 |
+| Exception à la règle 6 : préparation d'arrivée | `lib/arrival-readiness/` (`schedule`, `evaluate`, `format`, `nuki-probe`, `types`) monte avec **un seul consommateur** (Barbusse), par décision de l'utilisateur : le module est prévu pour les futurs équipements d'Albiez. **Portée** : le calendrier des passages, l'interface `ReadinessProbe` (`lock`, `heating`, `waterHeater`, `presence`, toutes facultatives), la mise en forme sans PIN ni nom de famille, l'anti-répétition par `nextAlertState`, et les sondes Nuki (qui s'appuient sur l'exception précédente). **Hors portée** : les sondes de chauffage et d'eau chaude (`heatzy.ts` / `cozytouch.ts` restent chez Barbusse, qui les adapte à `ReadinessProbe`), la route cron, le stockage de l'état, et toute heure ou tout seuil — tous fournis par le site, sans valeur par défaut. | 2026-11-07 |
 
 ## Protocole de test
 
@@ -171,6 +172,7 @@ deux validations.
 | — | Serrure — **codes d'accès Nuki** (`nuki.ts`, `access-codes.ts`), exception à la règle 6 | `chef-de-stand`, `le-douanier` | `v3.8.0` |
 | — | Correctifs de dates et de chiffres fiscaux | `le-percepteur`, `tonton-tuyau` | `v3.8.1` |
 | — | Surveillance — moteur `testing/deploy`, workflow `deploy-checks.yml`, `alert-state`, `heartbeat` | `tonton-tuyau`, `champollion`, `poisson-babel`, `cerbere` | `v3.9.0` |
+| — | Arrivées — santé Nuki, `listLogSince`, `missedArrivals`, `arrival-readiness` (exception règle 6) | `chef-de-stand` | `v3.10.0` |
 | — | Veille des dates d'événements (`lib/events-watch.ts`) | — | `v0.7.0` |
 
 Plan détaillé : `C:\Users\alexa\.claude\plans\cheerful-toasting-rivest.md`.
@@ -1172,6 +1174,14 @@ Nouvel export `./testing/*` ; vitest en peerDependency facultative. Pièges pay�
 vitest définit lui-même `BASE_URL="/"` (d'où `DEPLOY_BASE_URL`) ; Beds24 ne renvoie jamais les
 jours déjà passés (ils ne comptent pas comme manquants) ; vitest masque la console des suites qui
 passent (le rapport s'écrit sur `process.stdout`).
+
+### v3.10.0 — préparation d'arrivée
+
+| Chemin | Contenu |
+|---|---|
+| `lib/nuki.ts` | `NukiLockHealth` + `batteryChargePercent`, `lockState`, `motorBlocked` ; `listLogSince` (lecture incomplète ⇒ erreur, jamais un journal tronqué). **Une page de journal fait 50 lignes, quel que soit `limit`** (mesuré le 2026-11-07) ; la suite se lit avec `id=<dernier id>`. |
+| `lib/access-codes.ts` | `missedArrivals` : seule l'ouverture au clavier par le code du séjour compte (`trigger 255`, `state 0`, nom `<bookId>:`) ; une ouverture par un code manuel non protégé rend `unknown`, jamais `missing` ; journal illisible ⇒ `unknown`. Le journal ne porte pas d'`authId`. |
+| `lib/arrival-readiness/` | `schedule`, `evaluate`, `format`, `nuki-probe`, `types`. Heures, silences et seuils fournis par le site, sans défaut ; sondes facultatives (absente ⇒ `na`). Pas de PIN ni de nom de famille dans une alerte. Exception à la règle 6 : voir Arbitrages. |
 
 ### Comment une application s'y branche
 

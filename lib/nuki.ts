@@ -60,9 +60,22 @@ export interface NukiLockHealth {
   online: boolean;
   /** Un clavier (1re ou 2e génération) est appairé. */
   keypadPaired: boolean;
+  /** `state.batteryCritical` : la serrure elle-même juge sa pile à remplacer. */
   batteryCritical: boolean;
   keypadBatteryCritical: boolean;
+  /** `state.batteryCharge` (0-100), `null` si l'API ne le rapporte pas. */
+  batteryChargePercent: number | null;
+  /**
+   * `state.state` : 1 verrouillée, 3 déverrouillée, 5 entrebâillée… 254 moteur bloqué,
+   * 255 indéfini. `null` si absent.
+   */
+  lockState: number | null;
+  /** `state.state === 254` : le moteur a forcé (pêne qui frotte, porte mal fermée). */
+  motorBlocked: boolean;
 }
+
+/** Valeur de `state.state` d'une serrure dont le moteur est bloqué. */
+export const LOCK_STATE_MOTOR_BLOCKED = 254;
 
 /** Ce qu'on écrit sur un code : toujours l'ensemble, jamais un sous-ensemble (point 2). */
 export interface KeypadCodeFields {
@@ -146,13 +159,23 @@ export async function getLockHealth(cfg: NukiConfig): Promise<NukiLockHealth> {
   const lock = (await call(cfg, "état de la serrure", "GET", `/smartlock/${cfg.smartlockId}`)) as {
     serverState?: number;
     config?: { keypadPaired?: boolean; keypad2Paired?: boolean };
-    state?: { batteryCritical?: boolean; keypadBatteryCritical?: boolean };
+    state?: {
+      batteryCritical?: boolean;
+      keypadBatteryCritical?: boolean;
+      batteryCharge?: number;
+      state?: number;
+    };
   };
+  const charge = lock.state?.batteryCharge;
+  const lockState = lock.state?.state;
   return {
     online: lock.serverState === 0,
     keypadPaired: Boolean(lock.config?.keypadPaired || lock.config?.keypad2Paired),
     batteryCritical: Boolean(lock.state?.batteryCritical),
     keypadBatteryCritical: Boolean(lock.state?.keypadBatteryCritical),
+    batteryChargePercent: typeof charge === "number" && Number.isFinite(charge) ? charge : null,
+    lockState: typeof lockState === "number" ? lockState : null,
+    motorBlocked: lockState === LOCK_STATE_MOTOR_BLOCKED,
   };
 }
 
@@ -193,6 +216,10 @@ export async function updateKeypadCode(
 
 /** Une ligne du journal de la serrure, telle que `GET /smartlock/{id}/log` la rend. */
 export interface NukiLogEntry {
+  /** Identifiant de la ligne ; sert de curseur à `listLogSince`. */
+  id?: string;
+  /** Autorisation utilisée (pour un code du clavier, l'`id` de `NukiAuth`). */
+  authId?: string | null;
   /** Instant ISO 8601 UTC. */
   date: string;
   /** 1 = déverrouillage, 2 = verrouillage, 3 = ouverture de porte (« unlatch »)… */
@@ -212,6 +239,66 @@ export async function listLog(cfg: NukiConfig, limit = 50): Promise<NukiLogEntry
   const data = await call(cfg, "lecture du journal", "GET", `/smartlock/${cfg.smartlockId}/log?limit=${limit}`);
   if (!Array.isArray(data)) throw new NukiError("lecture du journal", 200, "réponse inattendue");
   return data as NukiLogEntry[];
+}
+
+/**
+ * Taille de page de `GET /smartlock/{id}/log` : **50, quel que soit `limit`** (mesuré sur une vraie
+ * serrure le 2026-11-07 avec `limit=50`, `100` et `200` → 50 lignes). Un plafond supposé à 100
+ * ferait lire la première page comme la dernière et rendrait un journal tronqué sans erreur.
+ */
+export const LOG_PAGE_MAX = 50;
+
+/**
+ * Tout le journal depuis `since`, de la plus récente à la plus ancienne ligne.
+ *
+ * L'API plafonne une page à 50 lignes (`LOG_PAGE_MAX`) : on demande `fromDate=since`, puis, tant qu'une page
+ * revient pleine, la suite plus ancienne avec `id=<dernier id lu>`. Une lecture **incomplète**
+ * lève une `NukiError` plutôt que de rendre un journal tronqué : un journal tronqué ferait
+ * conclure à tort qu'un voyageur n'est pas entré. L'appelant traite l'erreur en « contrôle
+ * impossible ».
+ */
+export async function listLogSince(
+  cfg: NukiConfig,
+  since: Date,
+  options: { pageSize?: number; maxPages?: number } = {},
+): Promise<NukiLogEntry[]> {
+  const pageSize = Math.min(Math.max(1, options.pageSize ?? LOG_PAGE_MAX), LOG_PAGE_MAX);
+  const maxPages = Math.max(1, options.maxPages ?? 10);
+  const sinceMs = since.getTime();
+  if (!Number.isFinite(sinceMs)) throw new NukiError("lecture du journal", 0, "date de début invalide");
+  const fromDate = encodeURIComponent(since.toISOString());
+  const seen = new Set<string>();
+  const out: NukiLogEntry[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < maxPages; page++) {
+    const path =
+      `/smartlock/${cfg.smartlockId}/log?fromDate=${fromDate}&limit=${pageSize}` +
+      (cursor !== undefined ? `&id=${encodeURIComponent(cursor)}` : "");
+    const data = await call(cfg, "lecture du journal", "GET", path);
+    if (!Array.isArray(data)) throw new NukiError("lecture du journal", 200, "réponse inattendue");
+    let added = 0;
+    let reachedSince = false;
+    for (const entry of data as NukiLogEntry[]) {
+      const t = Date.parse(entry.date);
+      if (Number.isFinite(t) && t < sinceMs) {
+        reachedSince = true;
+        continue;
+      }
+      if (entry.id !== undefined) {
+        if (seen.has(entry.id)) continue;
+        seen.add(entry.id);
+      }
+      out.push(entry);
+      added++;
+    }
+    if (data.length < pageSize || reachedSince) return out;
+    const last = (data as NukiLogEntry[])[data.length - 1];
+    if (added === 0 || last?.id === undefined) {
+      throw new NukiError("lecture du journal", 200, "pagination impossible, journal incomplet");
+    }
+    cursor = last.id;
+  }
+  throw new NukiError("lecture du journal", 200, `plus de ${maxPages} pages, journal incomplet`);
 }
 
 /** Supprime une autorisation de la serrure. */
