@@ -1,0 +1,5 @@
+{
+  "//": "Même mécanique que tsconfig.check.json (compilation CommonJS puis exécution par Node), pour la vérification des codes d'accès.",
+  "extends": "./tsconfig.check.json",
+  "files": ["scripts/verifier-codes-acces.ts"]
+}

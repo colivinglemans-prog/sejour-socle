@@ -87,6 +87,7 @@ Décisions prises une fois, à ne pas rediscuter à chaque lot.
 | Unité de mesure des stats | **La nuitée-logement**, seul dénominateur des deux pages. `unitsTotal` est une donnée injectée (1 pour Albiez, 9 pour Barbusse), `Booking.units` le poids d'une ligne. Le triplet `SplitMetric {global, house, room}` est refusé : la justesse du passé à la chambre vient du dénominateur, pas de trois nombres par carte. | 2026-09-12 |
 | Accueil du dashboard | **Le calendrier**, sur les deux sites. `/dashboard` redirige vers `/dashboard/calendar` (Barbusse) ou `/dashboard/calendrier` (Albiez) ; les statistiques ont leur propre chemin. Une **redirection**, jamais le calendrier rendu sur `/dashboard` : `allowedPaths` se lit par préfixe, et `/dashboard` dans cette liste ouvrirait tout ce qui le prolonge. | 2026-09-22 |
 | Où tombe l'argent | **Une seule fonction décide** : `spreadRevenue` pour l'imputation, `availableUnitNights` pour le dénominateur. Aucune page ne recalcule. Le RevPAR est **défini comme un quotient** ; son égalité avec « prix moyen × occupation » est une conséquence arithmétique, plus une seconde formule qui peut diverger. | 2026-09-12 |
+| Exception aux règles 6 et « n'entre jamais » : serrure Nuki | `lib/nuki.ts` et `lib/access-codes.ts` montent avec **un seul consommateur** (Barbusse), par décision de l'utilisateur : un prochain logement pourrait avoir une Nuki. Albiez n'est pas tenu de s'en servir (boîte à clés mécanique, code fixe). L'exception couvre ce client d'appareil **et lui seul** : `heatzy.ts` / `cozytouch.ts` restent dehors, et la tâche planifiée qui synchronise reste chez le site. Motif et portée dans la section v3.8.0. | 2026-11-07 |
 
 ## Protocole de test
 
@@ -103,7 +104,7 @@ panne qu'il compense.
 ## Ce qui n'entre jamais
 
 Contenu d'articles de blog, dictionnaires i18n, `public/`, données propres à un bien, photos.
-`heatzy.ts` / `cozytouch.ts` et les crons (Barbusse). `seasons.ts` et sa descendance, `AWARDS`,
+`heatzy.ts` / `cozytouch.ts` et les crons (Barbusse) — seule exception, la serrure Nuki (v3.8.0). `seasons.ts` et sa descendance, `AWARDS`,
 `property.ts`, `legal.ts` (Albiez). Ce sont les **valeurs**, pas les mécanismes.
 
 ## Les agents
@@ -1074,6 +1075,43 @@ sous les fonds de saison. Validé à l'écran par l'utilisateur sur les deux sit
 ligne **Total** (somme des deux, recalculée à partir de la ligne survolée, ce n'est pas une série
 du graphe), puis le `RevPAR`. Demandé par l'utilisateur pour ne plus additionner de tête.
 Aucun export ni type public touché : correctif.
+
+### v3.8.0 — codes d'accès d'une serrure Nuki
+
+| Chemin | Contenu |
+|---|---|
+| `lib/nuki.ts` | Client Nuki Web limité aux codes du clavier et au journal : `listAuths`, `createKeypadCode`, `updateKeypadCode`, `deleteAuth`, `getLockHealth`, `listLog`, `redact`, `NukiError`. Jeton et `smartlockId` injectés. |
+| `lib/access-codes.ts` | Planificateur **pur** : séjours + codes de la serrure → actions ordonnées (`delete`, `assign-pin`, `create`/`update`) et alertes sans PIN ni prénom. `pinFromPhone`, `generateKeypadPin`, `keypadArrivals`. |
+| `lib/time.ts` | `parisInstant(date, heure)` : l'instant UTC d'une heure murale de Paris, juste aux changements d'heure. |
+| `scripts/verifier-codes-acces.ts` | 53 vérifications, `npm run verifier:codes`, identiques sous `TZ=UTC`. |
+
+**Pourquoi ici malgré la règle 6.** Le connecteur payant Beds24 → Nuki ne poussait plus les
+codes depuis six mois (la serrure de remplacement n'avait pas Nuki Web activé). L'utilisateur
+reprend la main et a tranché le 2026-11-07 : sujet socle, parce qu'un prochain logement pourrait
+avoir une Nuki. le-douanier avait refusé faute d'exception écrite ; la voici. le-dahu : Albiez
+reste sur son tag, une abstraction « code d'accès » commune serait artificielle pour une boîte
+à clés. chef-de-stand : module validé, mise en service conditionnée au branchement (lecture du
+live seul, statuts, passage à blanc, alertes dédoublonnées).
+
+**Sans état.** Le nom du code porte le numéro de réservation (`90000010: Lucie`, format du
+connecteur, 20 caractères au plus) : c'est la clé de jointure, rien n'est stocké ailleurs.
+Codes `#…` jamais touchés ; code manuel repris seulement s'il a été visiblement saisi pour le
+séjour (prénom dans le nom, ou plage datée). Seuls les séjours `confirmed` reçoivent un code.
+
+**Quatre comportements de l'API, mesurés sur la serrure réelle** (détail dans l'en-tête de
+`nuki.ts`) : écritures asynchrones (5 à 10 s) ; une mise à jour **efface les champs non
+renvoyés** — un renommage seul a rendu un code daté permanent ; PIN unique par serrure (409) ;
+**le message du 409 contient le PIN en clair**, d'où `redact` sur toute erreur.
+
+**Le PIN.** Fourni par le PMS, ou généré si `random` est passé au planificateur : 6 derniers
+chiffres du téléphone du voyageur (ou une autre fenêtre des 8 derniers) s'ils respectent les
+règles du clavier (1 à 9, pas « 12 » en tête) et sont libres, sinon au hasard. Il est écrit
+dans le PMS (`assign-pin`) **avant** d'être posé sur la serrure : un code qui ouvre mais que
+le voyageur ne reçoit pas est le pire des cas.
+
+**L'arrivée.** `keypadArrivals` lit dans le journal la première ouverture réussie au clavier
+par le code d'une réservation (`trigger 255`, `state 0`). Elle remplace l'`infoItem` `CHECKIN`
+que déposait le connecteur.
 
 ### Comment une application s'y branche
 
