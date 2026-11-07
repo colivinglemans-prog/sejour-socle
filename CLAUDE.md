@@ -174,6 +174,7 @@ deux validations.
 | — | Surveillance — moteur `testing/deploy`, workflow `deploy-checks.yml`, `alert-state`, `heartbeat` | `tonton-tuyau`, `champollion`, `poisson-babel`, `cerbere` | `v3.9.0` |
 | — | Arrivées — santé Nuki, `listLogSince`, `missedArrivals`, `arrival-readiness` (exception règle 6) | `chef-de-stand` | `v3.10.0` |
 | — | Contrôles — `excludedPaths` comparé par segments entiers (`pathHasFragment`) | `chef-de-stand` | `v3.10.1` |
+| — | Contrôles — `llms.policies` exige l'unité (« 30 jours », « J-30 », « 50 % », « 48 h ») : un nombre nu donnait de faux verts | `le-dahu` | `v3.10.2` |
 | — | Veille des dates d'événements (`lib/events-watch.ts`) | — | `v0.7.0` |
 
 Plan détaillé : `C:\Users\alexa\.claude\plans\cheerful-toasting-rivest.md`.

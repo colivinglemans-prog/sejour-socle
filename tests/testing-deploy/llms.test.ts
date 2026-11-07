@@ -137,3 +137,18 @@ describe("llms.size", () => {
     expect(r.metrics?.bytes).toBeGreaterThan(20 * 1024);
   });
 });
+
+describe("hasQuantity — un nombre avec son unité", () => {
+  it("refuse un nombre nu trouvé par hasard, accepte l'unité", async () => {
+    const { hasQuantity } = await import("../../testing/deploy/checks/llms");
+    const hasard = "Fête du 14 juillet, navette à 7 h, piste à 50 m.";
+    expect(hasQuantity(hasard, 14, "days")).toBe(false);
+    expect(hasQuantity(hasard, 50, "percent")).toBe(false);
+    expect(hasQuantity("Remboursement à 100 % jusqu'à 30 jours avant", 30, "days")).toBe(true);
+    expect(hasQuantity("Remboursement à 100 % jusqu'à 30 jours avant", 100, "percent")).toBe(true);
+    expect(hasQuantity("full refund until D-30", 30, "days")).toBe(true);
+    expect(hasQuantity("annulation gratuite 48 h après la réservation", 48, "hours")).toBe(true);
+    expect(hasQuantity("50\u00a0% du montant", 50, "percent")).toBe(true);
+    expect(hasQuantity("300 jours", 30, "days")).toBe(false);
+  });
+});

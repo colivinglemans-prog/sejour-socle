@@ -48,8 +48,22 @@ async function requireLlms(ctx: CheckContext): Promise<string | CheckOutcome> {
 }
 
 /** Le nombre figure-t-il comme nombre entier, et non comme morceau d'un autre ? */
-function hasNumber(text: string, n: number): boolean {
-  return new RegExp(`(^|[^\\d])${n}([^\\d]|$)`).test(text);
+type Unit = "days" | "percent" | "hours";
+
+/**
+ * Le nombre `n` **avec son unité** : « 30 jours », « 30 days », « J-30 », « 50 % », « 48 h ».
+ * Un nombre nu ne prouve rien — chez Albiez, « 14 », « 7 » et « 50 » se trouvaient par hasard
+ * (14 juillet, 7 h, 50 m) dans un llms.txt qui ne parlait pas d'annulation : faux vert.
+ */
+const UNIT_PATTERNS: Record<Unit, (n: number) => RegExp> = {
+  days: (n) =>
+    new RegExp(`(?:(?:^|[^\\d])${n}\\s*(?:jours?|days?|giorni|tage?n?|d[ií]as)\\b|\\b[jJdD]\\s*[-−–]\\s*${n}(?!\\d))`, "i"),
+  percent: (n) => new RegExp(`(?:^|[^\\d])${n}\\s*%`),
+  hours: (n) => new RegExp(`(?:^|[^\\d])${n}\\s*(?:h\\b|heures?|hours?|ore|stunden|horas)`, "i"),
+};
+
+export function hasQuantity(text: string, n: number, unit: Unit): boolean {
+  return UNIT_PATTERNS[unit](n).test(text.replace(/[  ]/g, " "));
 }
 
 async function checkServed(ctx: CheckContext): Promise<CheckOutcome> {
@@ -129,22 +143,22 @@ async function checkPolicies(ctx: CheckContext): Promise<CheckOutcome> {
   if (typeof text !== "string") return text;
 
   // Un 0 (palier sans remboursement) se lit partout et ne prouve rien : il n'est pas cherché.
-  const expected: [string, number][] = [];
+  const expected: [string, number, Unit][] = [];
   cancellation?.tiers.forEach((t, i) => {
-    expected.push([`annulation palier ${i + 1} (jours)`, t.minDaysBefore]);
-    expected.push([`annulation palier ${i + 1} (%)`, t.refundPct]);
+    expected.push([`annulation palier ${i + 1} (jours)`, t.minDaysBefore, "days"]);
+    expected.push([`annulation palier ${i + 1} (%)`, t.refundPct, "percent"]);
   });
   if (cancellation?.gracePeriod) {
     const g = cancellation.gracePeriod;
-    expected.push(["délai de grâce (heures)", g.hoursAfterBooking]);
-    expected.push(["délai de grâce (jours avant l'arrivée)", g.minDaysBefore]);
-    expected.push(["délai de grâce (%)", g.refundPct]);
+    expected.push(["délai de grâce (heures)", g.hoursAfterBooking, "hours"]);
+    expected.push(["délai de grâce (jours avant l'arrivée)", g.minDaysBefore, "days"]);
+    expected.push(["délai de grâce (%)", g.refundPct, "percent"]);
   }
-  if (payment) expected.push(["paiement direct (%)", payment.direct.upfrontPct]);
-  if (payment?.business) expected.push(["acompte entreprise (%)", payment.business.depositPct]);
+  if (payment) expected.push(["paiement direct (%)", payment.direct.upfrontPct, "percent"]);
+  if (payment?.business) expected.push(["acompte entreprise (%)", payment.business.depositPct, "percent"]);
 
   const checked = expected.filter(([, n]) => n !== 0);
-  const missing = checked.filter(([, n]) => !hasNumber(text, n));
+  const missing = checked.filter(([, n, unit]) => !hasQuantity(text, n, unit));
   const metrics = { numbers: checked.length, missing: missing.length };
   return missing.length
     ? { status: "fail", metrics, detail: `Nombres de politique absents de llms.txt : ${missing.map(([l]) => l).join(", ")}` }
