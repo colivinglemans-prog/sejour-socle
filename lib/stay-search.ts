@@ -41,7 +41,16 @@ export interface StaySearch {
   limit?: number;
   /** Motif déclaré, transmis au refus propre au site. */
   purpose?: string;
+  /**
+   * Durée adaptée à chaque arrivée : au moins le séjour minimum imposé ce jour-là, et prolongée
+   * jusqu'au premier jour de départ ouvert (rotation du samedi). Sert aux alternatives : à Noël,
+   * une demande de 2 nuits doit pouvoir rebondir sur « 3 nuits du 21 au 24 ».
+   */
+  adaptNights?: boolean;
 }
+
+/** Prolongation au plus, au-delà du séjour minimum, pour atteindre un jour de départ ouvert. */
+const MAX_EXTRA_NIGHTS = 7;
 
 export type PricedStay = Extract<StayQuote, { ok: true }>;
 
@@ -103,7 +112,8 @@ export async function findStays(
   let avail: AvailabilityResponse;
   try {
     // Dès la veille, pour le décalage d'un jour des `minStay` Beds24 (voir `quoteStay`).
-    avail = await deps.availability(addDays(from, -1), addDays(q.to, q.nights));
+    const reach = q.nights + (q.adaptNights ? 2 * MAX_EXTRA_NIGHTS : 0);
+    avail = await deps.availability(addDays(from, -1), addDays(q.to, reach));
   } catch {
     return {
       stays: [],
@@ -113,17 +123,33 @@ export async function findStays(
   }
   const ctx = selectionContext(avail, deps.today, cfg.defaultMinStay);
 
-  const arrivals: string[] = [];
+  /** La durée retenue pour une arrivée, ou `null` si aucune n'est réservable. */
+  const nightsFor = (d: string): number | null => {
+    if (!q.adaptNights) return checkStayRules(ctx, d, addDays(d, q.nights)) ? null : q.nights;
+    const first = Math.max(q.nights, ctx.minStayOf(d));
+    for (let n = first; n <= first + MAX_EXTRA_NIGHTS && n <= 60; n++) {
+      const broken = checkStayRules(ctx, d, addDays(d, n));
+      if (!broken) return n;
+      // Seul un départ fermé se règle en restant plus longtemps.
+      if (broken.ok === false && broken.reason !== "no-check-out") return null;
+    }
+    return null;
+  };
+
+  const arrivals: { day: string; nights: number }[] = [];
   for (let d = from; d <= q.to; d = addDays(d, 1)) {
     if (daysBetween(deps.today, d) > cfg.maxHorizonDays) break;
     if (q.arrivalWeekdays && !q.arrivalWeekdays.includes(parseDate(d).getDay())) continue;
-    const req: StayRequest = { ...probe, checkIn: d, checkOut: addDays(d, q.nights) };
-    if (cfg.refuse?.(req)) continue;
-    if (!checkStayRules(ctx, req.checkIn, req.checkOut)) arrivals.push(d);
+    const nights = nightsFor(d);
+    if (nights === null) continue;
+    if (cfg.refuse?.({ ...probe, checkIn: d, checkOut: addDays(d, nights) })) continue;
+    arrivals.push({ day: d, nights });
   }
   if (q.near) {
     const near = q.near;
-    arrivals.sort((a, b) => Math.abs(daysBetween(near, a)) - Math.abs(daysBetween(near, b)) || (a < b ? -1 : 1));
+    arrivals.sort(
+      (a, b) => Math.abs(daysBetween(near, a.day)) - Math.abs(daysBetween(near, b.day)) || (a.day < b.day ? -1 : 1),
+    );
   }
 
   const stays: PricedStay[] = [];
@@ -132,10 +158,10 @@ export async function findStays(
   // (une règle qui diffère de la nôtre), on s'arrête au lieu de l'interroger 120 fois.
   const maxAttempts = limit * 2;
   let attempts = 0;
-  for (const d of arrivals) {
+  for (const { day, nights } of arrivals) {
     if (stays.length >= limit || attempts >= maxAttempts) break;
     attempts++;
-    const quote = await priceStay(cfg, deps, { ...probe, checkIn: d, checkOut: addDays(d, q.nights) });
+    const quote = await priceStay(cfg, deps, { ...probe, checkIn: day, checkOut: addDays(day, nights) });
     if (quote.ok) stays.push(quote);
     else {
       failure = quote;
@@ -149,8 +175,10 @@ export async function findStays(
 }
 
 /**
- * Les séjours les plus proches d'une demande refusée : même durée, mêmes voyageurs, arrivée à
- * trois semaines près. Rien n'est proposé pour un refus qui ne tient pas aux dates.
+ * Les séjours les plus proches d'une demande refusée : mêmes voyageurs, arrivée à trois
+ * semaines près, durée au moins égale à la demande et adaptée aux règles de chaque arrivée
+ * (séjour minimum, jour de départ ouvert). Rien n'est proposé pour un refus qui ne tient pas
+ * aux dates.
  */
 export async function nearbyStays(
   cfg: StayQuoteConfig,
@@ -173,6 +201,8 @@ export async function nearbyStays(
     extras: req.extras,
     near: req.checkIn,
     limit,
+    purpose: req.purpose,
+    adaptNights: true,
   });
   return stays;
 }

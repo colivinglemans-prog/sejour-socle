@@ -12,6 +12,8 @@ export interface QuoteSummaryLabels {
   nights: (n: number) => string;
   guests: (adults: number, children: number) => string;
   total: string;
+  /** Ligne du détail : le séjour tel que Beds24 le facture (nuits, frais, taxe). */
+  stay: string;
   perPersonPerNight: string;
   /** « Taxe de séjour, ménage, draps compris » — propre à chaque site. */
   included: string;
@@ -37,6 +39,11 @@ export interface QuoteSummaryProps {
   conditionsUrl: string;
   /** Notices de dernière minute (appeler l'hôte), à afficher avant le bouton. */
   notices?: string[];
+  /**
+   * Rappel court de la politique d'annulation, tiré de la configuration du site
+   * (`cancellationText` de `quote-labels`) — jamais écrit dans le composant.
+   */
+  cancellation?: string;
   /** Encart du site au-dessus du devis (photo, nom du logement). */
   header?: ReactNode;
 }
@@ -47,12 +54,17 @@ function fmt(lang: string) {
   const tag = LOCALE_TAG[lang] ?? "fr-FR";
   return {
     money: (n: number) => new Intl.NumberFormat(tag, { style: "currency", currency: "EUR" }).format(n),
+    /** Un repère arrondi à l'euro ne s'affiche pas avec des centimes : ce serait une fausse précision. */
+    euros: (n: number) =>
+      new Intl.NumberFormat(tag, { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n),
     day: (d: string) =>
       new Intl.DateTimeFormat(tag, { weekday: "short", day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }).format(
         new Date(`${d}T00:00:00Z`),
       ),
     instant: (s: number) =>
-      new Intl.DateTimeFormat(tag, { day: "numeric", month: "long", timeZone: "Europe/Paris" }).format(new Date(s * 1000)),
+      new Intl.DateTimeFormat(tag, { day: "numeric", month: "long", year: "numeric", timeZone: "Europe/Paris" }).format(
+        new Date(s * 1000),
+      ),
   };
 }
 
@@ -87,7 +99,16 @@ function Alternative({ a, lang, labels, calendarUrl }: { a: PricedStay; lang: st
   );
 }
 
-export default function QuoteSummary({ state, lang, labels, calendarUrl, conditionsUrl, notices = [], header }: QuoteSummaryProps) {
+export default function QuoteSummary({
+  state,
+  lang,
+  labels,
+  calendarUrl,
+  conditionsUrl,
+  notices = [],
+  cancellation,
+  header,
+}: QuoteSummaryProps) {
   const f = fmt(lang);
   if (state.status === "invalid") {
     return (
@@ -144,11 +165,27 @@ export default function QuoteSummary({ state, lang, labels, calendarUrl, conditi
               )}
             </p>
             <p className="mt-1 text-secondary">
-              {f.money(state.current?.perPersonPerNight ?? Math.round(q.total / (q.adults + q.children) / Math.max(1, Math.round((Date.parse(q.checkOut) - Date.parse(q.checkIn)) / 86_400_000))))}{" "}
+              {f.euros(state.current?.perPersonPerNight ?? Math.round(q.total / (q.adults + q.children) / Math.max(1, Math.round((Date.parse(q.checkOut) - Date.parse(q.checkIn)) / 86_400_000))))}{" "}
               {labels.perPersonPerNight}
             </p>
+            {/* Le détail n'existe que revérifié : un supplément choisi (le linge) s'y lit en clair. */}
+            {state.current && state.current.extras.length > 0 && (
+              <dl className="mt-4 space-y-1 text-sm">
+                <div className="flex justify-between gap-4">
+                  <dt>{labels.stay}</dt>
+                  <dd>{f.money(state.current.stayTotal)}</dd>
+                </div>
+                {state.current.extras.map((e) => (
+                  <div key={e.id} className="flex justify-between gap-4">
+                    <dt>{e.label}</dt>
+                    <dd>{f.money(e.amount)}</dd>
+                  </div>
+                ))}
+              </dl>
+            )}
             <p className="mt-3 text-sm">{labels.included}</p>
           </div>
+          {cancellation && <p className="text-sm">{cancellation}</p>}
           {state.status === "price-changed" && <p className="text-sm">{labels.priceChanged}</p>}
           {state.status === "unchecked" && <p className="text-sm">{labels.unchecked}</p>}
           {[...new Set([...notices, ...(state.current?.notices ?? [])])].map((n) => (

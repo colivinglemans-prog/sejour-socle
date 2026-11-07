@@ -19,7 +19,9 @@ import { RoomPriceShapeError, parseRoomPrice, type RoomPrice, type RoomPriceRequ
 import { quoteStay, type StayQuote, type StayQuoteConfig, type StayQuoteDeps } from "../lib/stay-quote";
 import { findStays, nearbyStays } from "../lib/stay-search";
 import type { StayAgentConfig, StayAgentDeps } from "../lib/stay-agent";
-import { createAgentRoute, runTool } from "../lib/stay-agent-http";
+import { createAgentRoute, openApi, runTool } from "../lib/stay-agent-http";
+import { propertyInfo } from "../lib/stay-agent";
+import { cancellationText } from "../lib/quote-labels";
 import { loadQuotePage } from "../lib/quote-page";
 import { monthlyAvailability } from "../lib/availability";
 
@@ -224,8 +226,8 @@ async function main() {
   const qaKids = await quoteStay(ALBIEZ, deps(), { checkIn: "2027-04-05", checkOut: "2027-04-08", adults: 2, children: 2, ...fr });
   check("2 adultes + 2 enfants : même total Beds24 (taxe sur-collectée connue)", qaKids.ok && qaKids.total === 272.91, show(qaKids));
   const qaWarn = await quoteStay(ALBIEZ, deps(), { checkIn: "2027-01-12", checkOut: "2027-01-14", adults: 4, children: 0, ...fr });
-  check("refus Beds24 relayé tel quel, durée minimale reconnue",
-    !qaWarn.ok && qaWarn.reason === "min-stay" && qaWarn.minStay === 3 && /minimum 3/.test(qaWarn.detail), show(qaWarn));
+  check("refus Beds24 reformulé, durée minimale reconnue",
+    !qaWarn.ok && qaWarn.reason === "min-stay" && qaWarn.minStay === 3 && qaWarn.detail === "Séjour minimum de 3 nuits pour ces dates.", show(qaWarn));
   const qaPro = await quoteStay(ALBIEZ, deps(), {
     checkIn: "2027-02-13", checkOut: "2027-02-20", adults: 3, children: 0, purpose: "séjour professionnel", ...fr,
   });
@@ -274,6 +276,43 @@ async function main() {
   });
   check("Beds24 refuse tout : au plus 10 appels de prix", refusing.calls.length === 10 && burst.stays.length === 0,
     `${refusing.calls.length} appels`);
+
+  // Noël (test voyageur IA-1) : 2 nuits demandées sur des dates prises, 3 nuits minimum du 21 au
+  // 31 décembre. Les alternatives doivent oser 3 nuits (21→24, 27→30), pas seulement 2.
+  const xmasMin: Record<string, number> = {};
+  for (let d = "2026-12-21"; d <= "2026-12-31"; d = addDays(d, 1)) xmasMin[d] = 3;
+  const xmas = await nearbyStays(BARBUSSE, deps({
+    availability: fakeAvailability({ booked: ["2026-12-24", "2026-12-25", "2026-12-26", "2026-12-31"], minStay: xmasMin }),
+  }), { checkIn: "2026-12-24", checkOut: "2026-12-26", adults: 14, children: 4, ...fr },
+  { ok: false, reason: "unavailable", detail: "" });
+  const xs = xmas.map((s) => `${s.checkIn}+${s.nights}`).join(", ");
+  check("Noël : alternatives au séjour minimum imposé (21→24 et 27→30, 3 nuits)",
+    xmas.some((s) => s.checkIn === "2026-12-21" && s.nights === 3) && xmas.some((s) => s.checkIn === "2026-12-27" && s.nights === 3), xs);
+
+  // Albiez, janvier (test voyageur IA-1) : arrivée un lundi, location du samedi au samedi à partir
+  // du 17. Les alternatives doivent être des semaines samedi → samedi, pas une liste vide.
+  const satOnly = async (a: string, b: string): Promise<AvailabilityResponse> => {
+    const base = await fakeAvailability()(a, b);
+    const closed: string[] = [];
+    const minStay: Record<string, number> = {};
+    for (let d = a; d <= b; d = addDays(d, 1)) {
+      if (d >= "2027-01-16") minStay[d] = 6;
+      if (d >= "2027-01-17" && new Date(`${d}T12:00:00Z`).getUTCDay() !== 6) closed.push(d);
+    }
+    return { ...base, minStay, sansArrivee: closed, sansDepart: closed };
+  };
+  const albiezPrice = async (r: RoomPriceRequest): Promise<RoomPrice> => {
+    const nightly: Record<string, number> = {};
+    for (let d = r.checkIn; d < r.checkOut; d = addDays(d, 1)) nightly[d] = 80;
+    const n = Object.keys(nightly).length;
+    return { total: round2(80 * n * 0.93 * 1.055 + 60), nightly, warn: "" };
+  };
+  const monday = await nearbyStays(ALBIEZ, deps({ availability: satOnly, price: albiezPrice }),
+    { checkIn: "2027-01-18", checkOut: "2027-01-20", adults: 4, children: 0, ...fr },
+    { ok: false, reason: "no-check-in", detail: "" });
+  const ms = monday.map((s) => `${s.checkIn}+${s.nights}`).join(", ");
+  check("Albiez, arrivée un lundi fermé : la semaine samedi → samedi la plus proche est proposée",
+    monday.length === 3 && monday.some((s) => s.checkIn === "2027-01-16" && s.checkOut === "2027-01-23"), ms);
 
   const noAlt = await nearbyStays(BARBUSSE, deps(), { checkIn: "2027-03-12", checkOut: "2027-03-14", adults: 30, children: 0, ...fr },
     { ok: false, reason: "capacity", detail: "" });
@@ -433,6 +472,20 @@ async function main() {
   const api = (await runTool("openapi", AGENT, agentDeps(), {})).body as Record<string, any>;
   check("openapi : 4 opérations, serveur du site", Object.keys(api.paths).length === 4 && api.servers[0].url === "https://www.exemple.fr/api/agent");
   check("outil inconnu : 404", (await runTool("book", AGENT, agentDeps(), {})).status === 404);
+
+  // ─── Textes tirés de la configuration (v3.11.1) ───────────────────────────────────────
+  console.log("\n— Textes de la configuration");
+  const ferme = cancellationText(AGENT.cancellation, "fr");
+  check("annulation Ferme en une phrase, nombres de la config",
+    ferme === "Annulation : 100 % remboursés jusqu'à 30 jours avant l'arrivée ; 50 % remboursés jusqu'à 7 jours avant l'arrivée ; rien à moins de 7 jours ; 100 % dans les 48 h suivant la réservation si l'arrivée est à 14 jours ou plus.", ferme);
+  const limitedEn = cancellationText({ name: "limitee", tiers: [{ minDaysBefore: 14, refundPct: 100 }, { minDaysBefore: 7, refundPct: 50 }, { minDaysBefore: 0, refundPct: 0 }] }, "en");
+  check("annulation Limitée en anglais, sans délai de grâce",
+    limitedEn === "Cancellation: 100% refunded up to 14 days before arrival; 50% refunded up to 7 days before arrival; nothing within 7 days.", limitedEn);
+  const withKids = openApi({ ...AGENT, childrenDescription: "mineurs, de 0 à 17 ans" }) as Record<string, any>;
+  const kidsParam = withKids.paths["/quote"].get.parameters.find((x: { name: string }) => x.name === "children");
+  check("OpenAPI : la description des enfants vient du site", kidsParam.schema.description === "Enfants : mineurs, de 0 à 17 ans");
+  check("info : la description des enfants est servie",
+    (propertyInfo({ ...AGENT, childrenDescription: "mineurs" }, {}).body.booking as Record<string, unknown>).children === "mineurs");
 
   // ─── Page de devis ────────────────────────────────────────────────────────────────────
   console.log("\n— Page de devis");

@@ -52,6 +52,11 @@ export interface StayAgentConfig {
   calendarPath: (lang: string) => string;
   /** Réservation instantanée (sans validation de l'hôte) sur la page de paiement. */
   instantBooking: boolean;
+  /**
+   * Ce que le site compte comme « enfant » (`children`), dit tel quel aux IA : âge, règles,
+   * effet sur le prix. Sans lui, un parent d'enfants de 5 ans ne sait pas quoi déclarer.
+   */
+  childrenDescription?: string;
 }
 
 export interface StayAgentDeps extends StayQuoteDeps {
@@ -152,6 +157,7 @@ export function propertyInfo(cfg: StayAgentConfig, p: ToolParams): ToolResult {
         instantBooking: cfg.instantBooking,
         currency: "EUR",
         maxGuests: cfg.quote.capacity.maxTotal,
+        ...(cfg.childrenDescription ? { children: cfg.childrenDescription } : {}),
         defaultMinStayNights: cfg.quote.defaultMinStay,
         pricesOpenDaysAhead: cfg.quote.maxHorizonDays,
         optionalExtras: (cfg.quote.optionalExtras ?? []).map((e) => ({

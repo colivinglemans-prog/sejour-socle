@@ -168,6 +168,19 @@ export function isDay(s: unknown): s is string {
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
+const MIN_STAY_TEXT: Record<string, (n: number) => string> = {
+  fr: (n) => `Séjour minimum de ${n} nuits pour ces dates.`,
+  en: (n) => `Minimum stay of ${n} nights for these dates.`,
+  de: (n) => `Mindestaufenthalt von ${n} Nächten für diese Daten.`,
+  es: (n) => `Estancia mínima de ${n} noches para estas fechas.`,
+  it: (n) => `Soggiorno minimo di ${n} notti per queste date.`,
+};
+
+/** Le séjour minimum, en phrase propre dans la langue de la demande (le `warn` Beds24 est brut). */
+export function minStayText(n: number, lang: string): string {
+  return (MIN_STAY_TEXT[lang] ?? MIN_STAY_TEXT.fr)(n);
+}
+
 function fail(reason: QuoteFailureReason, detail: string, minStay?: number): StayQuote {
   return minStay === undefined ? { ok: false, reason, detail } : { ok: false, reason, detail, minStay };
 }
@@ -303,7 +316,7 @@ export async function priceStay(
     const min = /minimum\D{0,20}(\d+)/i.exec(price.warn);
     // Texte Beds24 relayé à une IA et affiché : sans balise, borné.
     const warn = price.warn.replace(/<[^>]*>/g, "").slice(0, 200);
-    return min ? fail("min-stay", warn, Number(min[1])) : fail("unavailable", warn);
+    return min ? fail("min-stay", minStayText(Number(min[1]), req.lang), Number(min[1])) : fail("unavailable", warn);
   }
   if (price.total <= 0) return fail("no-price", "Pas de tarif publié pour ces dates.");
 

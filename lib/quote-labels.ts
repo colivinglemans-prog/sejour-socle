@@ -3,6 +3,7 @@
  * la ligne « ce qui est compris » (`included`) reste au site, qui la passe en plus.
  */
 import type { QuoteSummaryLabels } from "../components/QuoteSummary";
+import type { CancellationPolicy } from "../config/policies";
 
 type Generic = Omit<QuoteSummaryLabels, "included">;
 
@@ -14,6 +15,7 @@ export const QUOTE_LABELS: Record<string, Generic> = {
     nights: (n) => plural(n, "nuit", "nuits"),
     guests: (a, c) => [plural(a, "adulte", "adultes"), c ? plural(c, "enfant", "enfants") : ""].filter(Boolean).join(", "),
     total: "Total à payer",
+    stay: "Séjour (nuits, ménage, taxe de séjour)",
     perPersonPerNight: "par personne et par nuit",
     book: "Réserver ces dates",
     validUntil: (d) => `Devis valable jusqu'au ${d} ; les dates ne sont pas bloquées tant que la réservation n'est pas payée`,
@@ -31,6 +33,7 @@ export const QUOTE_LABELS: Record<string, Generic> = {
     nights: (n) => plural(n, "night", "nights"),
     guests: (a, c) => [plural(a, "adult", "adults"), c ? plural(c, "child", "children") : ""].filter(Boolean).join(", "),
     total: "Total to pay",
+    stay: "Stay (nights, cleaning, tourist tax)",
     perPersonPerNight: "per person per night",
     book: "Book these dates",
     validUntil: (d) => `Quote valid until ${d}; dates are not held until the booking is paid`,
@@ -48,6 +51,7 @@ export const QUOTE_LABELS: Record<string, Generic> = {
     nights: (n) => plural(n, "Nacht", "Nächte"),
     guests: (a, c) => [plural(a, "Erwachsener", "Erwachsene"), c ? plural(c, "Kind", "Kinder") : ""].filter(Boolean).join(", "),
     total: "Gesamtbetrag",
+    stay: "Aufenthalt (Nächte, Reinigung, Kurtaxe)",
     perPersonPerNight: "pro Person und Nacht",
     book: "Diese Daten buchen",
     validUntil: (d) => `Angebot gültig bis ${d}; die Daten sind erst mit der bezahlten Buchung reserviert`,
@@ -65,6 +69,7 @@ export const QUOTE_LABELS: Record<string, Generic> = {
     nights: (n) => plural(n, "noche", "noches"),
     guests: (a, c) => [plural(a, "adulto", "adultos"), c ? plural(c, "niño", "niños") : ""].filter(Boolean).join(", "),
     total: "Total a pagar",
+    stay: "Estancia (noches, limpieza, tasa turística)",
     perPersonPerNight: "por persona y noche",
     book: "Reservar estas fechas",
     validUntil: (d) => `Presupuesto válido hasta el ${d}; las fechas no quedan bloqueadas hasta que se pague la reserva`,
@@ -82,6 +87,7 @@ export const QUOTE_LABELS: Record<string, Generic> = {
     nights: (n) => plural(n, "notte", "notti"),
     guests: (a, c) => [plural(a, "adulto", "adulti"), c ? plural(c, "bambino", "bambini") : ""].filter(Boolean).join(", "),
     total: "Totale da pagare",
+    stay: "Soggiorno (notti, pulizia, tassa di soggiorno)",
     perPersonPerNight: "a persona per notte",
     book: "Prenota queste date",
     validUntil: (d) => `Preventivo valido fino al ${d}; le date non sono bloccate finché la prenotazione non è pagata`,
@@ -99,4 +105,61 @@ export const QUOTE_LABELS: Record<string, Generic> = {
 /** Les textes d'une langue, complétés par la ligne propre au site. */
 export function quoteLabels(lang: string, included: string): QuoteSummaryLabels {
   return { ...(QUOTE_LABELS[lang] ?? QUOTE_LABELS.fr), included };
+}
+
+type Tier = CancellationPolicy["tiers"][number];
+
+interface CancelWords {
+  lead: string;
+  tier: (t: Tier) => string;
+  none: (d: number) => string;
+  grace: (h: number, d: number) => string;
+}
+
+const CANCEL: Record<string, CancelWords> = {
+  fr: {
+    lead: "Annulation :",
+    tier: (t) => `${t.refundPct} % remboursés jusqu'à ${t.minDaysBefore} jours avant l'arrivée`,
+    none: (d) => `rien à moins de ${d} jours`,
+    grace: (h, d) => `100 % dans les ${h} h suivant la réservation si l'arrivée est à ${d} jours ou plus`,
+  },
+  en: {
+    lead: "Cancellation:",
+    tier: (t) => `${t.refundPct}% refunded up to ${t.minDaysBefore} days before arrival`,
+    none: (d) => `nothing within ${d} days`,
+    grace: (h, d) => `100% within ${h} hours of booking if arrival is at least ${d} days away`,
+  },
+  de: {
+    lead: "Stornierung:",
+    tier: (t) => `${t.refundPct} % Erstattung bis ${t.minDaysBefore} Tage vor Anreise`,
+    none: (d) => `nichts innerhalb von ${d} Tagen`,
+    grace: (h, d) => `100 % innerhalb von ${h} Stunden nach der Buchung, wenn die Anreise mindestens ${d} Tage entfernt ist`,
+  },
+  es: {
+    lead: "Cancelación:",
+    tier: (t) => `${t.refundPct} % reembolsado hasta ${t.minDaysBefore} días antes de la llegada`,
+    none: (d) => `nada a menos de ${d} días`,
+    grace: (h, d) => `100 % en las ${h} h siguientes a la reserva si la llegada es dentro de ${d} días o más`,
+  },
+  it: {
+    lead: "Cancellazione:",
+    tier: (t) => `${t.refundPct}% rimborsato fino a ${t.minDaysBefore} giorni prima dell'arrivo`,
+    none: (d) => `nulla a meno di ${d} giorni`,
+    grace: (h, d) => `100% entro ${h} ore dalla prenotazione se l'arrivo è ad almeno ${d} giorni`,
+  },
+};
+
+/**
+ * La politique d'annulation en une phrase, **tirée de la configuration** du site (les constantes
+ * que contrôle aussi `llms.policies`) : « Annulation : 100 % remboursés jusqu'à 30 jours… ».
+ */
+export function cancellationText(policy: CancellationPolicy, lang: string): string {
+  const c = CANCEL[lang] ?? CANCEL.fr;
+  const paid = policy.tiers.filter((t) => t.refundPct > 0);
+  const last = paid[paid.length - 1];
+  const parts = paid.map(c.tier);
+  if (last && policy.tiers.some((t) => t.refundPct === 0)) parts.push(c.none(last.minDaysBefore));
+  if (policy.gracePeriod) parts.push(c.grace(policy.gracePeriod.hoursAfterBooking, policy.gracePeriod.minDaysBefore));
+  // Typographie française : espace avant le point-virgule ; pas dans les autres langues.
+  return `${c.lead} ${parts.join(lang === "fr" || !CANCEL[lang] ? " ; " : "; ")}.`;
 }

@@ -99,7 +99,7 @@ export function openApi(cfg: StayAgentConfig): Record<string, unknown> {
   ];
   const guests = [
     q("adults", int("Adultes (au moins 1)", { minimum: 1, maximum: cfg.quote.capacity.maxTotal }), true),
-    q("children", int("Enfants", { minimum: 0, default: 0 })),
+    q("children", int(cfg.childrenDescription ? `Enfants : ${cfg.childrenDescription}` : "Enfants", { minimum: 0, default: 0 })),
     ...(cfg.quote.optionalExtras?.length
       ? [q("extras", str(`Suppléments facultatifs, séparés par des virgules : ${cfg.quote.optionalExtras.map((e) => e.id).join(", ")}`))]
       : []),
