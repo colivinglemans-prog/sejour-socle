@@ -24,6 +24,7 @@ import { propertyInfo } from "../lib/stay-agent";
 import { cancellationText } from "../lib/quote-labels";
 import { loadQuotePage } from "../lib/quote-page";
 import { monthlyAvailability } from "../lib/availability";
+import { createMcpRoute } from "../lib/stay-agent-mcp";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail = ""): void {
@@ -548,6 +549,55 @@ async function main() {
   const qNote = await quoteStay(LINEN, deps(), { checkIn: "2027-04-05", checkOut: "2027-04-08", adults: 4, children: 0, extras: ["linge"], ...fr });
   check("supplément choisi : consigne pour la page de paiement dans les notices",
     qNote.ok && qNote.notices[0] === "Cochez le kit linge sur la page de paiement.", show(qNote));
+
+  // ─── Serveur MCP (même runTool que l'API REST) ──────────────────────────────────────────
+  console.log("\n— Serveur MCP");
+  const mcp = createMcpRoute(AGENT, () => agentDeps());
+  let rpcId = 0;
+  const rpc = async (method: string, params: Record<string, unknown> = {}) => {
+    const res = await mcp.POST(
+      new Request("https://www.exemple.fr/api/mcp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcId, method, params }),
+      }),
+    );
+    return { status: res.status, cors: res.headers.get("access-control-allow-origin"), json: (await res.json()) as any };
+  };
+  const init = await rpc("initialize", {
+    protocolVersion: "2025-06-18",
+    capabilities: {},
+    clientInfo: { name: "verifier", version: "1" },
+  });
+  check("MCP initialize : 200, CORS ouvert, outils annoncés",
+    init.status === 200 && init.cors === "*" && Boolean(init.json.result?.capabilities?.tools), JSON.stringify(init.json).slice(0, 160));
+  const list = await rpc("tools/list");
+  const names = ((list.json.result?.tools ?? []) as Array<{ name: string; inputSchema: { required?: string[] }; annotations?: { readOnlyHint?: boolean } }>);
+  const print = names.map((t) => `${t.name}(${(t.inputSchema.required ?? []).sort().join(",")})`).sort().join(" ");
+  check("MCP tools/list : empreinte des 4 outils",
+    print === "check_availability(from,to) find_stays(adults,from,nights,to) get_property_info() get_quote(adults,checkin,checkout)" &&
+      names.every((t) => t.annotations?.readOnlyHint === true), print);
+  const callQ = await rpc("tools/call", { name: "get_quote", arguments: { checkin: "2027-01-15", checkout: "2027-01-17", adults: 9, src: "claude" } });
+  const sq = callQ.json.result?.structuredContent as Record<string, unknown> | undefined;
+  check("MCP get_quote : même total que l'API REST, liens présents",
+    sq?.total === 1141.87 && typeof sq?.bookUrl === "string" && typeof sq?.quoteUrl === "string" && !callQ.json.result?.isError,
+    JSON.stringify(sq ?? callQ.json).slice(0, 160));
+  check("MCP get_quote : texte JSON identique aux données structurées",
+    JSON.stringify(JSON.parse(callQ.json.result?.content?.[0]?.text ?? "{}")) === JSON.stringify(sq));
+  const callBad = await rpc("tools/call", { name: "get_quote", arguments: { checkin: "2027-02-30", checkout: "2027-03-02", adults: 4 } });
+  check("MCP requête invalide : isError avec explication", callBad.json.result?.isError === true &&
+    String(callBad.json.result?.content?.[0]?.text ?? "").includes("invalid-request"));
+  const mcpTaken = createMcpRoute(AGENT, () => agentDeps({ availability: fakeAvailability({ booked: ["2027-03-12"] }) }));
+  const resTaken = await mcpTaken.POST(new Request("https://www.exemple.fr/api/mcp", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 99, method: "tools/call", params: { name: "get_quote", arguments: { checkin: "2027-03-12", checkout: "2027-03-14", adults: 9 } } }),
+  }));
+  const callTaken = { json: (await resTaken.json()) as any };
+  check("MCP dates prises : réponse (pas une erreur) avec alternatives",
+    !callTaken.json.result?.isError && (callTaken.json.result?.structuredContent?.alternatives?.length ?? 0) > 0);
+  const callFind = await rpc("tools/call", { name: "find_stays", arguments: { from: "2027-03-01", to: "2027-03-31", nights: 2, adults: 14, weekdays: "fri" } });
+  check("MCP find_stays : séjours chiffrés", (callFind.json.result?.structuredContent?.stays?.length ?? 0) > 0);
 
   const route = createAgentRoute(AGENT, () => agentDeps());
   const res = await route.GET(new Request("https://www.exemple.fr/api/agent/quote?checkIn=2027-01-15&checkOut=2027-01-17&adults=9"), {

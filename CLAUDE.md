@@ -1236,6 +1236,22 @@ disponibilité » (masqué), qu'un agent qui lit le HTML prend au pied de la let
 - `StayAgentConfig.childrenDescription` (facultatif) : ce que le site compte comme enfant, servi
   par `info` et la description OpenAPI de `children`.
 
+### v3.13.0 — serveur MCP (connecteur des assistants)
+
+| Chemin | Contenu |
+|---|---|
+| `lib/stay-agent-mcp.ts` | `createMcpRoute(cfg, depsFactory)` pour `app/api/mcp/route.ts` (`GET`, `POST`, `DELETE`, `OPTIONS`). Quatre outils — `get_property_info`, `check_availability`, `get_quote`, `find_stays` — qui appellent **`runTool`**, exactement comme l'API REST : aucune logique propre. Schémas d'entrée zod (entiers, dates, suppléments du site en `enum`), descriptions rédigées pour un modèle (relayer `notices` avant le lien, ne rien réserver), `readOnlyHint`. Résultat : JSON en `content` texte **et** `structuredContent` ; `isError` seulement pour une requête mal formée ou une panne — un refus de dates est une réponse, avec ses alternatives. |
+
+Transport : `WebStandardStreamableHTTPServerTransport` de `@modelcontextprotocol/sdk` 1.32.2, **sans
+état** (`sessionIdGenerator: undefined`, `enableJsonResponse: true`) — un serveur et un transport
+neufs par requête, aucun flux SSE, aucune session : ce qui convient à une fonction serverless.
+`mcp-handler` (Vercel) n'apporte rien de plus ici et exige le SDK v2 (`@modelcontextprotocol/server`).
+SDK et zod en `peerDependencies` **facultatives** : seul un site qui monte la route MCP les installe.
+Pas de « server card » : la spécification (SEP-2127) est encore un brouillon et son chemin de
+découverte n'est pas fixé — l'URL du connecteur est donnée dans `llms.txt`. Vérification :
+`npm run verifier`, section « Serveur MCP » (initialize, empreinte de `tools/list`, `tools/call`
+sur les fixtures, sans réseau).
+
 ### Comment une application s'y branche
 
 ```jsonc
