@@ -22,7 +22,8 @@
     "lint": "eslint",
     "verifier": "tsc -p tsconfig.check.json && node .verif/scripts/verifier-indicateurs.js",
     "protocole": "node scripts/protocole/run.mjs",
-    "verifier:codes": "tsc -p tsconfig.check-codes.json && node .verif/scripts/verifier-codes-acces.js"
+    "verifier:codes": "tsc -p tsconfig.check-codes.json && node .verif/scripts/verifier-codes-acces.js",
+    "test": "vitest run"
   },
   "peerDependencies": {
     "jose": "^6",
@@ -45,7 +46,8 @@
     "react-dom": "19.2.3",
     "recharts": "^3.10.1",
     "typescript": "^5",
-    "@react-pdf/renderer": "^4.5.1"
+    "@react-pdf/renderer": "^4.5.1",
+    "vitest": "^4.1.12"
   },
   "peerDependenciesMeta": {
     "@react-pdf/renderer": {

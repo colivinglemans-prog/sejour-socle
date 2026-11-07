@@ -101,6 +101,24 @@ la production n'était pas à jour, sur la foi d'une référence de commit péri
 dégradation silencieuse est pire qu'une panne**, parce qu'un repli qui fonctionne masque la
 panne qu'il compense.
 
+### Tests unitaires (`npm test`)
+
+La couche du dessous du protocole : **vitest**, en devDependency seule, sur les modules purs à
+fort enjeu — `taxe-sejour`, `fiscal/*` (`bic`, `ir`, `lmp-test`, `cotisations`,
+`orientations`, `config`, `revenus`), `stay-selection`, `invoice-number`. Ce sont des tests de
+**caractérisation** : ils figent le comportement actuel, sans navigateur ni réseau.
+
+- Ils vivent dans `tests/`, **jamais** à côté des modules : le motif d'export `./lib/*`
+  rendrait un `lib/x.test.ts` importable par les sites.
+- Le fuseau est fixé à `Europe/Paris` dans `vitest.config.mts` (`lib/dates.ts` compte en
+  heure locale).
+- Fixtures **inventées** (`tests/fixtures.ts`) : le dépôt est public.
+- Un comportement qui ressemble à un bug n'est pas corrigé dans le test : il est figé tel quel,
+  et le comportement attendu est écrit à côté en `it.skip` avec son motif. Retirer le `.skip`
+  fait partie du correctif.
+- Ajouter les tests ne change rien pour les sites : pas d'export, pas de `prepare`, donc
+  vitest n'est jamais installé chez eux. **Pas de tag pour un ajout de tests seul.**
+
 ## Ce qui n'entre jamais
 
 Contenu d'articles de blog, dictionnaires i18n, `public/`, données propres à un bien, photos.
