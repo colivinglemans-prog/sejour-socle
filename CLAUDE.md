@@ -116,8 +116,10 @@ fort enjeu — `taxe-sejour`, `fiscal/*` (`bic`, `ir`, `lmp-test`, `cotisations`
 - Un comportement qui ressemble à un bug n'est pas corrigé dans le test : il est figé tel quel,
   et le comportement attendu est écrit à côté en `it.skip` avec son motif. Retirer le `.skip`
   fait partie du correctif.
-- Ajouter les tests ne change rien pour les sites : pas d'export, pas de `prepare`, donc
-  vitest n'est jamais installé chez eux. **Pas de tag pour un ajout de tests seul.**
+- Ajouter les tests ne change rien pour les sites : `tests/` n'est pas exporté, et un ajout de
+  tests seul ne donne **pas de tag**. Depuis v3.9.0, en revanche, les sites installent vitest
+  eux-mêmes pour leurs contrôles post-déploiement (`testing/deploy/vitest-suite`, peerDependency
+  facultative) : c'est `testing/`, pas `tests/`, qui leur est exporté.
 
 ## Ce qui n'entre jamais
 
@@ -166,6 +168,9 @@ deux validations.
 | — | Factures — **une réservation payée sur une plateforme est pré-remplie comme acquittée** (`platformPaymentOf`) | `le-percepteur`, `le-douanier` | `v3.5.0`, puis `v3.5.1` (Abritel retiré) |
 | — | Factures — **la taxe de séjour a sa ligne, et la mention Airbnb** (`touristTax`, `touristTaxNote`) | `le-percepteur` | `v3.6.0` |
 | — | Dashboard — **chaque semaine du calendrier dans son cadre** (`WEEK_GRID`) | `madame-soleil` | `v3.7.0` |
+| — | Serrure — **codes d'accès Nuki** (`nuki.ts`, `access-codes.ts`), exception à la règle 6 | `chef-de-stand`, `le-douanier` | `v3.8.0` |
+| — | Correctifs de dates et de chiffres fiscaux | `le-percepteur`, `tonton-tuyau` | `v3.8.1` |
+| — | Surveillance — moteur `testing/deploy`, workflow `deploy-checks.yml`, `alert-state`, `heartbeat` | `tonton-tuyau`, `champollion`, `poisson-babel`, `cerbere` | `v3.9.0` |
 | — | Veille des dates d'événements (`lib/events-watch.ts`) | — | `v0.7.0` |
 
 Plan détaillé : `C:\Users\alexa\.claude\plans\cheerful-toasting-rivest.md`.
@@ -1148,6 +1153,25 @@ valide avant de monter. Chaque correctif retire le `it.skip` qui le documentait.
 
 Laissé en l'état, décision de l'utilisateur : quotient conjugal en dur dans `fiscal/ir.ts`
 (foyer en couple, 3 parts) — `it.skip` conservé.
+
+### v3.9.0 — contrôles post-déploiement et surveillance
+
+Plan : `C:\Users\alexa\.claude\plans\keen-splashing-crescent.md`. **Mécanismes ici, valeurs chez
+le site** : chaque site écrit `tests/deploy/site.ts` (`satisfies DeploySite`) qui importe ses
+valeurs de son propre code, et `tests/deploy/deploy.test.ts` qui appelle `defineDeploySuite(site)`.
+
+| Chemin | Contenu |
+|---|---|
+| `testing/deploy/` | Moteur sans vitest (`run`, `http` avec garde `allowedHosts`, `html`, `sitemap`, `normalize`, `report`, `beds24-monitor`) et contrôles `checks/{calendar,booking,indexing,llms,security,heartbeat}`, niveaux `vital` (horaire) / `full` (quotidien et post-déploiement). Résultats : compteurs et phrases fixes, **jamais un corps de réponse** — les logs Actions d'un dépôt public sont publics. `vitest-suite` est le seul point d'entrée vitest. |
+| `config/deploy-site.ts`, `config/policies.ts` | `DeploySite` (tout ce qui est propre à un site est facultatif ⇒ `skip`, jamais un vert), `CancellationPolicy`, `PaymentPolicy`. Formes seules. |
+| `lib/alert-state.ts` | `nextAlertState` : open / persist / escalate / recover, pur. `alertInputs` (dans `run`) reporte les échecs qu'un passage n'a pas re-contrôlés : sans lui, un `vital` horaire « rétablirait » un échec `full` chaque heure. |
+| `lib/heartbeat.ts` | `recordHeartbeat`, `overdueCrons`, `heartbeatResponse` — un **nombre** de tâches en retard, jamais un nom (« la synchro de la serrure est en retard » renseignerait un cambrioleur). Magasin injecté. |
+| `.github/workflows/deploy-checks.yml` | `workflow_call`, appelé **par SHA**, secrets un par un, `npm ci` sans secret, issue publique `surveillance-ko` sans détail, ntfy sur changement d'état, alerte si aucun run vert depuis N heures. |
+
+Nouvel export `./testing/*` ; vitest en peerDependency facultative. Pièges payés pendant le lot :
+vitest définit lui-même `BASE_URL="/"` (d'où `DEPLOY_BASE_URL`) ; Beds24 ne renvoie jamais les
+jours déjà passés (ils ne comptent pas comme manquants) ; vitest masque la console des suites qui
+passent (le rapport s'écrit sur `process.stdout`).
 
 ### Comment une application s'y branche
 
