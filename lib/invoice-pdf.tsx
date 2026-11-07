@@ -42,6 +42,25 @@ function formatDateFr(iso: string): string {
   return `${d}/${m}/${y}`;
 }
 
+/**
+ * Le jour de Paris d'un instant, `AAAA-MM-JJ`. Copie de `parisDay` de `invoice-payload.ts`,
+ * qui n'est pas exporté : tout fichier de `lib/` est public par le motif d'export `./lib/*`,
+ * et un export ajouté pour un besoin interne deviendrait une API des sites.
+ *
+ * La date d'émission était le jour **UTC** de `issuedAt` : une facture faite entre minuit et
+ * 1 h (2 h l'été) à Paris portait la date de la veille — et, le 1er janvier, une date de
+ * l'année précédente sous un numéro de l'année nouvelle (`invoice-number.ts` lit l'année de
+ * Paris).
+ */
+function parisDayOf(date: Date): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Paris",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
 function formatEur(n: number): string {
   const [intPart, decPart] = Math.abs(n).toFixed(2).split(".");
   const withSep = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, " ");
@@ -377,7 +396,7 @@ function InvoiceDocument({
               {preview ? "APERÇU — numéro non attribué" : `N° ${invoiceNumber}`}
             </Text>
             <Text style={styles.invoiceDate}>
-              Émise le {formatDateFr(issuedAt.toISOString().split("T")[0])}
+              Émise le {formatDateFr(parisDayOf(issuedAt))}
             </Text>
           </View>
         </View>

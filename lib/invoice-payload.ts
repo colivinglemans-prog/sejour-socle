@@ -158,7 +158,10 @@ function defaultPaymentDueDate(arrival: string): string {
   const minDue = Date.now() + 3 * 24 * 60 * 60 * 1000;
   const niceDue = arrivalMs - 14 * 24 * 60 * 60 * 1000;
   const due = Math.max(niceDue, minDue);
-  return new Date(due).toISOString().split("T")[0];
+  // Jour de Paris : `toISOString()` rendait le jour UTC, un de moins entre minuit et 1 h
+  // (2 h l'été) à Paris sur le délai minimal de trois jours. `niceDue` est un minuit UTC,
+  // son jour de Paris est le même.
+  return parisDay(new Date(due).toISOString());
 }
 
 function formatDateFr(iso: string): string {
@@ -358,7 +361,8 @@ export function beds24PaymentToPayload(
 /** Facture acquittée bâtie sur le seul encaissement, faute de réservation à rapprocher. */
 export function paymentToPayload(p: InvoicePaymentDetail): InvoicePayload {
   const { firstName, lastName } = splitName(p.customerName);
-  const today = new Date().toISOString().split("T")[0];
+  // Jour de Paris, pas jour UTC (voir `parisDay`).
+  const today = parisDay(new Date().toISOString());
 
   // La description de l'encaissement porte souvent la référence de réservation
   // (ex. « Booking 85475544 »).
@@ -401,7 +405,8 @@ export function paymentToPayload(p: InvoicePaymentDetail): InvoicePayload {
 }
 
 export function emptyPayload(): InvoicePayload {
-  const today = new Date().toISOString().split("T")[0];
+  // Jour de Paris, pas jour UTC (voir `parisDay`).
+  const today = parisDay(new Date().toISOString());
   return {
     company: "",
     firstName: "",
