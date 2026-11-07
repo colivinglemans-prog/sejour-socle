@@ -1185,6 +1185,29 @@ passent (le rapport s'écrit sur `process.stdout`).
 | `lib/access-codes.ts` | `missedArrivals` : seule l'ouverture au clavier par le code du séjour compte (`trigger 255`, `state 0`, nom `<bookId>:`) ; une ouverture par un code manuel non protégé rend `unknown`, jamais `missing` ; journal illisible ⇒ `unknown`. Le journal ne porte pas d'`authId`. |
 | `lib/arrival-readiness/` | `schedule`, `evaluate`, `format`, `nuki-probe`, `types`. Heures, silences et seuils fournis par le site, sans défaut ; sondes facultatives (absente ⇒ `na`). Pas de PIN ni de nom de famille dans une alerte. Exception à la règle 6 : voir Arbitrages. |
 
+### v3.11.0 — réservation par IA (devis, recherche, API des agents)
+
+Plan : `C:\Users\alexa\.claude\plans\curried-mapping-stallman.md`. Une IA vérifie une
+disponibilité, chiffre au centime, trouve des dates floues, produit un devis partageable et
+amène à la page de paiement Beds24. **Rien n'est réservé ni payé par le socle.**
+
+| Chemin | Contenu |
+|---|---|
+| `lib/stay-price.ts` | `fetchRoomPrice` sur `beds24.com/api/ajax/getroomprice.php` (sans jeton, celui de la page de réservation) : `roomprice` = total tout compris. Forme vérifiée (`RoomPriceShapeError` ⇒ anomalie) ; une erreur HTTP est une **panne**, pas une anomalie. Cache Next 5 min. `/inventory/rooms/offers` ne sert pas de repli : son prix exclut remise, frais et taxe. |
+| `lib/stay-quote.ts` | `quoteStay` : forme → refus du site → disponibilité (lue dès la veille) → règles du calendrier (`stay-selection`) → prix. **Jamais de prix faux** : `expectedTotal` du site recalcule la grille, un écart > `tolerance` rend `price-blocked` et appelle `onAnomaly`. **Une panne n'est pas une indisponibilité** : `service-unavailable`. Un `warn` Beds24 a le dernier mot. `lastMinute` ⇒ `notices`. |
+| `lib/stay-search.ts` | `findStays` (une lecture de dispo, règles rejouées par arrivée, prix **un par un**, au plus `limit × 2` appels, arrêt sur panne) et `nearbyStays` (alternatives d'un refus lié aux dates seulement). |
+| `lib/quote-token.ts` | Devis signé JWT HS256 (jose), 7 jours, rotation par `_PREVIOUS` ; le `kid` n'est qu'un indice. Aucune donnée personnelle dans le jeton. |
+| `lib/stay-agent.ts` | Les quatre outils (`propertyInfo`, `availability`, `quote`, `find`) sur des paramètres en chaînes : validation unique, politiques lues dans `CancellationPolicy` / `PaymentPolicy` (les constantes que contrôle `llms.policies`), liens `bookUrl` / `calendarUrl` / `quoteUrl`. Secret de devis absent ⇒ devis chiffré sans lien. |
+| `lib/stay-agent-http.ts` | `createAgentRoute(cfg, depsFactory)` pour `app/api/agent/[tool]/route.ts` : GET seulement (une IA qui navigue ne sait pas faire de POST), CORS ouvert, `s-maxage` court, **jamais de cache sur un 5xx**. `runTool` sera repris tel quel par le serveur MCP. `openApi(cfg)`. |
+| `lib/quote-page.ts`, `components/QuoteSummary.tsx`, `lib/quote-labels.ts` | `loadQuotePage` revérifie à chaque affichage : `valid`, `price-changed` (nouveau prix affiché), `unavailable` (+ alternatives), `expired`, `invalid` (autre site ou falsifié), `unchecked` (panne : on montre le devis signé). Textes en 5 langues sauf `included`, propre au site. |
+| `components/ReservationCalendar.tsx` | Pré-remplissage par `?arrivee=&depart=&adultes=&enfants=` : voyageurs tout de suite, dates **seulement** si le moteur de sélection les accepte une fois le mois chargé. |
+
+`deps` est une **fabrique** côté site : `today` se recalcule à chaque requête. Vérification :
+`npm run verifier` (`scripts/verifier-agent.ts`, réponses Beds24 enregistrées le 2026-11-07,
+sans réseau). Pièges payés : la taxe de séjour de Barbusse ne porte que sur les adultes ; Beds24
+rend les `minStay` décalés d'un jour ; la page `booking2.php` contient en dur « Pas de
+disponibilité » (masqué), qu'un agent qui lit le HTML prend au pied de la lettre — d'où l'API.
+
 ### Comment une application s'y branche
 
 ```jsonc
