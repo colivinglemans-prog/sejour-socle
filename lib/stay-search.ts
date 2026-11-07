@@ -13,6 +13,7 @@ import type { AvailabilityResponse } from "./availability";
 import { addDays, daysBetween, parseDate } from "./dates";
 import {
   checkStayRules,
+  isDay,
   priceStay,
   selectionContext,
   validateRequest,
@@ -59,9 +60,19 @@ export async function findStays(
   q: StaySearch,
 ): Promise<StaySearchResult> {
   const limit = Math.min(Math.max(q.limit ?? 5, 1), 8);
-  const from = q.from < deps.today ? deps.today : q.from;
-  const span = daysBetween(from, q.to);
-  if (span < 0 || span > MAX_SEARCH_DAYS || !Number.isInteger(q.nights) || q.nights < 1 || q.nights > 60) {
+  // Entrée publique : un jour mal formé rendrait `daysBetween` NaN, et la boucle d'arrivées
+  // `d <= q.to` ne s'arrêterait plus. Tout est vérifié avant le moindre calcul.
+  const badDay = !isDay(q.from) || !isDay(q.to) || (q.near !== undefined && !isDay(q.near));
+  const from = !badDay && q.from < deps.today ? deps.today : q.from;
+  const span = badDay ? NaN : daysBetween(from, q.to);
+  if (
+    !Number.isFinite(span) ||
+    span < 0 ||
+    span > MAX_SEARCH_DAYS ||
+    !Number.isInteger(q.nights) ||
+    q.nights < 1 ||
+    q.nights > 60
+  ) {
     return {
       stays: [],
       candidates: 0,
@@ -87,7 +98,8 @@ export async function findStays(
 
   let avail: AvailabilityResponse;
   try {
-    avail = await deps.availability(from, addDays(q.to, q.nights));
+    // Dès la veille, pour le décalage d'un jour des `minStay` Beds24 (voir `quoteStay`).
+    avail = await deps.availability(addDays(from, -1), addDays(q.to, q.nights));
   } catch {
     return {
       stays: [],
@@ -99,6 +111,7 @@ export async function findStays(
 
   const arrivals: string[] = [];
   for (let d = from; d <= q.to; d = addDays(d, 1)) {
+    if (daysBetween(deps.today, d) > cfg.maxHorizonDays) break;
     if (q.arrivalWeekdays && !q.arrivalWeekdays.includes(parseDate(d).getDay())) continue;
     const req: StayRequest = { ...probe, checkIn: d, checkOut: addDays(d, q.nights) };
     if (cfg.refuse?.(req)) continue;
@@ -111,14 +124,20 @@ export async function findStays(
 
   const stays: PricedStay[] = [];
   let failure: Extract<StayQuote, { ok: false }> | undefined;
+  // Au plus deux tentatives par résultat attendu : si Beds24 refuse fenêtre après fenêtre
+  // (une règle qui diffère de la nôtre), on s'arrête au lieu de l'interroger 120 fois.
+  const maxAttempts = limit * 2;
+  let attempts = 0;
   for (const d of arrivals) {
-    if (stays.length >= limit) break;
+    if (stays.length >= limit || attempts >= maxAttempts) break;
+    attempts++;
     const quote = await priceStay(cfg, deps, { ...probe, checkIn: d, checkOut: addDays(d, q.nights) });
     if (quote.ok) stays.push(quote);
     else {
       failure = quote;
-      // Panne ou prix bloqué par le garde-fou : inutile d'insister sur les fenêtres suivantes.
-      if (quote.reason === "service-unavailable" || quote.reason === "no-price") break;
+      // Panne ou garde-fou déclenché : inutile d'insister. Un simple « pas de tarif » à une
+      // date (`no-price`) n'empêche pas les suivantes d'en avoir un.
+      if (quote.reason === "service-unavailable" || quote.reason === "price-blocked") break;
     }
   }
   if (q.near) stays.sort((a, b) => (a.checkIn < b.checkIn ? -1 : 1));

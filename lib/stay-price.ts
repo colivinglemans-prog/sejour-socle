@@ -97,7 +97,7 @@ export function roomPriceUrl(req: RoomPriceRequest): string {
 }
 
 /**
- * Interroge Beds24. Mis en cache 5 minutes par le cache de données de Next (`revalidate`) :
+ * Interroge Beds24. Mis en cache 5 minutes par défaut par le cache de données de Next (`revalidate`) :
  * un même devis demandé deux fois par une IA ne coûte qu'un appel, et un prix vieux de cinq
  * minutes reste celui que la page de réservation affichera.
  *
@@ -105,10 +105,10 @@ export function roomPriceUrl(req: RoomPriceRequest): string {
  */
 export async function fetchRoomPrice(
   req: RoomPriceRequest,
-  fetchImpl: typeof fetch = fetch,
+  { fetchImpl = fetch, revalidate = 300 }: { fetchImpl?: typeof fetch; revalidate?: number } = {},
 ): Promise<RoomPrice> {
   const res = await fetchImpl(roomPriceUrl(req), {
-    next: { revalidate: 300 },
+    next: { revalidate },
   } as RequestInit);
   if (!res.ok) throw new RoomPriceShapeError(`HTTP ${res.status}`);
   return parseRoomPrice(await res.json());

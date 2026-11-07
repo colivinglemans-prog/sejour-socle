@@ -22,7 +22,7 @@ export interface QuotePayload {
   adults: number;
   children: number;
   extras: string[];
-  /** Total garanti, en euros. */
+  /** Total calculé à l'émission, en euros — les dates, elles, ne sont pas bloquées. */
   total: number;
   lang: string;
   /** Origine déclarée (`chatgpt`, `claude`…), pour mesurer ce que rapportent les IA. */
@@ -58,7 +58,10 @@ export function quoteKeysFromEnv(env: Record<string, string | undefined> = proce
   }
   const keys: QuoteKeys = { current: { kid: env.QUOTE_SIGNING_KID || "k1", secret } };
   const prev = env.QUOTE_SIGNING_SECRET_PREVIOUS;
-  if (prev && prev.length >= 32) keys.previous = { kid: env.QUOTE_SIGNING_KID_PREVIOUS || "k0", secret: prev };
+  if (prev) {
+    if (prev.length < 32) throw new Error("QUOTE_SIGNING_SECRET_PREVIOUS trop court (32 caractères au moins).");
+    keys.previous = { kid: env.QUOTE_SIGNING_KID_PREVIOUS || "k0", secret: prev };
+  }
   return keys;
 }
 
@@ -79,11 +82,12 @@ export async function verifyQuote(token: string, keys: QuoteKeys, now = new Date
   const candidates = [keys.current, keys.previous].filter((k): k is QuoteKey => Boolean(k));
   for (const key of candidates) {
     try {
-      const { payload, protectedHeader } = await jwtVerify(token, enc(key.secret), {
+      // Le `kid` n'est qu'un indice : c'est la signature qui fait foi. Le comparer casserait la
+      // rotation dès qu'un secret change de rôle sans que son `kid` le suive.
+      const { payload } = await jwtVerify(token, enc(key.secret), {
         algorithms: ["HS256"],
         currentDate: now,
       });
-      if (protectedHeader.kid && protectedHeader.kid !== key.kid) continue;
       const { iat, exp, ...rest } = payload as unknown as QuotePayload & { iat: number; exp: number };
       return { ok: true, quote: rest as QuotePayload, issuedAt: iat, expiresAt: exp };
     } catch (e) {

@@ -98,6 +98,7 @@ export type QuoteFailureReason =
   | "no-check-out"
   | "refused"
   | "no-price"
+  | "price-blocked"
   | "service-unavailable";
 
 export interface QuoteLine {
@@ -134,6 +135,12 @@ export type StayQuote =
     };
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Un jour calendaire `YYYY-MM-DD` bien formé — à tester avant tout calcul sur une entrée publique. */
+export function isDay(s: unknown): s is string {
+  return typeof s === "string" && DAY.test(s) && !Number.isNaN(Date.parse(`${s}T00:00:00Z`));
+}
+
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
 function fail(reason: QuoteFailureReason, detail: string, minStay?: number): StayQuote {
@@ -151,7 +158,7 @@ async function warnHost(deps: StayQuoteDeps, message: string): Promise<void> {
 /** Contrôles qui ne demandent aucune donnée : forme, horizon, capacité. */
 export function validateRequest(cfg: StayQuoteConfig, req: StayRequest, today: string): StayQuote | null {
   const { checkIn, checkOut, adults, children } = req;
-  if (!DAY.test(checkIn) || !DAY.test(checkOut)) {
+  if (!isDay(checkIn) || !isDay(checkOut)) {
     return fail("invalid-request", "Dates attendues au format AAAA-MM-JJ.");
   }
   if (checkOut <= checkIn) return fail("invalid-request", "Le départ doit suivre l'arrivée.");
@@ -218,6 +225,9 @@ export function checkStayRules(ctx: SelectionContext, checkIn: string, checkOut:
 }
 
 /**
+ * `no-price` : Beds24 n'a pas de tarif pour ces dates — cas normal, l'IA propose un devis humain.
+ * `price-blocked` : la réponse ne passe pas les garde-fous — anomalie, l'hôte est prévenu.
+ *
  * Chiffre un séjour dont les règles sont déjà validées. Séparé de `quoteStay` pour que la
  * recherche de dates puisse chiffrer plusieurs fenêtres sur une seule lecture de disponibilité.
  */
@@ -240,13 +250,17 @@ export async function priceStay(
   } catch (e) {
     if (e instanceof RoomPriceShapeError) {
       await warnHost(deps, `Devis IA : ${e.message} (${req.checkIn} → ${req.checkOut}).`);
-      return fail("no-price", "Le prix n'a pas pu être calculé automatiquement.");
+      return fail("price-blocked", "Le prix n'a pas pu être calculé automatiquement. Demandez un devis.");
     }
     return fail("service-unavailable", "Le service de réservation ne répond pas. Réessayez dans quelques minutes.");
   }
 
-  // Beds24 a le dernier mot : s'il refuse, c'est que sa règle diffère de la nôtre.
-  if (price.warn) return fail("unavailable", price.warn);
+  // Beds24 a le dernier mot : s'il refuse, c'est que sa règle diffère de la nôtre. Un refus de
+  // séjour minimum garde sa raison et sa durée, pour que les alternatives proposent assez de nuits.
+  if (price.warn) {
+    const min = /minimum\D{0,20}(\d+)/i.exec(price.warn);
+    return min ? fail("min-stay", price.warn, Number(min[1])) : fail("unavailable", price.warn);
+  }
   if (price.total <= 0) return fail("no-price", "Pas de tarif publié pour ces dates.");
 
   const nightly = Object.entries(price.nightly)
@@ -254,7 +268,7 @@ export async function priceStay(
     .map(([, v]) => v);
   if (nightly.length !== nights) {
     await warnHost(deps, `Devis IA : ${nightly.length} tarifs de nuit pour ${nights} nuits (${req.checkIn}).`);
-    return fail("no-price", "Le prix n'a pas pu être vérifié.");
+    return fail("price-blocked", "Le prix n'a pas pu être vérifié. Demandez un devis.");
   }
   if (cfg.expectedTotal) {
     const expected = cfg.expectedTotal({ nightly, adults: req.adults, children: req.children, nights });
@@ -264,19 +278,18 @@ export async function priceStay(
         `Devis IA bloqué : Beds24 annonce ${price.total} €, la grille donne ${round2(expected)} € ` +
           `(${req.checkIn} → ${req.checkOut}, ${req.adults}+${req.children}). Réglage Beds24 modifié ?`,
       );
-      return fail("no-price", "Le prix n'a pas pu être vérifié.");
+      return fail("price-blocked", "Le prix n'a pas pu être vérifié. Demandez un devis.");
     }
   }
 
   const guests = req.adults + req.children;
-  const extras: QuoteLine[] = (req.extras ?? []).map((id) => {
-    const e = cfg.optionalExtras!.find((x) => x.id === id)!;
-    return {
-      id,
-      label: e.label[req.lang] ?? e.label.fr ?? id,
-      amount: round2((e.perGuest ?? 0) * guests + (e.perStay ?? 0)),
-    };
-  });
+  const chosen = (req.extras ?? []).map((id) => cfg.optionalExtras?.find((x) => x.id === id));
+  if (chosen.some((e) => !e)) return fail("invalid-request", "Supplément inconnu.");
+  const extras: QuoteLine[] = (chosen as OptionalExtra[]).map((e) => ({
+    id: e.id,
+    label: e.label[req.lang] ?? e.label.fr ?? e.id,
+    amount: round2((e.perGuest ?? 0) * guests + (e.perStay ?? 0)),
+  }));
   const total = round2(price.total + extras.reduce((s, l) => s + l.amount, 0));
   return {
     ok: true,
@@ -307,7 +320,9 @@ export async function quoteStay(
 
   let avail: AvailabilityResponse;
   try {
-    avail = await deps.availability(req.checkIn, req.checkOut);
+    // Lu dès la veille : Beds24 rend les `minStay` décalés d'un jour (voir `strictestMinStay`),
+    // et la clé de l'arrivée manquerait parfois — on retomberait sans bruit sur le défaut.
+    avail = await deps.availability(addDays(req.checkIn, -1), req.checkOut);
   } catch {
     return fail("service-unavailable", "Le calendrier ne répond pas. Réessayez dans quelques minutes.");
   }

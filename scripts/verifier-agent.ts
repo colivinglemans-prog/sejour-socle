@@ -152,7 +152,7 @@ async function main() {
 
   const d1 = deps({ price: fakePrice({ total: (t) => round2(t - 280) }).price });
   const qNoCleaning = await quoteStay(BARBUSSE, d1, { checkIn: "2027-01-15", checkOut: "2027-01-17", adults: 9, children: 0, ...fr });
-  check("ménage disparu du total : prix bloqué", !qNoCleaning.ok && qNoCleaning.reason === "no-price", show(qNoCleaning));
+  check("ménage disparu du total : prix bloqué", !qNoCleaning.ok && qNoCleaning.reason === "price-blocked", show(qNoCleaning));
   check("… et l'hôte est prévenu", d1.anomalies.length === 1, d1.anomalies[0] ?? "aucune alerte");
 
   const qCap = await quoteStay(BARBUSSE, deps(), { checkIn: "2027-01-15", checkOut: "2027-01-17", adults: 21, children: 0, ...fr });
@@ -199,7 +199,8 @@ async function main() {
   const qaKids = await quoteStay(ALBIEZ, deps(), { checkIn: "2027-04-05", checkOut: "2027-04-08", adults: 2, children: 2, ...fr });
   check("2 adultes + 2 enfants : même total Beds24 (taxe sur-collectée connue)", qaKids.ok && qaKids.total === 272.91, show(qaKids));
   const qaWarn = await quoteStay(ALBIEZ, deps(), { checkIn: "2027-01-12", checkOut: "2027-01-14", adults: 4, children: 0, ...fr });
-  check("refus Beds24 relayé tel quel", !qaWarn.ok && qaWarn.reason === "unavailable" && /minimum 3/.test(qaWarn.detail), show(qaWarn));
+  check("refus Beds24 relayé tel quel, durée minimale reconnue",
+    !qaWarn.ok && qaWarn.reason === "min-stay" && qaWarn.minStay === 3 && /minimum 3/.test(qaWarn.detail), show(qaWarn));
   const qaPro = await quoteStay(ALBIEZ, deps(), {
     checkIn: "2027-02-13", checkOut: "2027-02-20", adults: 3, children: 0, purpose: "séjour professionnel", ...fr,
   });
@@ -231,6 +232,24 @@ async function main() {
   }, refused);
   check("alternatives : 3 séjours proches, aucun sur les nuits prises", around.length === 3 &&
     around.every((s) => s.checkIn !== "2027-03-12" && s.checkIn !== "2027-03-11"), around.map((s) => s.checkIn).join(", "));
+  let ended = false;
+  const bad = await Promise.race([
+    findStays(BARBUSSE, deps(), { from: "2027-03-01", to: "mars", nights: 2, adults: 4, children: 0, ...fr }).then((r) => {
+      ended = true;
+      return r;
+    }),
+    new Promise<null>((res) => setTimeout(() => res(null), 2000)),
+  ]);
+  check("date mal formée : refusée sans boucler", ended && bad?.failure?.reason === "invalid-request");
+
+  const refusing = fakePrice();
+  const alwaysWarn = async (r: RoomPriceRequest) => ({ ...(await refusing.price(r)), warn: "Pas de disponibilité" });
+  const burst = await findStays(BARBUSSE, deps({ price: alwaysWarn }), {
+    from: "2027-03-01", to: "2027-05-30", nights: 2, adults: 4, children: 0, limit: 5, ...fr,
+  });
+  check("Beds24 refuse tout : au plus 10 appels de prix", refusing.calls.length === 10 && burst.stays.length === 0,
+    `${refusing.calls.length} appels`);
+
   const noAlt = await nearbyStays(BARBUSSE, deps(), { checkIn: "2027-03-12", checkOut: "2027-03-14", adults: 30, children: 0, ...fr },
     { ok: false, reason: "capacity", detail: "" });
   check("pas d'alternative de dates pour un refus de capacité", noAlt.length === 0);
@@ -266,6 +285,19 @@ async function main() {
     short = true;
   }
   check("secret trop court refusé", short);
+  const defaultKids = await verifyQuote(
+    await signQuote(payload, quoteKeysFromEnv({ QUOTE_SIGNING_SECRET: "u".repeat(40) }), now),
+    quoteKeysFromEnv({ QUOTE_SIGNING_SECRET: "v".repeat(40), QUOTE_SIGNING_SECRET_PREVIOUS: "u".repeat(40) }),
+    now,
+  );
+  check("rotation avec les kid par défaut : le devis reste valable", defaultKids.ok);
+  let shortPrev = false;
+  try {
+    quoteKeysFromEnv({ QUOTE_SIGNING_SECRET: "v".repeat(40), QUOTE_SIGNING_SECRET_PREVIOUS: "court" });
+  } catch {
+    shortPrev = true;
+  }
+  check("ancien secret trop court : erreur, pas d'oubli silencieux", shortPrev);
 
   console.log(failures === 0 ? "\nDevis pour les IA : tout est cohérent.\n" : `\n${failures} vérification(s) en échec.\n`);
   process.exit(failures === 0 ? 0 : 1);

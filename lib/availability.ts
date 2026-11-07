@@ -15,7 +15,11 @@
 import { addDays } from "./dates";
 
 export interface AvailabilityResponse {
-  /** Jour `YYYY-MM-DD` → la nuit est-elle vendable. Une clé absente vaut « libre ». */
+  /**
+   * Jour `YYYY-MM-DD` → la nuit est-elle vendable. Une clé absente vaut « libre » pour
+   * `longestFreeRange` (proposer plutôt que masquer), mais **pas** pour le calendrier ni pour
+   * le devis d'une IA (`stay-quote`), qui exigent un `true` explicite avant de vendre.
+   */
   dates: Record<string, boolean>;
   /** Jour d'arrivée → nombre minimal de nuits imposé par le calendrier tarifaire. */
   minStay?: Record<string, number>;
