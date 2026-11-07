@@ -74,6 +74,17 @@ export interface StayQuoteConfig {
   expectedTotal?: (p: { nightly: number[]; adults: number; children: number; nights: number }) => number;
   /** Écart toléré entre `expectedTotal` et le total Beds24, en euros. 1 € par défaut. */
   tolerance?: number;
+  /**
+   * Arrivée trop proche pour être sûre que le logement est prêt (ménage, code de serrure) :
+   * le devis reste valable, mais porte un avertissement que l'IA doit relayer **avant** que le
+   * voyageur réserve — typiquement « appelez l'hôte au 06… ». Demande de l'hôte du 07/11/2026,
+   * « just in case ». `withinDays: 0` = le jour même seulement.
+   */
+  lastMinute?: {
+    withinDays: number;
+    /** Texte par langue, numéro de téléphone compris ; `fr` sert de repli. */
+    notice: Record<string, string>;
+  };
 }
 
 /** Les sources, injectées. */
@@ -124,6 +135,11 @@ export type StayQuote =
       total: number;
       /** Repère pour un groupe : total ÷ voyageurs ÷ nuits, arrondi à l'euro. */
       perPersonPerNight: number;
+      /**
+       * Avertissements à relayer au voyageur **avant** la réservation (arrivée de dernière
+       * minute : appeler l'hôte). Vide le plus souvent.
+       */
+      notices: string[];
     }
   | {
       ok: false;
@@ -291,6 +307,11 @@ export async function priceStay(
     amount: round2((e.perGuest ?? 0) * guests + (e.perStay ?? 0)),
   }));
   const total = round2(price.total + extras.reduce((s, l) => s + l.amount, 0));
+  const notices: string[] = [];
+  if (cfg.lastMinute && daysBetween(deps.today, req.checkIn) <= cfg.lastMinute.withinDays) {
+    const n = cfg.lastMinute.notice;
+    notices.push(n[req.lang] ?? n.fr ?? Object.values(n)[0] ?? "");
+  }
   return {
     ok: true,
     checkIn: req.checkIn,
@@ -303,6 +324,7 @@ export async function priceStay(
     extras,
     total,
     perPersonPerNight: Math.round(total / guests / nights),
+    notices,
   };
 }
 

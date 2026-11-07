@@ -188,6 +188,18 @@ async function main() {
   const qFar = await quoteStay(BARBUSSE, deps(), { checkIn: "2028-06-01", checkOut: "2028-06-03", adults: 9, children: 0, ...fr });
   check("au-delà de l'horizon tarifaire : trop loin", !qFar.ok && qFar.reason === "too-far", show(qFar));
 
+  const LAST_MINUTE: StayQuoteConfig = {
+    ...BARBUSSE,
+    expectedTotal: undefined,
+    lastMinute: { withinDays: 0, notice: { fr: "Arrivée aujourd'hui : appelez l'hôte avant de réserver.", en: "Arriving today: call the host before booking." } },
+  };
+  const qToday = await quoteStay(LAST_MINUTE, deps(), { checkIn: "2026-11-07", checkOut: "2026-11-09", adults: 9, children: 0, lang: "en" });
+  check("arrivée le jour même : devis valable, avec consigne d'appeler l'hôte",
+    qToday.ok && qToday.notices.length === 1 && /call the host/.test(qToday.notices[0]), show(qToday));
+  const qTomorrow = await quoteStay(LAST_MINUTE, deps(), { checkIn: "2026-11-08", checkOut: "2026-11-10", adults: 9, children: 0, ...fr });
+  check("arrivée le lendemain : pas de consigne", qTomorrow.ok && qTomorrow.notices.length === 0, show(qTomorrow));
+  check("pas de consigne sans réglage du site", q9.ok && q9.notices.length === 0);
+
   // ─── Albiez ────────────────────────────────────────────────────────────────────────────
   console.log("\n— Albiez");
   const qa = await quoteStay(ALBIEZ, deps(), { checkIn: "2027-04-05", checkOut: "2027-04-08", adults: 4, children: 0, ...fr });
