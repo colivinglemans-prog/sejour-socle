@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
+  addDays,
   addMonths,
   daysBetween,
   daysInMonth,
@@ -14,6 +15,8 @@ import { bookingUrl as beds24BookingUrl } from "../lib/booking-url";
 import {
   CLICKABLE_STATES,
   cellState,
+  isValidCheckIn,
+  isValidCheckOut,
   selectionAfterClick,
   type DayCellState,
   type SelectionContext,
@@ -296,6 +299,57 @@ export default function ReservationCalendar({
   };
 
   const minStayOf = ctx.minStayOf;
+
+  /*
+   * Pré-remplissage depuis l'URL — `?arrivee=&depart=&adultes=&enfants=` —, le lien que donne
+   * une IA (`stay-agent`) ou la page de devis. Lu une fois, au montage, dans `location` plutôt
+   * que par `useSearchParams` : ce dernier imposerait une frontière Suspense à chaque page qui
+   * monte le calendrier.
+   *
+   * Les voyageurs s'appliquent tout de suite. Les dates attendent que leur mois soit chargé, et
+   * ne sont posées que si le moteur de sélection les accepte : un lien périmé (dates vendues
+   * depuis) ouvre le bon mois sans sélection, plutôt qu'un séjour que Beds24 refuserait.
+   */
+  const [prefill, setPrefill] = useState<{ checkIn: string; checkOut: string } | null>(null);
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    const ci = q.get("arrivee") ?? "";
+    const co = q.get("depart") ?? "";
+    const count = (v: string | null) => (v && /^\d{1,2}$/.test(v) ? Number(v) : null);
+    const a = count(q.get("adultes"));
+    const c = count(q.get("enfants"));
+    /* eslint-disable react-hooks/set-state-in-effect -- lecture unique de l'URL au montage */
+    if (a !== null && a >= 1) setAdults(Math.min(a, guests.maxTotal));
+    if (c !== null && a !== null) {
+      setChildren(Math.max(0, Math.min(c, guests.maxChildren ?? guests.maxTotal, guests.maxTotal - Math.min(a, guests.maxTotal))));
+    }
+    const day = /^\d{4}-\d{2}-\d{2}$/;
+    if (day.test(ci) && day.test(co) && ci < co && ci >= today) {
+      setYear(Number(ci.slice(0, 4)));
+      setMonth(Number(ci.slice(5, 7)) - 1);
+      setPrefill({ checkIn: ci, checkOut: co });
+    }
+    /* eslint-enable react-hooks/set-state-in-effect */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!prefill || loading) return;
+    if (!avail[prefill.checkIn.slice(0, 7)]) return;
+    // Départ au-delà des deux mois affichés : on ne sait pas valider, on ouvre le mois sans
+    // sélection. Le jour du départ n'a pas besoin d'être libre, mais les nuits, si.
+    if (!avail[addDays(prefill.checkOut, -1).slice(0, 7)]) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- abandon unique
+      setPrefill(null);
+      return;
+    }
+    if (isValidCheckIn(ctx, prefill.checkIn) && isValidCheckOut(ctx, prefill.checkIn, prefill.checkOut)) {
+      setCheckIn(prefill.checkIn);
+      setCheckOut(prefill.checkOut);
+    }
+    setPrefill(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefill, avail, loading]);
 
   function clearSelection() {
     setCheckIn(null);
