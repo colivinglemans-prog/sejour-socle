@@ -63,6 +63,24 @@ export interface InvoiceNumbering {
   next(date?: Date): Promise<string>;
 }
 
+/**
+ * Année civile de l'instant `date` **à Paris**. Ni `getFullYear()` (fuseau de la machine) ni
+ * `getUTCFullYear()` (décalé d'une à deux heures) : les deux se trompent autour du
+ * 1er janvier. `lib/time.ts` ne sait lire que l'instant présent, d'où ce lecteur local.
+ */
+const PARIS_YEAR = new Intl.DateTimeFormat("en-US", {
+  timeZone: "Europe/Paris",
+  year: "numeric",
+});
+
+function parisYear(date: Date): number {
+  const year = Number(PARIS_YEAR.formatToParts(date).find((p) => p.type === "year")?.value);
+  if (!Number.isInteger(year)) {
+    throw new Error(`createInvoiceNumbering : date de facture invalide (${String(date)}).`);
+  }
+  return year;
+}
+
 export function createInvoiceNumbering(
   config: InvoiceNumberingConfig,
 ): InvoiceNumbering {
@@ -79,9 +97,10 @@ export function createInvoiceNumbering(
   return {
     keyFor,
     async next(date = new Date()): Promise<string> {
-      // L'année vient de l'UTC, comme le fuseau de production : une facture émise le
-      // 1er janvier à 00h30 à Paris appartient à l'exercice qui commence, pas au précédent.
-      const year = date.getUTCFullYear();
+      // L'année est celle du calendrier de Paris, quel que soit le fuseau du serveur (UTC en
+      // production) : une facture émise le 1er janvier à 00h30 à Paris — 23h30 UTC le
+      // 31 décembre — appartient à l'année qui commence, pas à celle qui finit.
+      const year = parisYear(date);
       const key = keyFor(year);
 
       if (config.legacyKey) {

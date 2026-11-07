@@ -113,21 +113,55 @@ describe("next — continuité d'année", () => {
     expect(await n.next(new Date("2026-12-31T14:00:00Z"))).toBe("2026-003");
   });
 
-  it("l'année se lit en UTC : 31/12 23h30 UTC appartient à l'année qui finit", async () => {
-    const { store } = memoryStore();
-    const n = createInvoiceNumbering({ counterPrefix: "entite-a", store });
-    expect(await n.next(new Date("2026-12-31T23:30:00Z"))).toBe("2026-001");
-  });
+  // Corrigé le 2026-11-07 : l'année était lue par `getUTCFullYear()`, et une facture émise
+  // le 1er janvier à 00h30 à Paris recevait un numéro de l'année qui finit.
+  describe("l'année est celle du calendrier de Paris", () => {
+    it.each([
+      ["31/12 23h30 à Paris (22h30 UTC)", "2026-12-31T23:30:00+01:00", "2026-001"],
+      ["31/12 23h59:59 à Paris", "2026-12-31T23:59:59+01:00", "2026-001"],
+      ["1er janvier 00h00 à Paris (23h00 UTC la veille)", "2027-01-01T00:00:00+01:00", "2027-001"],
+      ["1er janvier 00h30 à Paris (23h30 UTC la veille)", "2027-01-01T00:30:00+01:00", "2027-001"],
+      ["passage à l'heure d'été, 29/03/2026 01h59 → 03h00", "2026-03-29T03:00:00+02:00", "2026-001"],
+      ["veille du passage à l'heure d'été", "2026-03-29T01:59:00+01:00", "2026-001"],
+      ["passage à l'heure d'hiver, 25/10/2026 02h30 (1re fois)", "2026-10-25T02:30:00+02:00", "2026-001"],
+      ["passage à l'heure d'hiver, 25/10/2026 02h30 (2e fois)", "2026-10-25T02:30:00+01:00", "2026-001"],
+    ])("%s", async (_, instant, attendu) => {
+      const { store } = memoryStore();
+      const n = createInvoiceNumbering({ counterPrefix: "entite-a", store });
+      expect(await n.next(new Date(instant))).toBe(attendu);
+    });
 
-  // Bug suspecté — le commentaire de `next` affirme qu'« une facture émise le 1er janvier à
-  // 00h30 à Paris appartient à l'exercice qui commence », mais 00h30 à Paris le 1er janvier,
-  // c'est 23h30 UTC le 31 décembre : `getUTCFullYear()` rend l'année **qui finit**. Le code
-  // fait l'inverse de ce que dit son commentaire, et une facture datée du 1er janvier en
-  // France recevrait un numéro de l'année précédente.
-  it.skip("1er janvier 00h30 à Paris devrait ouvrir la série de la nouvelle année", async () => {
-    const { store } = memoryStore();
-    const n = createInvoiceNumbering({ counterPrefix: "entite-a", store });
-    expect(await n.next(new Date("2027-01-01T00:30:00+01:00"))).toBe("2027-001");
+    it("une facture de 23h30 et une de 00h30 tombent dans deux séries distinctes", async () => {
+      const { store, data } = memoryStore();
+      const n = createInvoiceNumbering({ counterPrefix: "entite-a", store });
+      expect(await n.next(new Date("2026-12-31T23:30:00+01:00"))).toBe("2026-001");
+      expect(await n.next(new Date("2027-01-01T00:30:00+01:00"))).toBe("2027-001");
+      expect(data.get("invoice:counter:entite-a:2026")).toBe(1);
+      expect(data.get("invoice:counter:entite-a:2027")).toBe(1);
+    });
+
+    it.each(["UTC", "America/Los_Angeles", "Pacific/Kiritimati"])(
+      "indépendant du fuseau du serveur (TZ=%s)",
+      async (tz) => {
+        const avant = process.env.TZ;
+        process.env.TZ = tz;
+        try {
+          const { store } = memoryStore();
+          const n = createInvoiceNumbering({ counterPrefix: "entite-a", store });
+          expect(await n.next(new Date("2027-01-01T00:30:00+01:00"))).toBe("2027-001");
+          expect(await n.next(new Date("2026-12-31T23:30:00+01:00"))).toBe("2026-001");
+        } finally {
+          process.env.TZ = avant;
+        }
+      },
+    );
+
+    it("refuse une date invalide plutôt que d'imprimer « NaN-001 »", async () => {
+      const { store, calls } = memoryStore();
+      const n = createInvoiceNumbering({ counterPrefix: "entite-a", store });
+      await expect(n.next(new Date("pas une date"))).rejects.toThrow();
+      expect(calls).toEqual([]);
+    });
   });
 
   it("sans date, l'année vient de l'horloge", async () => {
