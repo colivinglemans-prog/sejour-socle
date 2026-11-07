@@ -21,7 +21,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "lint": "eslint",
-    "verifier": "tsc -p tsconfig.check.json && node .verif/scripts/verifier-indicateurs.js",
+    "verifier": "tsc -p tsconfig.check.json && node .verif/scripts/verifier-indicateurs.js && node .verif/scripts/verifier-agent.js",
     "protocole": "node scripts/protocole/run.mjs",
     "verifier:codes": "tsc -p tsconfig.check-codes.json && node .verif/scripts/verifier-codes-acces.js",
     "test": "vitest run"

@@ -9,6 +9,9 @@
     "outDir": ".verif",
     "incremental": false
   },
-  "files": ["scripts/verifier-indicateurs.ts"],
+  "files": [
+    "scripts/verifier-indicateurs.ts",
+    "scripts/verifier-agent.ts"
+  ],
   "include": []
 }
