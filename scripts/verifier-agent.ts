@@ -37,9 +37,10 @@ const BARBUSSE: StayQuoteConfig = {
   capacity: { maxTotal: 20, maxChildren: 17 },
   defaultMinStay: 2,
   maxHorizonDays: 400,
-  // remise directe −7 %, ménage 280, linge 15 €/voyageur, taxe de séjour forfaitaire 2,20 €/pers./nuit
+  // remise directe −7 %, ménage 280, linge 15 €/voyageur, taxe de séjour 2,20 € par **adulte**
+  // et par nuit (mineurs exonérés — relevé du 18 au 20/12/2026, 14 adultes + 4 enfants)
   expectedTotal: ({ nightly, adults, children, nights }) =>
-    nightly.reduce((s, n) => s + n, 0) * 0.93 + 280 + 15 * (adults + children) + 2.2 * (adults + children) * nights,
+    nightly.reduce((s, n) => s + n, 0) * 0.93 + 280 + 15 * (adults + children) + 2.2 * adults * nights,
 };
 
 const ALBIEZ: StayQuoteConfig = {
@@ -67,6 +68,9 @@ const RECORDED: Record<string, unknown> = {
   "633259|2027-01-15|2027-01-17|16|0": [
     { id: true, roomprice: 1505.52, warn: "", "2027-01-15": 492, "2027-01-16": 492, numadult: 16 },
   ],
+  "633259|2026-12-18|2026-12-20|14|4": [
+    { id: true, roomprice: 1657.85, warn: "", "2026-12-18": 561, "2026-12-19": 564 },
+  ],
   "715147|2027-04-05|2027-04-08|4|0": [
     { id: true, roomprice: 272.90954999999997, warn: "", "2027-04-05": 74, "2027-04-06": 71, "2027-04-07": 72 },
   ],
@@ -91,7 +95,7 @@ function fakePrice(overrides: { total?: (t: number) => number; throws?: Error } 
       for (let d = r.checkIn; d < r.checkOut; d = addDays(d, 1)) nightly[d] = 300;
       const n = Object.keys(nightly).length;
       const g = r.adults + r.children;
-      raw = [{ roomprice: round2(300 * n * 0.93 + 280 + 15 * g + 2.2 * g * n), warn: "", ...nightly }];
+      raw = [{ roomprice: round2(300 * n * 0.93 + 280 + 15 * g + 2.2 * r.adults * n), warn: "", ...nightly }];
     }
     const parsed = parseRoomPrice(raw);
     return overrides.total ? { ...parsed, total: overrides.total(parsed.total) } : parsed;
@@ -152,6 +156,8 @@ async function main() {
   check("9 personnes : 63 €/pers./nuit", q9.ok && q9.perPersonPerNight === 63, q9.ok ? String(q9.perPersonPerNight) : "");
   const q16 = await quoteStay(BARBUSSE, deps(), { checkIn: "2027-01-15", checkOut: "2027-01-17", adults: 16, children: 0, ...fr });
   check("16 personnes : 1 505,52 €", q16.ok && q16.total === 1505.52, show(q16));
+  const qFam = await quoteStay(BARBUSSE, deps(), { checkIn: "2026-12-18", checkOut: "2026-12-20", adults: 14, children: 4, ...fr });
+  check("14 adultes + 4 enfants : 1 657,85 € (taxe sur les seuls adultes)", qFam.ok && qFam.total === 1657.85, show(qFam));
 
   const d1 = deps({ price: fakePrice({ total: (t) => round2(t - 280) }).price });
   const qNoCleaning = await quoteStay(BARBUSSE, d1, { checkIn: "2027-01-15", checkOut: "2027-01-17", adults: 9, children: 0, ...fr });
