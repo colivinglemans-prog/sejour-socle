@@ -60,8 +60,11 @@ export const CLICKABLE_STATES: DayCellState[] = [
 /**
  * Nuits libres consécutives à partir d'une date — sert à valider un début de séjour.
  *
- * Plafonné à 365 : sans garde, un calendrier entièrement libre ferait boucler la fonction sur
- * chacune des cases affichées, et la réponse au-delà d'un an n'intéresse personne.
+ * Plafonné à 366 nuits — la garde `n <= 365` laisse passer un dernier tour, ce qui couvre une
+ * année entière, même bissextile : sans garde, un calendrier entièrement libre ferait boucler
+ * la fonction sur chacune des cases affichées, et la réponse au-delà d'un an n'intéresse
+ * personne. Le commentaire annonçait 365 ; c'est lui qui a été corrigé, pas le code, aucun
+ * séjour minimum n'approchant un an.
  */
 export function consecutiveFreeNights(ctx: SelectionContext, day: string): number {
   let n = 0;

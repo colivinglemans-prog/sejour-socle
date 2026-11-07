@@ -59,16 +59,9 @@ describe("consecutiveFreeNights", () => {
     expect(consecutiveFreeNights(c, "2026-10-24")).toBe(9);
   });
 
-  it("s'arrête sur un calendrier entièrement libre — à 366 aujourd'hui", () => {
-    // La garde est `n <= 365` : la boucle fait un tour de plus que le plafond annoncé.
+  it("s'arrête à 366 sur un calendrier entièrement libre", () => {
+    // Plafond documenté : la garde `n <= 365` couvre une année entière, même bissextile.
     expect(consecutiveFreeNights(ctx(), "2026-07-01")).toBe(366);
-  });
-
-  // Écart mineur — le commentaire annonce « Plafonné à 365 » et la fonction rend 366. Sans
-  // conséquence sur la validation (aucun séjour minimum n'approche un an), mais le code et sa
-  // documentation divergent.
-  it.skip("le plafond annoncé est 365", () => {
-    expect(consecutiveFreeNights(ctx(), "2026-07-01")).toBe(365);
   });
 });
 
