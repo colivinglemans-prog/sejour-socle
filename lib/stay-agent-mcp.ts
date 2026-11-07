@@ -20,7 +20,7 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { z } from "zod";
 import { runTool } from "./stay-agent-http";
 import type { StayAgentConfig, StayAgentDeps, ToolParams, ToolResult } from "./stay-agent";
-import { MAX_SEARCH_DAYS } from "./stay-search";
+import { MAX_SEARCH_DAYS, MAX_STAY_NIGHTS } from "./stay-search";
 
 const day = (what: string) => z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe(`${what}, AAAA-MM-JJ`);
 
@@ -80,7 +80,12 @@ export function buildMcpServer(cfg: StayAgentConfig, deps: () => StayAgentDeps):
   const src = z.string().optional().describe("Nom de l'assistant (chatgpt, claude…), pour la mesure");
   const guests = {
     adults: z.number().int().min(1).max(cfg.quote.capacity.maxTotal).describe("Adultes, au moins 1"),
-    children: z.number().int().min(0).optional().describe("Enfants (mineurs)"),
+    children: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe(cfg.childrenDescription ? `Enfants : ${cfg.childrenDescription}` : "Enfants"),
     ...(cfg.quote.optionalExtras?.length
       ? {
           extras: z
@@ -145,7 +150,7 @@ export function buildMcpServer(cfg: StayAgentConfig, deps: () => StayAgentDeps):
       inputSchema: {
         from: day("Première arrivée envisagée"),
         to: day(`Dernière arrivée envisagée (${MAX_SEARCH_DAYS} jours au plus après from)`),
-        nights: z.number().int().min(1).max(60).describe("Nombre de nuits"),
+        nights: z.number().int().min(1).max(MAX_STAY_NIGHTS).describe("Nombre de nuits"),
         weekdays: z.string().optional().describe("Jours d'arrivée acceptés, ex. fri ou fri,sat"),
         near: day("Trier autour de ce jour").optional(),
         limit: z.number().int().min(1).max(8).optional().describe("Résultats au plus, 5 par défaut"),
