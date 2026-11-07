@@ -110,6 +110,8 @@ export async function fetchRoomPrice(
   const res = await fetchImpl(roomPriceUrl(req), {
     next: { revalidate },
   } as RequestInit);
-  if (!res.ok) throw new RoomPriceShapeError(`HTTP ${res.status}`);
+  // Une erreur HTTP est une panne (`service-unavailable`), pas une réponse incohérente :
+  // seule une réponse 200 mal formée lève `RoomPriceShapeError` et prévient l'hôte.
+  if (!res.ok) throw new Error(`Beds24 getroomprice : HTTP ${res.status}`);
   return parseRoomPrice(await res.json());
 }

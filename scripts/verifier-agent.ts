@@ -18,6 +18,8 @@ import { quoteKeysFromEnv, signQuote, verifyQuote, type QuotePayload } from "../
 import { RoomPriceShapeError, parseRoomPrice, type RoomPrice, type RoomPriceRequest } from "../lib/stay-price";
 import { quoteStay, type StayQuote, type StayQuoteConfig, type StayQuoteDeps } from "../lib/stay-quote";
 import { findStays, nearbyStays } from "../lib/stay-search";
+import type { StayAgentConfig, StayAgentDeps } from "../lib/stay-agent";
+import { createAgentRoute, runTool } from "../lib/stay-agent-http";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail = ""): void {
@@ -310,6 +312,110 @@ async function main() {
     shortPrev = true;
   }
   check("ancien secret trop court : erreur, pas d'oubli silencieux", shortPrev);
+
+  // ─── Façade des IA (REST, puis MCP) ───────────────────────────────────────────────────
+  console.log("\n— Façade des IA");
+  const AGENT: StayAgentConfig = {
+    propertyId: 303771,
+    siteUrl: "https://www.exemple.fr",
+    locales: ["fr", "en"],
+    defaultLocale: "fr",
+    quote: BARBUSSE,
+    cancellation: {
+      name: "ferme",
+      tiers: [
+        { minDaysBefore: 30, refundPct: 100 },
+        { minDaysBefore: 7, refundPct: 50 },
+        { minDaysBefore: 0, refundPct: 0 },
+      ],
+      gracePeriod: { hoursAfterBooking: 48, minDaysBefore: 14, refundPct: 100 },
+    },
+    payment: { direct: { upfrontPct: 100, via: "Beds24", touristTaxIncluded: true }, business: { depositPct: 30, via: "facture" } },
+    facts: (lang) => ({
+      name: lang === "en" ? "The House" : "La Maison",
+      summary: "…",
+      address: "1 rue de l'Exemple",
+      capacity: { max: 20 },
+      checkIn: "17:00",
+      checkOut: "11:00",
+      includes: ["draps"],
+      rules: ["pas d'animaux"],
+      contact: { phone: "+33600000000" },
+      pages: { "/fr": "Accueil" },
+    }),
+    quotePagePath: (lang, t) => `/${lang}/devis/${t}`,
+    calendarPath: (lang) => `/${lang}#disponibilite`,
+  };
+  const agentDeps = (over: Partial<StayAgentDeps> = {}): StayAgentDeps => ({ ...deps(), keys: () => keys, ...over });
+
+  const info = await runTool("info", AGENT, agentDeps(), { lang: "en" });
+  const ib = info.body as Record<string, any>;
+  check("info : langue, fiche et politiques issues des constantes",
+    ib.name === "The House" && ib.cancellation.refunds[0].refundPercent === 100 &&
+      ib.cancellation.gracePeriod.withinHoursOfBooking === 48 && ib.payment.businessOnInvoice.depositPercent === 30 &&
+      ib.pages["https://www.exemple.fr/fr"] === "Accueil");
+
+  const r9 = await runTool("quote", AGENT, agentDeps(), {
+    checkin: "2027-01-15", checkout: "2027-01-17", adults: "9", src: "ChatGPT",
+  });
+  const b9 = r9.body as Record<string, any>;
+  check("quote : 1 141,87 €, statut 200", r9.status === 200 && b9.total === 1141.87, JSON.stringify(b9).slice(0, 120));
+  check("quote : lien Beds24 pré-rempli", b9.bookUrl === "https://beds24.com/booking2.php?propid=303771&layout=1&lang=fr&checkin=2027-01-15&checkout=2027-01-17&numadult=9&numchild=0", b9.bookUrl);
+  check("quote : calendrier pré-rempli, ancre conservée en fin d'URL",
+    b9.calendarUrl === "https://www.exemple.fr/fr?arrivee=2027-01-15&depart=2027-01-17&adultes=9&enfants=0&src=chatgpt#disponibilite", b9.calendarUrl);
+  const tok = String(b9.quoteUrl ?? "").split("/devis/")[1] ?? "";
+  const vt = await verifyQuote(tok, keys, new Date());
+  check("quote : lien de devis signé, relu avec le même total", vt.ok && vt.quote.total === 1141.87 && vt.quote.src === "chatgpt");
+  const noKeys = await runTool("quote", AGENT, agentDeps({ keys: () => quoteKeysFromEnv({}) }), {
+    checkin: "2027-01-15", checkout: "2027-01-17", adults: "9",
+  });
+  check("secret absent : devis chiffré quand même, sans lien de devis", noKeys.status === 200 && !("quoteUrl" in noKeys.body) && noKeys.body.total === 1141.87);
+
+  const rTaken = await runTool("quote", AGENT, agentDeps({ availability: fakeAvailability({ booked: ["2027-03-12"] }) }), {
+    checkin: "2027-03-12", checkout: "2027-03-14", adults: "9",
+  });
+  const alts = (rTaken.body.alternatives as Array<Record<string, unknown>>) ?? [];
+  check("quote refusé : alternatives chiffrées, avec leurs liens", rTaken.body.reason === "unavailable" && alts.length > 0 &&
+    alts.every((a) => typeof a.bookUrl === "string" && typeof a.total === "number"), `${alts.length} alternatives`);
+  const rDown = await runTool("quote", AGENT, agentDeps({ availability: fakeAvailability({ down: true }) }), {
+    checkin: "2027-03-12", checkout: "2027-03-14", adults: "9",
+  });
+  check("panne : 503, jamais mis en cache comme « dates prises »", rDown.status === 503 && rDown.body.reason === "service-unavailable");
+  const rNoAdults = await runTool("quote", AGENT, agentDeps(), { checkin: "2027-03-12", checkout: "2027-03-14" });
+  check("adults manquant : 400 avec explication", rNoAdults.status === 400 && typeof rNoAdults.body.detail === "string");
+  const rAdultsText = await runTool("quote", AGENT, agentDeps(), { checkin: "2027-03-12", checkout: "2027-03-14", adults: "neuf" });
+  check("adults non numérique : 400", rAdultsText.status === 400, JSON.stringify(rAdultsText.body));
+
+  const rFind = await runTool("find", AGENT, agentDeps({ availability: fakeAvailability({ booked: ["2027-03-05", "2027-03-19"] }) }), {
+    from: "2027-03-01", to: "2027-03-31", nights: "2", adults: "14", weekdays: "fri",
+  });
+  const fstays = (rFind.body.stays as Array<Record<string, unknown>>) ?? [];
+  check("find : vendredis libres de mars, avec liens", fstays.map((s) => s.checkIn).join(",") === "2027-03-12,2027-03-26" &&
+    fstays.every((s) => typeof s.calendarUrl === "string"), fstays.map((s) => s.checkIn).join(","));
+  const rBadWd = await runTool("find", AGENT, agentDeps(), { from: "2027-03-01", to: "2027-03-31", nights: "2", adults: "4", weekdays: "vendredi" });
+  check("find : jour de semaine illisible refusé (400)", rBadWd.status === 400);
+
+  const rAvail = await runTool("availability", AGENT, agentDeps({ availability: fakeAvailability({ booked: ["2027-03-13"], minStay: { "2027-03-20": 3 } }) }), {
+    from: "2027-03-12", to: "2027-03-21",
+  });
+  const fn = (rAvail.body.freeNights as string[]) ?? [];
+  check("availability : nuits libres, séjour minimum au-dessus du défaut seulement",
+    fn.length === 9 && !fn.includes("2027-03-13") && (rAvail.body.minStayByArrival as Record<string, number>)["2027-03-20"] === 3);
+  const rAvailLong = await runTool("availability", AGENT, agentDeps(), { from: "2027-01-01", to: "2027-12-31" });
+  check("availability : plage trop longue refusée", rAvailLong.status === 400);
+
+  const api = (await runTool("openapi", AGENT, agentDeps(), {})).body as Record<string, any>;
+  check("openapi : 4 opérations, serveur du site", Object.keys(api.paths).length === 4 && api.servers[0].url === "https://www.exemple.fr/api/agent");
+  check("outil inconnu : 404", (await runTool("book", AGENT, agentDeps(), {})).status === 404);
+
+  const route = createAgentRoute(AGENT, () => agentDeps());
+  const res = await route.GET(new Request("https://www.exemple.fr/api/agent/quote?checkIn=2027-01-15&checkOut=2027-01-17&adults=9"), {
+    params: Promise.resolve({ tool: "quote" }),
+  });
+  const rb = (await res.json()) as Record<string, unknown>;
+  check("route HTTP : paramètres insensibles à la casse, CORS ouvert, cache court",
+    res.status === 200 && rb.total === 1141.87 && res.headers.get("access-control-allow-origin") === "*" &&
+      (res.headers.get("cache-control") ?? "").includes("s-maxage=300"));
 
   console.log(failures === 0 ? "\nDevis pour les IA : tout est cohérent.\n" : `\n${failures} vérification(s) en échec.\n`);
   process.exit(failures === 0 ? 0 : 1);
