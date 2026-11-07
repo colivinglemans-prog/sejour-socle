@@ -85,21 +85,48 @@ describe("computeRevenusBien — bien Beds24, exercice en cours", () => {
     expect(r.commissionsProjected).toBeCloseTo(r.projectedTotal * 0.04, 2);
   });
 
-  it("taux d'occupation : nuits de l'année / jours écoulés, arrondi au millième", async () => {
+  // Corrigé le 2026-11-07 — le numérateur comptait toutes les nuits de l'exercice, y compris
+  // le carnet à venir (B entier, la nuit du 1er juillet de C), sur un dénominateur de jours
+  // écoulés : 11 / 180 = 0,061. Définition retenue : nuits réalisées ÷ jours observés, sur la
+  // même période [1er janvier, asOf] bornes incluses (la nuit du 30 juin est réalisée, le
+  // 30 juin compte donc au dénominateur) : 5 nuits (3 de A, 2 de C) / 181 jours.
+  it("le taux d'occupation de l'année en cours ne compte que les nuits réalisées", async () => {
     const r = await computeRevenusBien(BIEN, 2026, deps());
-    // Comportement actuel : 3 (A) + 5 (B) + 3 (C) = 11 nuits, dont 6 sont à venir, sur 180
-    // jours écoulés. Voir le test ignoré ci-dessous.
-    expect(r.occupancyRatio).toBe(0.061);
+    expect(r.occupancyRatio).toBe(Math.round((5 / 181) * 1000) / 1000);
+    expect(r.occupancyRatio).toBe(0.028);
   });
 
-  // Bug suspecté — le numérateur compte **toutes** les nuits de l'exercice, y compris celles
-  // qui ne sont pas encore passées (B entier, la nuit du 1er juillet de C), mais le
-  // dénominateur ne compte que les jours écoulés. Le taux d'une année en cours est donc
-  // gonflé par le carnet de commandes — et il pondère `dynamicPricingTotal`. Attendu :
-  // 5 nuits passées (3 de A, 2 de C) / 180 = 0,028.
-  it.skip("le taux d'occupation de l'année en cours ne devrait compter que les nuits passées", async () => {
-    const r = await computeRevenusBien(BIEN, 2026, deps());
-    expect(r.occupancyRatio).toBe(0.028);
+  it("taux d'occupation au 1er janvier : un jour observé, la nuit du 1er réalisée", async () => {
+    const r = await computeRevenusBien(
+      BIEN,
+      2026,
+      deps({
+        asOf: "2026-01-01",
+        fetchStays: async () => [
+          soldBooking({ arrival: "2026-01-01", departure: "2026-01-03", nights: 2, gross: 200 }),
+        ],
+      }),
+    );
+    expect(r.occupancyRatio).toBe(1);
+    expect(r.realized).toBe(100);
+    expect(r.confirmedUpcoming).toBe(100);
+  });
+
+  it("le numérateur d'occupation suit le CA réalisé, nuit pour nuit", async () => {
+    const r = await computeRevenusBien(
+      BIEN,
+      2026,
+      deps({
+        asOf: "2026-01-10",
+        fetchStays: async () => [
+          soldBooking({ arrival: "2025-12-30", departure: "2026-01-15", nights: 16, gross: 1600 }),
+        ],
+      }),
+    );
+    // 10 nuits réalisées (1er → 10 janvier), 4 à venir (11 → 14), sur 10 jours observés.
+    expect(r.realized).toBe(1000);
+    expect(r.confirmedUpcoming).toBe(400);
+    expect(r.occupancyRatio).toBe(1);
   });
 
   it("projection au pricing dynamique : prix futurs × taux d'occupation", async () => {
@@ -111,7 +138,8 @@ describe("computeRevenusBien — bien Beds24, exercice en cours", () => {
     }));
     const r = await computeRevenusBien(BIEN, 2026, deps({ fetchDailyPrices }));
     expect(fetchDailyPrices).toHaveBeenCalledWith(1, "2026-06-30", "2026-12-31");
-    expect(r.dynamicPricingTotal).toBe(Math.round(1950 + 500 * (11 / 180)));
+    // Le taux qui pondère les prix futurs est le taux réalisé (5 / 181), plus le carnet.
+    expect(r.dynamicPricingTotal).toBe(Math.round(1950 + 500 * (5 / 181)));
   });
 
   it("sans fournisseur de prix, ou s'il échoue : null", async () => {
@@ -128,8 +156,8 @@ describe("computeRevenusBien — bien Beds24, exercice en cours", () => {
     const multi = { ...BIEN, propertyIds: [1, 3] } as BienFiscal;
     const un = await computeRevenusBien(multi, 2026, deps());
     const neuf = await computeRevenusBien(multi, 2026, deps({ unitsWhenMultiProperty: 9 }));
-    expect(un.occupancyRatio).toBe(0.061);
-    expect(neuf.occupancyRatio).toBe(Math.round((11 / (180 * 9)) * 1000) / 1000);
+    expect(un.occupancyRatio).toBe(0.028);
+    expect(neuf.occupancyRatio).toBe(Math.round((5 / (181 * 9)) * 1000) / 1000);
   });
 });
 
@@ -142,41 +170,50 @@ describe("computeRevenusBien — exercice clos", () => {
     expect(r.projectedTotal).toBe(400);
     expect(r.commissionsRealized).toBe(40);
     expect(r.dynamicPricingTotal).toBeNull();
-    // Comportement actuel : 3 nuits d'occupation, pas 4 — voir le test ignoré ci-dessous.
-    expect(r.occupancyRatio).toBe(Math.round((3 / 365) * 1000) / 1000);
+    expect(r.occupancyRatio).toBe(Math.round((4 / 365) * 1000) / 1000);
   });
 
-  // Bug suspecté — l'occupation borne la fin du séjour à `yearEnd` (« 2025-12-31 », un jour
-  // **inclus**) alors que `departure` est **exclu** : `daysBetween("2025-12-28", "2025-12-31")`
-  // rend 3, et la nuit du 31 décembre n'est comptée dans aucun des deux exercices (2026 compte
-  // du 1er au 4 janvier = 3). Le CA, lui, passe par `nightsInWindow` et compte bien 4 nuits :
-  // CA et occupation divergent sur tout séjour qui franchit le 31 décembre.
-  it.skip("un séjour qui franchit le 31 décembre devrait compter la nuit du 31 en occupation", async () => {
+  // Corrigé le 2026-11-07 — l'occupation bornait la fin du séjour au 31/12 **inclus** alors
+  // que le départ est **exclu** : la nuit du 31 décembre n'appartenait à aucun exercice
+  // (3 nuits en 2025, 3 en 2026, pour un séjour de 7). Elle passe désormais par
+  // `nightsInWindow`, comme le CA.
+  it("un séjour qui franchit le 31 décembre compte la nuit du 31 en occupation", async () => {
     const r = await computeRevenusBien(BIEN, 2025, deps());
     expect(r.occupancyRatio).toBe(Math.round((4 / 365) * 1000) / 1000);
   });
 
-  it("exercice futur : comportement actuel, tout est compté réalisé", async () => {
+  it("à cheval sur le 31/12 : les deux exercices se partagent toutes les nuits, sans trou", async () => {
+    const sejour = [
+      soldBooking({ arrival: "2025-12-31", departure: "2026-01-02", nights: 2, gross: 300, commission: 30 }),
+    ];
+    const r2025 = await computeRevenusBien(BIEN, 2025, deps({ fetchStays: async () => sejour }));
+    const r2026 = await computeRevenusBien(BIEN, 2026, deps({ fetchStays: async () => sejour }));
+    expect(r2025.realized).toBe(150);
+    expect(r2025.realized + r2026.realized).toBe(300);
+    expect(r2025.occupancyRatio).toBe(Math.round((1 / 365) * 1000) / 1000);
+    // 2026 : 1 nuit sur 181 jours observés (asOf 30 juin).
+    expect(r2026.occupancyRatio).toBe(Math.round((1 / 181) * 1000) / 1000);
+  });
+
+  it("année bissextile close : 366 jours au dénominateur", async () => {
     const r = await computeRevenusBien(
       BIEN,
-      2027,
+      2028,
       deps({
+        asOf: "2029-03-01",
         fetchStays: async () => [
-          soldBooking({ arrival: "2027-02-01", departure: "2027-02-05", nights: 4, gross: 800 }),
+          soldBooking({ arrival: "2028-12-30", departure: "2029-01-02", nights: 3, gross: 300 }),
         ],
       }),
     );
-    // `clampedToday` vaut le 31/12/2027 pour un exercice qui n'est pas l'année courante :
-    // le séjour de février 2027 est compté comme **réalisé**.
-    expect(r.realized).toBe(800);
-    expect(r.confirmedUpcoming).toBe(0);
+    expect(r.realized).toBe(200);
+    expect(r.occupancyRatio).toBe(Math.round((2 / 366) * 1000) / 1000);
   });
 
-  // Bug suspecté — pour un exercice qui n'est pas l'année courante, `clampedToday` vaut
-  // toujours le 31 décembre de l'exercice, qu'il soit passé **ou futur**. Un exercice futur
-  // (sélection de 2027 en 2026) présente donc du carnet de commandes comme du réalisé.
-  // Attendu : `clampedToday` borné à la veille de l'exercice quand `asOf` lui est antérieur.
-  it.skip("exercice futur : tout devrait être confirmé à venir", async () => {
+  // Corrigé le 2026-11-07 — pour un exercice qui n'était pas l'année courante, `clampedToday`
+  // valait toujours le 31 décembre de l'exercice, passé **ou futur** : un exercice futur
+  // présentait le carnet de commandes comme du réalisé.
+  it("exercice futur : tout est confirmé à venir, rien de réalisé ni d'occupé", async () => {
     const r = await computeRevenusBien(
       BIEN,
       2027,
@@ -188,5 +225,56 @@ describe("computeRevenusBien — exercice clos", () => {
     );
     expect(r.realized).toBe(0);
     expect(r.confirmedUpcoming).toBe(800);
+    expect(r.commissionsRealized).toBe(0);
+    expect(r.projectedTotal).toBe(800);
+    expect(r.dynamicPricingTotal).toBeNull();
+    expect(r.occupancyRatio).toBe(0);
+  });
+
+  it("exercice futur : la simulation garde les commissions connues (taux réalisé nul)", async () => {
+    const r = await computeRevenusBien(
+      BIEN,
+      2027,
+      deps({
+        fetchStays: async () => [
+          soldBooking({ arrival: "2027-02-01", departure: "2027-02-05", nights: 4, gross: 800, commission: 120 }),
+        ],
+      }),
+    );
+    expect(r.commissionsRealized).toBe(0);
+    expect(r.commissionsUpcoming).toBe(120);
+    expect(r.commissionsProjected).toBe(120);
+    expect(r.projectedTotal).toBe(800);
+    expect(r.dynamicPricingTotal).toBeNull();
+    expect(r.occupancyRatio).toBe(0);
+  });
+
+  it("exercice futur : une recette sans nuit est à venir, pas réalisée", async () => {
+    const r = await computeRevenusBien(
+      BIEN,
+      2027,
+      deps({
+        fetchStays: async () => [
+          soldBooking({ arrival: "2027-03-01", departure: "2027-03-01", nights: 0, gross: 50 }),
+        ],
+      }),
+    );
+    expect(r.realized).toBe(0);
+    expect(r.confirmedUpcoming).toBe(50);
+  });
+
+  it("exercice futur : un séjour de fin décembre ne lui apporte que ses nuits de janvier, à venir", async () => {
+    const r = await computeRevenusBien(
+      BIEN,
+      2027,
+      deps({
+        asOf: "2026-12-30",
+        fetchStays: async () => [
+          soldBooking({ arrival: "2026-12-29", departure: "2027-01-03", nights: 5, gross: 500 }),
+        ],
+      }),
+    );
+    expect(r.realized).toBe(0);
+    expect(r.confirmedUpcoming).toBe(200);
   });
 });

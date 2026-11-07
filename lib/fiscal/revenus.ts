@@ -87,6 +87,11 @@ export interface RevenusBien {
    */
   projectedTotal: number;
   dynamicPricingTotal: number | null;
+  /**
+   * Taux d'occupation **réalisé**, au millième : nuits réalisées de l'exercice (pondérées en
+   * logements) ÷ jours observés × logements, sur [1er janvier, aujourd'hui borné au 31/12],
+   * bornes incluses. Le carnet à venir n'y entre pas ; un exercice futur vaut 0.
+   */
   occupancyRatio: number;
   /** Commissions de canal sur la part réalisée, au même prorata de nuits que le CA. */
   commissionsRealized: number;
@@ -144,7 +149,10 @@ async function computeBeds24Revenus(
   const yearStart = from;
   const yearEnd = to;
   const currentYear = year === Number(today.slice(0, 4));
-  const clampedToday = currentYear ? today : yearEnd;
+  // Dernier jour observé de l'exercice : aujourd'hui, borné au 31/12. Sur un exercice futur il
+  // reste antérieur au 1er janvier, et `splitAmount` ne compte alors aucune nuit réalisée —
+  // c'était le 31/12 de l'exercice, qui présentait le carnet de 2027 comme du réalisé.
+  const clampedToday = today < yearEnd ? today : yearEnd;
 
   // Fenêtre d'appel élargie d'un an en arrière : un séjour arrivé en décembre porte des nuits de
   // janvier, et c'est le recouvrement qui décide de l'appartenance, pas l'arrivée.
@@ -172,18 +180,31 @@ async function computeBeds24Revenus(
     const com = splitAmount(b, b.commission, clampedToday, yearStart, yearEnd);
     commissionsRealized += com.realized;
     commissionsUpcoming += com.upcoming;
-    const start = b.arrival < yearStart ? yearStart : b.arrival;
-    const end = b.departure > yearEnd ? yearEnd : b.departure;
-    // Pondéré par le poids en logements de la ligne, comme la page de statistiques : chez
-    // Barbusse une nuit de chambre de l'époque vaut un neuvième de nuit de maison.
-    occupiedNights += Math.max(0, daysBetween(start, end)) * unitsOf(b);
+    // Nuits **réalisées** de l'exercice, comptées par `nightsInWindow` comme le CA : mêmes
+    // nuits, même règle (une nuit est datée du soir où elle commence, réalisée dès que ce soir
+    // est ≤ au jour observé). Le numérateur comptait aussi les nuits à venir, et bornait la fin
+    // au 31/12 inclus alors que le départ est exclu — la nuit du 31 n'appartenait à aucun
+    // exercice. Pondéré par le poids en logements de la ligne, comme la page de statistiques :
+    // chez Barbusse une nuit de chambre de l'époque vaut un neuvième de nuit de maison.
+    if (clampedToday >= yearStart) {
+      occupiedNights += nightsInWindow(b, yearStart, clampedToday) * unitsOf(b);
+    }
   }
 
   const yearDays = daysBetween(yearStart, yearEnd) + 1;
   const daysSoFar = currentYear ? Math.max(1, daysBetween(yearStart, today)) : yearDays;
   const units =
     bien.propertyIds.length > 1 ? (deps.unitsWhenMultiProperty ?? 1) : 1;
-  const occupancyRatio = Math.min(1, occupiedNights / (daysSoFar * Math.max(1, units)));
+  // Taux d'occupation **réalisé** : nuits réalisées ÷ jours observés, sur la même période
+  // [1er janvier, jour observé], bornes incluses — le jour observé compte des deux côtés,
+  // puisque sa nuit est réalisée. Exercice clos : l'année entière. Exercice futur : aucun jour
+  // observé, taux nul — le carnet de commandes n'est pas une occupation.
+  const daysObserved =
+    clampedToday < yearStart ? 0 : daysBetween(yearStart, clampedToday) + 1;
+  const occupancyRatio =
+    daysObserved > 0
+      ? Math.min(1, occupiedNights / (daysObserved * Math.max(1, units)))
+      : 0;
 
   let projectedTotal = realized + confirmedUpcoming;
   let dynamicPricingTotal: number | null = null;
@@ -207,9 +228,14 @@ async function computeBeds24Revenus(
     }
   }
 
-  // Simulation des commissions au taux moyen observé sur le réalisé
+  // Simulation des commissions au taux moyen observé sur le réalisé — sur l'exercice en cours
+  // seulement. Ailleurs il n'y a rien à simuler : `projectedTotal` y vaut réalisé + à venir,
+  // et ses commissions sont celles qui sont connues. Sur un exercice futur, le réalisé est nul
+  // et le taux moyen l'aurait été aussi : la simulation aurait perdu toutes ses commissions.
   const tauxCommissionMoyen = realized > 0 ? commissionsRealized / realized : 0;
-  const commissionsProjected = projectedTotal * tauxCommissionMoyen;
+  const commissionsProjected = currentYear
+    ? projectedTotal * tauxCommissionMoyen
+    : commissionsRealized + commissionsUpcoming;
 
   const round2 = (n: number) => Math.round(n * 100) / 100;
   return {
