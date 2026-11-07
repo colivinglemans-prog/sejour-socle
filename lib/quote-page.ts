@@ -34,10 +34,13 @@ export async function loadQuotePage(
   deps: StayQuoteDeps,
   keys: QuoteKeys,
 ): Promise<QuotePageState> {
+  // Un jeton réel fait environ 400 caractères ; au-delà, inutile de calculer quoi que ce soit.
+  if (token.length > 2048) return { status: "invalid" };
   const v = await verifyQuote(token, keys);
   if (!v.ok && v.reason === "invalid") return { status: "invalid" };
   if (!v.ok) {
-    // Expiré : on relit quand même le contenu (non vérifiable ici), pour pré-remplir le calendrier.
+    // Expiré : jose a vérifié la signature avant de lever `ERR_JWT_EXPIRED` — le contenu est
+    // authentique, seulement périmé. On le relit pour pré-remplir le calendrier.
     const payload = decodeUnverified(token);
     return payload && payload.propertyId === propertyId ? { status: "expired", quote: payload } : { status: "invalid" };
   }

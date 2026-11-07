@@ -11,6 +11,7 @@
  *   // app/api/agent/[tool]/route.ts
  *   export const { GET, OPTIONS } = createAgentRoute(agentConfig, agentDeps);
  */
+import { MAX_SEARCH_DAYS } from "./stay-search";
 import { find, propertyInfo, quote, availability, type StayAgentConfig, type StayAgentDeps, type ToolParams, type ToolResult } from "./stay-agent";
 
 export const AGENT_TOOLS = ["info", "availability", "quote", "find", "openapi"] as const;
@@ -28,7 +29,8 @@ function json(r: ToolResult, maxAge: number): Response {
     headers: {
       "Content-Type": "application/json; charset=utf-8",
       // Un refus pour panne ne se met pas en cache : il doit pouvoir réussir à la minute suivante.
-      "Cache-Control": r.status >= 500 ? "no-store" : `public, s-maxage=${maxAge}, stale-while-revalidate=60`,
+      // Ni une panne, ni un résultat partiel (206) ne se mettent en cache.
+      "Cache-Control": r.status >= 500 || r.status === 206 ? "no-store" : `public, s-maxage=${maxAge}, stale-while-revalidate=60`,
       "X-Robots-Tag": "noindex",
       ...CORS,
     },
@@ -90,6 +92,7 @@ const day = (description: string) => str(description, { format: "date", example:
 /** Le contrat OpenAPI 3.1 des outils, pour les GPTs personnalisés et les clients d'API. */
 export function openApi(cfg: StayAgentConfig): Record<string, unknown> {
   const q = (name: string, schema: Record<string, unknown>, required = false) => ({ name, in: "query", required, schema });
+  const purpose = q("purpose", str("Motif du séjour s'il est connu : vacances, famille, professionnel… (certaines dates refusent les séjours professionnels)"));
   const common = [
     q("lang", str("Langue des libellés", { enum: [...cfg.locales] })),
     q("src", str("Origine déclarée, ex. chatgpt, claude, perplexity")),
@@ -110,7 +113,7 @@ export function openApi(cfg: StayAgentConfig): Record<string, unknown> {
       title: `${cfg.facts(cfg.defaultLocale).name} — disponibilités, prix et devis`,
       version: "1",
       description:
-        "Prix exacts, tout compris (taxe de séjour incluse), pour une réservation directe. " +
+        `Prix exacts, tout compris${cfg.payment.direct.touristTaxIncluded ? " (taxe de séjour incluse)" : ""}, pour une réservation directe. ` +
         "Ne bloque aucune date : le voyageur réserve et paie via bookUrl. Relayer les notices au voyageur avant de réserver.",
     },
     servers: [{ url: `${cfg.siteUrl}/api/agent` }],
@@ -118,13 +121,14 @@ export function openApi(cfg: StayAgentConfig): Record<string, unknown> {
       "/info": op("get_property_info", "Fiche du logement, capacité, inclus, règles, annulation et paiement", common),
       "/availability": op("check_availability", "Nuits libres, séjours minimum, jours sans arrivée ou départ", [
         q("from", day("Premier jour"), true),
-        q("to", day("Dernier jour, inclus (120 jours au plus après from)"), true),
+        q("to", day(`Dernier jour, inclus (${MAX_SEARCH_DAYS} jours au plus après from)`), true),
         ...common,
       ]),
       "/quote": op("get_quote", "Prix exact d'un séjour et liens de réservation ; sinon raison et alternatives", [
         q("checkin", day("Arrivée"), true),
         q("checkout", day("Départ"), true),
         ...guests,
+        purpose,
         ...common,
       ]),
       "/find": op("find_stays", "Séjours libres et chiffrés quand les dates sont floues (« un week-end en mars »)", [
@@ -135,6 +139,7 @@ export function openApi(cfg: StayAgentConfig): Record<string, unknown> {
         q("near", day("Trier autour de ce jour")),
         q("limit", int("Résultats au plus", { minimum: 1, maximum: 8, default: 5 })),
         ...guests,
+        purpose,
         ...common,
       ]),
     },

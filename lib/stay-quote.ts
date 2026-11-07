@@ -45,6 +45,12 @@ export interface OptionalExtra {
   perGuest?: number;
   /** Montant forfaitaire par séjour. */
   perStay?: number;
+  /**
+   * Ce que le voyageur doit faire sur la page de paiement pour l'obtenir, quand elle ne le
+   * coche pas d'elle-même (« cochez le kit linge ») — ajouté aux `notices` du devis. Sans cette
+   * consigne, le devis annonce un total que la page de paiement ne facturera pas.
+   */
+  bookingNote?: Record<string, string>;
 }
 
 /** Ce qu'un site déclare pour être chiffré. Aucune valeur n'est propre à un site dans ce module. */
@@ -154,7 +160,10 @@ const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 /** Un jour calendaire `YYYY-MM-DD` bien formé — à tester avant tout calcul sur une entrée publique. */
 export function isDay(s: unknown): s is string {
-  return typeof s === "string" && DAY.test(s) && !Number.isNaN(Date.parse(`${s}T00:00:00Z`));
+  if (typeof s !== "string" || !DAY.test(s)) return false;
+  // Aller-retour : `Date` reporte le 30 février sur mars sans broncher.
+  const d = new Date(`${s}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -163,7 +172,19 @@ function fail(reason: QuoteFailureReason, detail: string, minStay?: number): Sta
   return minStay === undefined ? { ok: false, reason, detail } : { ok: false, reason, detail, minStay };
 }
 
+/**
+ * Une alerte par type d'anomalie et par heure, par instance : le jour où une grille change,
+ * chaque question d'une IA déclencherait sinon la même notification. Le type, c'est le message
+ * sans ses chiffres (dates, montants, voyageurs).
+ */
+const lastWarned = new Map<string, number>();
+const WARN_EVERY_MS = 3_600_000;
+
 async function warnHost(deps: StayQuoteDeps, message: string): Promise<void> {
+  const kind = message.replace(/\d+([.,]\d+)?/g, "#");
+  const now = Date.now();
+  if (now - (lastWarned.get(kind) ?? 0) < WARN_EVERY_MS) return;
+  lastWarned.set(kind, now);
   try {
     await deps.onAnomaly?.(message);
   } catch {
@@ -192,7 +213,12 @@ export function validateRequest(cfg: StayQuoteConfig, req: StayRequest, today: s
     return fail("capacity", `Au maximum ${cfg.capacity.maxChildren} enfants.`);
   }
   const unknown = (req.extras ?? []).filter((id) => !cfg.optionalExtras?.some((e) => e.id === id));
-  if (unknown.length) return fail("invalid-request", `Supplément inconnu : ${unknown.join(", ")}.`);
+  // La valeur reçue n'est jamais renvoyée : ce `detail` est relu par une IA, et le site ne doit
+  // pas servir de relais à un texte choisi par l'auteur d'un lien.
+  if (unknown.length) {
+    const known = (cfg.optionalExtras ?? []).map((e) => e.id).join(", ") || "aucun";
+    return fail("invalid-request", `Supplément inconnu. Suppléments possibles : ${known}.`);
+  }
   return null;
 }
 
@@ -275,7 +301,9 @@ export async function priceStay(
   // séjour minimum garde sa raison et sa durée, pour que les alternatives proposent assez de nuits.
   if (price.warn) {
     const min = /minimum\D{0,20}(\d+)/i.exec(price.warn);
-    return min ? fail("min-stay", price.warn, Number(min[1])) : fail("unavailable", price.warn);
+    // Texte Beds24 relayé à une IA et affiché : sans balise, borné.
+    const warn = price.warn.replace(/<[^>]*>/g, "").slice(0, 200);
+    return min ? fail("min-stay", warn, Number(min[1])) : fail("unavailable", warn);
   }
   if (price.total <= 0) return fail("no-price", "Pas de tarif publié pour ces dates.");
 
@@ -307,7 +335,9 @@ export async function priceStay(
     amount: round2((e.perGuest ?? 0) * guests + (e.perStay ?? 0)),
   }));
   const total = round2(price.total + extras.reduce((s, l) => s + l.amount, 0));
-  const notices: string[] = [];
+  const notices: string[] = (chosen as OptionalExtra[])
+    .map((e) => e.bookingNote && (e.bookingNote[req.lang] ?? e.bookingNote.fr))
+    .filter((n): n is string => Boolean(n));
   if (cfg.lastMinute && daysBetween(deps.today, req.checkIn) <= cfg.lastMinute.withinDays) {
     const n = cfg.lastMinute.notice;
     notices.push(n[req.lang] ?? n.fr ?? Object.values(n)[0] ?? "");

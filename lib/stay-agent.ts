@@ -50,6 +50,8 @@ export interface StayAgentConfig {
   quotePagePath?: (lang: string, token: string) => string;
   /** Chemin du calendrier, que le site pré-remplit depuis la requête (`?arrivee=&depart=…`). */
   calendarPath: (lang: string) => string;
+  /** Réservation instantanée (sans validation de l'hôte) sur la page de paiement. */
+  instantBooking: boolean;
 }
 
 export interface StayAgentDeps extends StayQuoteDeps {
@@ -114,7 +116,7 @@ function policies(cfg: StayAgentConfig) {
             },
           }
         : {}),
-      sameOnAllChannels: true,
+      ...(c.sameOnAllChannels !== undefined ? { sameOnAllChannels: c.sameOnAllChannels } : {}),
     },
     payment: {
       direct: {
@@ -123,7 +125,12 @@ function policies(cfg: StayAgentConfig) {
         touristTaxIncluded: cfg.payment.direct.touristTaxIncluded,
       },
       ...(cfg.payment.business
-        ? { businessOnInvoice: { depositPercent: cfg.payment.business.depositPct, balance: "before arrival" } }
+        ? {
+            businessOnInvoice: {
+              depositPercent: cfg.payment.business.depositPct,
+              ...(cfg.payment.business.balanceDue ? { balance: cfg.payment.business.balanceDue } : {}),
+            },
+          }
         : {}),
     },
   };
@@ -142,7 +149,7 @@ export function propertyInfo(cfg: StayAgentConfig, p: ToolParams): ToolResult {
       ...f,
       pages,
       booking: {
-        instantBooking: true,
+        instantBooking: cfg.instantBooking,
         currency: "EUR",
         maxGuests: cfg.quote.capacity.maxTotal,
         defaultMinStayNights: cfg.quote.defaultMinStay,
@@ -161,9 +168,9 @@ export function propertyInfo(cfg: StayAgentConfig, p: ToolParams): ToolResult {
 
 /** `check_availability` : les nuits libres d'une plage, et les règles qui s'y appliquent. */
 export async function availability(cfg: StayAgentConfig, deps: StayQuoteDeps, p: ToolParams): Promise<ToolResult> {
-  const from = p.from && p.from < deps.today ? deps.today : p.from;
+  if (!isDay(p.from) || !isDay(p.to)) return bad("Paramètres from et to attendus au format AAAA-MM-JJ.");
+  const from = p.from < deps.today ? deps.today : p.from;
   const to = p.to;
-  if (!isDay(from) || !isDay(to)) return bad("Paramètres from et to attendus au format AAAA-MM-JJ.");
   const span = daysBetween(from, to);
   if (span < 0 || span > MAX_SEARCH_DAYS) return bad(`Plage de ${MAX_SEARCH_DAYS} jours au plus, from avant to.`);
   try {
@@ -282,7 +289,11 @@ export async function find(cfg: StayAgentConfig, deps: StayAgentDeps, p: ToolPar
   const arrivalWeekdays = weekdaysOf(p.weekdays);
   if (arrivalWeekdays === null) return bad("weekdays : jours séparés par des virgules, ex. fri ou fri,sat.");
   const near = p.near || undefined;
+  const limit = intParam(p, "limit");
+  if (Number.isNaN(limit)) return bad("limit : un entier de 1 à 8.");
+  if (Number.isNaN(nights) || Number.isNaN(adults)) return bad("adults et nights : des entiers.");
   const r = await findStays(cfg.quote, deps, {
+    purpose: p.purpose?.slice(0, 40),
     from: p.from ?? "",
     to: p.to ?? "",
     nights,
@@ -292,10 +303,14 @@ export async function find(cfg: StayAgentConfig, deps: StayAgentDeps, p: ToolPar
     extras,
     arrivalWeekdays,
     near,
-    limit: intParam(p, "limit"),
+    limit,
   });
   const stays = await Promise.all(r.stays.map(async (s) => ({ ...s, ...(await links(cfg, deps, s, lang, src, extras)) })));
-  if (stays.length) return { status: 200, body: { ok: true, stays, candidates: r.candidates } };
+  if (stays.length) {
+    // Panne en cours de route : résultat partiel, à ne pas mettre en cache comme complet.
+    const partial = r.failure?.reason === "service-unavailable";
+    return { status: partial ? 206 : 200, body: { ok: true, stays, candidates: r.candidates, ...(partial ? { partial: true } : {}) } };
+  }
   const reason = r.failure?.reason;
   return {
     status: reason === "invalid-request" ? 400 : reason === "service-unavailable" ? 503 : 200,

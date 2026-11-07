@@ -1202,6 +1202,17 @@ amène à la page de paiement Beds24. **Rien n'est réservé ni payé par le soc
 | `lib/quote-page.ts`, `components/QuoteSummary.tsx`, `lib/quote-labels.ts` | `loadQuotePage` revérifie à chaque affichage : `valid`, `price-changed` (nouveau prix affiché), `unavailable` (+ alternatives), `expired`, `invalid` (autre site ou falsifié), `unchecked` (panne : on montre le devis signé). Textes en 5 langues sauf `included`, propre au site. |
 | `components/ReservationCalendar.tsx` | Pré-remplissage par `?arrivee=&depart=&adultes=&enfants=` : voyageurs tout de suite, dates **seulement** si le moteur de sélection les accepte une fois le mois chargé. |
 
+**Route publique, donc protections** (relecture cerbère) : `monthlyAvailability(read)`
+(`lib/availability.ts`) — le site **doit** envelopper sa lecture Beds24 pour que l'API ne lise
+que des mois civils entiers (quinze URL possibles, absorbées par le cache de 60 s, au lieu d'une
+URL par bornes choisies par l'appelant) ; `find` plafonné à `limit × 2` prix, `limit` illisible ⇒
+400 ; une alerte `onAnomaly` par type et par heure ; jamais d'écho d'une valeur reçue dans un
+`detail` (relu par une IA) ; jetons de devis à audience `sejour-quote`, secret refusé s'il égale
+`DASHBOARD_SECRET` ; jeton > 2 048 caractères ⇒ `invalid`. La limite par IP est une règle
+**Vercel Firewall** de chaque projet (`/api/agent/*`, `/*/devis/*`), pas du code.
+`OptionalExtra.bookingNote` : consigne ajoutée aux `notices` quand la page de paiement ne coche
+pas le supplément d'elle-même. `purpose` est un paramètre documenté (refus propres au site).
+
 `deps` est une **fabrique** côté site : `today` se recalcule à chaque requête. Vérification :
 `npm run verifier` (`scripts/verifier-agent.ts`, réponses Beds24 enregistrées le 2026-11-07,
 sans réseau). Pièges payés : la taxe de séjour de Barbusse ne porte que sur les adultes ; Beds24

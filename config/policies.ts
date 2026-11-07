@@ -21,6 +21,8 @@ export interface CancellationPolicy {
   tiers: CancellationTier[];
   /** Délai de grâce après réservation (Airbnb Ferme : 48 h, si l'arrivée est à J-14 ou plus). */
   gracePeriod?: { hoursAfterBooking: number; minDaysBefore: number; refundPct: number };
+  /** La même règle s'applique-t-elle sur les plateformes (Airbnb…) qu'en direct ? Dit aux IA. */
+  sameOnAllChannels?: boolean;
 }
 
 export interface PaymentPolicy {
@@ -32,5 +34,7 @@ export interface PaymentPolicy {
   business?: {
     depositPct: number;
     via: string;
+    /** Quand se règle le solde, dit tel quel aux IA (« before arrival »). */
+    balanceDue?: string;
   };
 }

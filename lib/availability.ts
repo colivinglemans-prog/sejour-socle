@@ -82,3 +82,37 @@ export function longestFreeRange(
   if (!best) return null;
   return { from: best.from, to: addDays(best.from, best.nights), nights: best.nights };
 }
+
+type AvailabilityReader = (from: string, to: string) => Promise<AvailabilityResponse>;
+
+/**
+ * Lit la disponibilité **par mois civils entiers**, puis découpe en mémoire.
+ *
+ * Une route publique (l'API des IA, la page de devis) reçoit des bornes au choix de
+ * l'appelant ; lues telles quelles, chaque variation produit une nouvelle URL Beds24, que le
+ * cache de données ne reconnaît pas — un robot qui fait varier `from` épuiserait le quota du
+ * jeton public, partagé avec le calendrier du site. Par mois entiers, il n'existe qu'une
+ * quinzaine d'URL possibles : le cache de 60 s les absorbe, quel que soit le trafic.
+ */
+export function monthlyAvailability(read: AvailabilityReader): AvailabilityReader {
+  return async (from, to) => {
+    const months: [string, string][] = [];
+    for (let m = from.slice(0, 7); m <= to.slice(0, 7); ) {
+      const [y, mo] = m.split("-").map(Number);
+      const next = mo === 12 ? `${y + 1}-01` : `${y}-${String(mo + 1).padStart(2, "0")}`;
+      months.push([`${m}-01`, addDays(`${next}-01`, -1)]);
+      m = next;
+    }
+    const parts = await Promise.all(months.map(([a, b]) => read(a, b)));
+    const inRange = (d: string) => d >= from && d <= to;
+    const out: AvailabilityResponse = { dates: {}, minStay: {}, sansArrivee: [], sansDepart: [] };
+    for (const p of parts) {
+      for (const [d, v] of Object.entries(p.dates)) if (inRange(d)) out.dates[d] = v;
+      // Les minima se gardent même hors bornes : Beds24 les rend décalés d'un jour.
+      Object.assign(out.minStay!, p.minStay ?? {});
+      out.sansArrivee!.push(...(p.sansArrivee ?? []).filter(inRange));
+      out.sansDepart!.push(...(p.sansDepart ?? []).filter(inRange));
+    }
+    return out;
+  };
+}

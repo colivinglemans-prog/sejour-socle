@@ -39,6 +39,8 @@ export interface StaySearch {
   near?: string;
   /** Fenêtres chiffrées au maximum. 5 par défaut, plafonné à 8. */
   limit?: number;
+  /** Motif déclaré, transmis au refus propre au site. */
+  purpose?: string;
 }
 
 export type PricedStay = Extract<StayQuote, { ok: true }>;
@@ -59,7 +61,8 @@ export async function findStays(
   deps: StayQuoteDeps,
   q: StaySearch,
 ): Promise<StaySearchResult> {
-  const limit = Math.min(Math.max(q.limit ?? 5, 1), 8);
+  // `NaN` (paramètre illisible) ferait sauter le plafond d'appels : seul un entier est retenu.
+  const limit = Number.isInteger(q.limit) ? Math.min(Math.max(q.limit as number, 1), 8) : 5;
   // Entrée publique : un jour mal formé rendrait `daysBetween` NaN, et la boucle d'arrivées
   // `d <= q.to` ne s'arrêterait plus. Tout est vérifié avant le moindre calcul.
   const badDay = !isDay(q.from) || !isDay(q.to) || (q.near !== undefined && !isDay(q.near));
@@ -92,6 +95,7 @@ export async function findStays(
     children: q.children,
     lang: q.lang,
     extras: q.extras,
+    purpose: q.purpose,
   };
   const invalid = validateRequest(cfg, probe, deps.today);
   if (invalid && !invalid.ok) return { stays: [], candidates: 0, failure: invalid };

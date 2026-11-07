@@ -151,7 +151,7 @@ export default function QuoteSummary({ state, lang, labels, calendarUrl, conditi
           </div>
           {state.status === "price-changed" && <p className="text-sm">{labels.priceChanged}</p>}
           {state.status === "unchecked" && <p className="text-sm">{labels.unchecked}</p>}
-          {[...notices, ...(state.current?.notices ?? [])].map((n) => (
+          {[...new Set([...notices, ...(state.current?.notices ?? [])])].map((n) => (
             <p key={n} className="rounded-xl border border-primary/40 bg-primary/5 p-4 font-medium">
               {n}
             </p>

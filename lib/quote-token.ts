@@ -43,6 +43,12 @@ export interface QuoteKeys {
 
 export const QUOTE_VALIDITY_DAYS = 7;
 
+/**
+ * Audience des devis : un jeton de devis ne doit jamais valoir ailleurs, et surtout pas comme
+ * jeton de dashboard (même algorithme HS256). Elle est posée à la signature et exigée ici.
+ */
+const QUOTE_AUDIENCE = "sejour-quote";
+
 const enc = (s: string) => new TextEncoder().encode(s);
 
 /**
@@ -55,6 +61,11 @@ export function quoteKeysFromEnv(env: Record<string, string | undefined> = proce
   const secret = env.QUOTE_SIGNING_SECRET;
   if (!secret || secret.length < 32) {
     throw new Error("QUOTE_SIGNING_SECRET manquant ou trop court (32 caractères au moins).");
+  }
+  // Même secret que le dashboard : `/api/agent/quote` distribuerait publiquement des jetons que
+  // la garde du dashboard accepterait. Refusé net.
+  if (env.DASHBOARD_SECRET && (secret === env.DASHBOARD_SECRET || env.QUOTE_SIGNING_SECRET_PREVIOUS === env.DASHBOARD_SECRET)) {
+    throw new Error("QUOTE_SIGNING_SECRET doit différer de DASHBOARD_SECRET.");
   }
   const keys: QuoteKeys = { current: { kid: env.QUOTE_SIGNING_KID || "k1", secret } };
   const prev = env.QUOTE_SIGNING_SECRET_PREVIOUS;
@@ -70,6 +81,7 @@ export async function signQuote(payload: QuotePayload, keys: QuoteKeys, now = ne
   return new SignJWT({ ...payload })
     .setProtectedHeader({ alg: "HS256", kid: keys.current.kid })
     .setIssuedAt(iat)
+    .setAudience(QUOTE_AUDIENCE)
     .setExpirationTime(iat + QUOTE_VALIDITY_DAYS * 86_400)
     .sign(enc(keys.current.secret));
 }
@@ -86,9 +98,11 @@ export async function verifyQuote(token: string, keys: QuoteKeys, now = new Date
       // rotation dès qu'un secret change de rôle sans que son `kid` le suive.
       const { payload } = await jwtVerify(token, enc(key.secret), {
         algorithms: ["HS256"],
+        audience: QUOTE_AUDIENCE,
         currentDate: now,
       });
-      const { iat, exp, ...rest } = payload as unknown as QuotePayload & { iat: number; exp: number };
+      const { iat, exp, ...rest } = payload as unknown as QuotePayload & { iat: number; exp: number; aud?: string };
+      delete rest.aud;
       return { ok: true, quote: rest as QuotePayload, issuedAt: iat, expiresAt: exp };
     } catch (e) {
       if ((e as { code?: string }).code === "ERR_JWT_EXPIRED") return { ok: false, reason: "expired" };

@@ -323,8 +323,9 @@ export default function ReservationCalendar({
     if (c !== null && a !== null) {
       setChildren(Math.max(0, Math.min(c, guests.maxChildren ?? guests.maxTotal, guests.maxTotal - Math.min(a, guests.maxTotal))));
     }
-    const day = /^\d{4}-\d{2}-\d{2}$/;
-    if (day.test(ci) && day.test(co) && ci < co && ci >= today) {
+    // Aller-retour par `formatDate` : `2027-13-45` ou un 30 février ne passent pas.
+    const isDay = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s) && formatDate(new Date(`${s}T12:00:00`)) === s;
+    if (isDay(ci) && isDay(co) && ci < co && ci >= today) {
       setYear(Number(ci.slice(0, 4)));
       setMonth(Number(ci.slice(5, 7)) - 1);
       setPrefill({ checkIn: ci, checkOut: co });
