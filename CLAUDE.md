@@ -1131,6 +1131,24 @@ le voyageur ne reçoit pas est le pire des cas.
 par le code d'une réservation (`trigger 255`, `state 0`). Elle remplace l'`infoItem` `CHECKIN`
 que déposait le connecteur.
 
+### v3.8.1 — correctifs de dates et de chiffres fiscaux
+
+Correctif : aucun export, aucune signature, aucun type public modifié — d'où un correctif et non
+une mineure, comme `v3.5.1` et `v3.7.1`. Des **valeurs affichées changent** ; chaque site les
+valide avant de monter. Chaque correctif retire le `it.skip` qui le documentait.
+
+| Chemin | Correctif | Effet visible côté site |
+|---|---|---|
+| `lib/invoice-number.ts` | Année du numéro lue au calendrier de Paris (`getUTCFullYear` avant). | Une facture émise le 1er janvier entre 0 h et 1 h à Paris prend un numéro de l'année nouvelle. |
+| `lib/invoice-pdf.tsx` | « Émise le » au jour de Paris (jour UTC avant). | Facture faite entre 0 h et 1 h (2 h l'été) : la date d'émission n'est plus la veille. |
+| `lib/invoice-payload.ts` | Dates par défaut (`emptyPayload`, `paymentToPayload`) et échéance J+3 de `defaultPaymentDueDate` au jour de Paris. | Formulaire de facture ouvert la nuit : date du jour et échéance justes. |
+| `lib/taxe-sejour.ts` | `ecartDeCollecte` somme **toutes** les lignes de taxe (prolongation), lit `amount × qty` à défaut de `lineTotal`, écarte les lignes de paiement. | L'écart collecté / dû des séjours avec mineurs apparaît sur des réservations qu'il ignorait, et son montant change là où il y avait plusieurs lignes. |
+| `lib/fiscal/revenus.ts` | `occupancyRatio` = nuits **réalisées** ÷ jours observés, bornes incluses, nuit du 31/12 comptée ; exercice futur : rien de réalisé, taux 0, `commissionsProjected` = commissions connues. | Taux d'occupation de la page fiscale **en baisse** sur l'exercice en cours (le carnet à venir n'y entre plus) ; exercice clos : légère hausse possible (nuit du 31/12) ; exercice futur : réalisé et taux à 0, commissions simulées non nulles. |
+| `lib/stay-selection.ts` | Commentaire seul : le plafond de `consecutiveFreeNights` est 366, pas 365. | Aucun. |
+
+Laissé en l'état, décision de l'utilisateur : quotient conjugal en dur dans `fiscal/ir.ts`
+(foyer en couple, 3 parts) — `it.skip` conservé.
+
 ### Comment une application s'y branche
 
 ```jsonc
