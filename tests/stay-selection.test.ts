@@ -14,6 +14,7 @@ import {
   type Selection,
   type SelectionContext,
 } from "../lib/stay-selection";
+import { shortestStay } from "../lib/stay-search";
 
 interface Monde {
   today?: string;
@@ -123,6 +124,16 @@ describe("isValidCheckOut", () => {
   it("refuse un séjour qui enjambe une nuit occupée", () => {
     expect(isValidCheckOut(c, "2026-07-03", "2026-07-06")).toBe(false);
     expect(isValidCheckOut(c, "2026-07-03", "2026-07-09")).toBe(false);
+  });
+
+  it("applique le séjour minimum de chaque nuit couverte, comme Beds24 (Noël)", () => {
+    // 3 nuits minimum du 21 au 31 décembre : le 20 → 22 couvre la nuit du 21, Beds24 le refuse.
+    const noel: Record<string, number> = {};
+    for (let j = 21; j <= 31; j++) noel[`2026-12-${j}`] = 3;
+    const fetes = ctx({ today: "2026-11-08", minStay: noel });
+    expect(isValidCheckOut(fetes, "2026-12-20", "2026-12-22")).toBe(false);
+    expect(isValidCheckOut(fetes, "2026-12-20", "2026-12-23")).toBe(true);
+    expect(isValidCheckOut(fetes, "2026-12-19", "2026-12-21")).toBe(true); // la nuit du 21 n'est pas couverte
   });
 
   it("ne revérifie pas la nuit d'arrivée — c'est le rôle de isValidCheckIn", () => {
@@ -270,5 +281,33 @@ describe("selectionAfterClick", () => {
       hoverDate: null,
     });
     expect(selectionAfterClick(c, s, "2026-07-09")).toBeNull();
+  });
+});
+
+describe("shortestStay (séjour minimum effectif)", () => {
+  // Albiez en janvier : 3 nuits jusqu'au 15, puis 6 nuits et arrivée/départ le samedi seulement.
+  const minStay: Record<string, number> = {};
+  const fermes: string[] = [];
+  for (let j = 1; j <= 31; j++) {
+    const d = `2027-01-${String(j).padStart(2, "0")}`;
+    minStay[d] = j >= 16 ? 6 : 3;
+    if (j >= 17 && new Date(`${d}T12:00:00Z`).getUTCDay() !== 6) fermes.push(d);
+  }
+  const janvier = ctx({ today: "2026-11-08", minStay, arriveeFermee: fermes, departFerme: fermes });
+
+  it("allonge jusqu'au premier départ ouvert : samedi 16 → 7 nuits, jeudi 14 → 9", () => {
+    expect(shortestStay(janvier, "2027-01-16", 1, 14)).toBe(7);
+    expect(shortestStay(janvier, "2027-01-14", 1, 14)).toBe(9);
+    expect(shortestStay(janvier, "2027-01-11", 1, 14)).toBe(3);
+  });
+
+  it("une arrivée fermée ou une nuit prise rend null, pas une durée", () => {
+    expect(shortestStay(janvier, "2027-01-18", 1, 14)).toBeNull();
+    const pris = ctx({ today: "2026-11-08", occupe: ["2027-01-12"] });
+    expect(shortestStay(pris, "2027-01-11", 2, 14)).toBeNull();
+  });
+
+  it("sans allongement permis, seul le minimum exact compte", () => {
+    expect(shortestStay(janvier, "2027-01-14", 1, 0)).toBeNull();
   });
 });

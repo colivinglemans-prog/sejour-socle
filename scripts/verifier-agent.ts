@@ -23,7 +23,7 @@ import { createAgentRoute, openApi, runTool } from "../lib/stay-agent-http";
 import { availability, propertyInfo } from "../lib/stay-agent";
 import { cancellationText } from "../lib/quote-labels";
 import { loadQuotePage, withSrc } from "../lib/quote-page";
-import { indexNowBody, sitemapUrls, submitIndexNow } from "../lib/indexnow";
+import { indexNowBody, sitemapUrls, submitIndexNow } from "../lib/indexnow.mjs";
 import { monthlyAvailability } from "../lib/availability";
 import { createMcpRoute } from "../lib/stay-agent-mcp";
 
@@ -396,6 +396,13 @@ async function main() {
   let badKey = false;
   try { indexNowBody({ host: "www.exemple.fr", key: "pas-hexa!", urls: ["https://www.exemple.fr/"] }); } catch { badKey = true; }
   check("IndexNow : clé hors format refusée", badKey);
+  const refuses = (urls: string[]) => {
+    try { indexNowBody({ host: "www.exemple.fr", key: "0123456789abcdef", urls }); return false; } catch { return true; }
+  };
+  check("IndexNow : liste vide (ou rien sur l'hôte) refusée, rien n'est envoyé", refuses([]) && refuses(["https://ailleurs.fr/"]));
+  check("IndexNow : plus de 10 000 URL refusées plutôt que tronquées",
+    refuses(Array.from({ length: 10_001 }, (_, i) => `https://www.exemple.fr/p${i}`)));
+  check("IndexNow : une URL illisible n'interrompt rien", !refuses(["%%%", "https://www.exemple.fr/ok"]));
   const posted: { url: string; body: string }[] = [];
   const inRes = await submitIndexNow(
     { host: "www.exemple.fr", key: "0123456789abcdef", urls: ["https://www.exemple.fr/fr"] },

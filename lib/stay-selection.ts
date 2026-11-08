@@ -88,6 +88,10 @@ export function isValidCheckIn(ctx: SelectionContext, day: string): boolean {
  * **Le jour du départ n'a pas besoin d'être libre** : le voyageur part le matin, le suivant
  * arrive le soir. Seules les nuits *entre* les deux doivent l'être. C'est la règle qui permet
  * de vendre la nuit qui précède une arrivée déjà enregistrée.
+ *
+ * Le séjour minimum vaut pour **chaque nuit couverte**, pas seulement pour l'arrivée : Beds24
+ * refuse le 20 → 22 décembre (« minimum 3 Nuits ») parce que la nuit du 21 est en période des
+ * fêtes. Le calendrier ne propose donc plus ce départ — même règle que `checkStayRules`.
  */
 export function isValidCheckOut(
   ctx: SelectionContext,
@@ -99,6 +103,7 @@ export function isValidCheckOut(
   if (day < addDays(checkIn, ctx.minStayOf(checkIn))) return false;
   for (let d = addDays(checkIn, 1); d < day; d = addDays(d, 1)) {
     if (!ctx.isFree(d)) return false;
+    if (day < addDays(checkIn, ctx.minStayOf(d))) return false;
   }
   return true;
 }

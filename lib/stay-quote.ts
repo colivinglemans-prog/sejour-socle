@@ -145,7 +145,7 @@ export type StayQuote =
       stayTotal: number;
       /**
        * Le détail de `stayTotal` quand le site fournit `breakdown`, au centime : la somme des
-       * lignes vaut exactement `stayTotal` (l'arrondi est reporté sur la première ligne).
+       * lignes vaut exactement `stayTotal` : l'écart d'arrondi, au plus `tolerance`, est reporté sur la première ligne.
        */
       stayLines?: QuoteLine[];
       /** Suppléments facultatifs retenus, en plus. */
@@ -366,7 +366,7 @@ export async function priceStay(
   if (rawLines?.length) {
     stayLines = rawLines.map((l) => ({ ...l, amount: round2(l.amount) }));
     // Les lignes arrondies doivent retomber exactement sur le total Beds24 : l'écart de centimes
-    // (déjà borné par la tolérance ci-dessus) va sur la première ligne, les nuits.
+    // (au plus `tolerance`, contrôlé ci-dessus) va sur la première ligne, les nuits.
     const delta = round2(price.total - stayLines.reduce((s, l) => s + l.amount, 0));
     stayLines[0] = { ...stayLines[0], amount: round2(stayLines[0].amount + delta) };
   }

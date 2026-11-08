@@ -1,50 +1,69 @@
 #!/usr/bin/env node
 /**
- * Soumet à IndexNow toutes les URL du sitemap d'un site, plus des URL ajoutées à la main.
+ * Soumet à IndexNow les URL du sitemap d'un site, plus des pages ajoutées à la main.
  *
- *   node node_modules/@sejour/socle/scripts/indexnow.mjs --site https://www.exemple.fr --key <clé> [--extra /llms.txt,/api/agent/info]
+ *   node node_modules/@sejour/socle/scripts/indexnow.mjs --site https://www.exemple.fr --key <clé> [--extra /llms.txt]
  *
- * Écrit en JavaScript et non en TypeScript : Node refuse d'enlever les types d'un fichier situé
- * dans `node_modules`, et ce script s'exécute depuis le dossier du site. Il reprend à
- * l'identique le corps et les codes de `lib/indexnow.ts` (vérifié par `npm run verifier`) —
- * toute évolution du protocole se fait aux deux endroits.
+ * N'ajouter en `--extra` que des pages de contenu (`/llms.txt`) : **jamais** une route qui
+ * interroge Beds24 (`/api/agent/*`, `/api/mcp`) — un moteur la visiterait et consommerait le quota.
  *
- * Vérifie d'abord que le fichier de clé est servi : sans lui, IndexNow répond 403 et la
- * soumission est perdue.
+ * Toute la logique (corps, contrôles, codes de réponse) est dans `lib/indexnow.mjs`, seule
+ * source, testée par le verifier. Ce script ne fait que lire le site et appeler ce module.
+ * Il refuse d'envoyer si le fichier de clé n'est pas servi (IndexNow répondrait 403) ou si le
+ * sitemap ne répond pas 200.
  */
-const args = Object.fromEntries(
-  process.argv.slice(2).reduce((acc, a, i, all) => (a.startsWith("--") ? [...acc, [a.slice(2), all[i + 1]]] : acc), []),
-);
-const site = (args.site ?? "").replace(/\/+$/, "");
-const key = args.key ?? "";
-if (!/^https:\/\/[^/]+$/.test(site) || !/^[0-9a-f]{8,128}$/i.test(key)) {
-  console.error("Usage : --site https://www.exemple.fr --key <8 à 128 caractères hexadécimaux> [--extra /a,/b]");
-  process.exit(2);
-}
-const host = new URL(site).host;
-const keyLocation = `${site}/${key}.txt`;
+import { indexNowBody, isIndexNowKey, sitemapUrls, submitIndexNow } from "../lib/indexnow.mjs";
 
-const keyFile = await fetch(keyLocation);
-const served = keyFile.ok ? (await keyFile.text()).trim() : "";
-if (served !== key) {
-  console.error(`Fichier de clé absent ou différent (${keyLocation} → HTTP ${keyFile.status}) : rien n'est soumis.`);
-  process.exit(1);
+/**
+ * Code de sortie rendu plutôt que `process.exit()` : sous Windows, quitter brutalement juste après
+ * un `fetch` fait échouer une assertion de Node (code 127 au lieu du code voulu).
+ */
+async function main() {
+  const argv = process.argv.slice(2);
+  const arg = (name) => {
+    const i = argv.indexOf(`--${name}`);
+    return i === -1 ? undefined : argv[i + 1];
+  };
+  const site = (arg("site") ?? "").replace(/\/+$/, "");
+  const key = arg("key") ?? "";
+  if (!/^https:\/\/[^/]+$/.test(site) || !isIndexNowKey(key)) {
+    console.error("Usage : --site https://www.exemple.fr --key <8 à 128 caractères hexadécimaux> [--extra /llms.txt]");
+    return 2;
+  }
+  const host = new URL(site).host;
+
+  const keyFile = await fetch(`${site}/${key}.txt`);
+  const served = keyFile.ok ? (await keyFile.text()).trim() : "";
+  if (served !== key) {
+    console.error(`Fichier de clé absent ou différent (${site}/${key}.txt → HTTP ${keyFile.status}) : rien n'est soumis.`);
+    return 1;
+  }
+
+  const sitemap = await fetch(`${site}/sitemap.xml`);
+  if (!sitemap.ok) {
+    console.error(`Sitemap illisible (HTTP ${sitemap.status}) : rien n'est soumis.`);
+    return 1;
+  }
+  const extra = (arg("extra") ?? "")
+    .split(",")
+    .filter(Boolean)
+    .map((p) => (p.startsWith("http") ? p : `${site}${p.startsWith("/") ? p : `/${p}`}`));
+
+  let body;
+  try {
+    body = indexNowBody({ host, key, urls: [...sitemapUrls(await sitemap.text()), ...extra] });
+  } catch (e) {
+    console.error(`${e instanceof Error ? e.message : e}`);
+    return 1;
+  }
+  const res = await submitIndexNow({ host, key, urls: body.urlList });
+  if (res.ok) {
+    console.log(`IndexNow : ${res.submitted} URL soumises (HTTP ${res.status}${res.status === 202 ? ", clé en cours de validation" : ""}).`);
+  } else {
+    console.error(`IndexNow : HTTP ${res.status} — ${res.reason}.`);
+    return 1;
+  }
+  return 0;
 }
 
-const xml = await (await fetch(`${site}/sitemap.xml`)).text();
-const fromSitemap = [...xml.matchAll(/<loc>\s*([^<\s]+)\s*<\/loc>/g)].map((m) => m[1].replace(/&amp;/g, "&"));
-const extra = (args.extra ?? "").split(",").filter(Boolean).map((p) => (p.startsWith("http") ? p : `${site}${p}`));
-const urlList = [...new Set([...fromSitemap, ...extra])].filter((u) => new URL(u).host === host).slice(0, 10_000);
-
-const res = await fetch("https://api.indexnow.org/indexnow", {
-  method: "POST",
-  headers: { "Content-Type": "application/json; charset=utf-8" },
-  body: JSON.stringify({ host, key, keyLocation, urlList }),
-});
-const reasons = { 400: "format refusé", 403: "clé refusée", 422: "URL hors de l'hôte", 429: "trop d'envois" };
-if (res.status === 200 || res.status === 202) {
-  console.log(`IndexNow : ${urlList.length} URL soumises (HTTP ${res.status}${res.status === 202 ? ", clé en cours de validation" : ""}).`);
-} else {
-  console.error(`IndexNow : HTTP ${res.status} — ${reasons[res.status] ?? "réponse inattendue"}.`);
-  process.exit(1);
-}
+process.exitCode = await main();

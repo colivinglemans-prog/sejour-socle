@@ -57,7 +57,6 @@ export interface QuoteSummaryProps {
   header?: ReactNode;
 }
 
-
 const LOCALE_TAG: Record<string, string> = { fr: "fr-FR", en: "en-GB", de: "de-DE", es: "es-ES", it: "it-IT" };
 
 function fmt(lang: string) {
@@ -204,7 +203,7 @@ export default function QuoteSummary({
             </p>
           </div>
           {cancellation && <p className="text-sm">{cancellation}</p>}
-          {notes.map((n) => (
+          {[...new Set(notes)].map((n) => (
             <p key={n} className="text-sm text-secondary">
               {n}
             </p>

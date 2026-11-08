@@ -11,6 +11,7 @@
   "//exports-tsx": "Un module de `lib/` ecrit en TSX ne peut pas passer par le motif `./lib/*` : il pointe sur `.ts`. Chaque .tsx de lib/ prend donc une entree exacte, qui l'emporte sur le motif.",
   "exports": {
     "./lib/invoice-pdf": "./lib/invoice-pdf.tsx",
+    "./lib/indexnow": "./lib/indexnow.mjs",
     "./lib/*": "./lib/*.ts",
     "./components/*": "./components/*.tsx",
     "./ui/*": "./ui/*",

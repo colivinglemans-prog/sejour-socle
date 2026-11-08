@@ -1262,9 +1262,20 @@ Retours des tests voyageur du 2026-11-08.
 | `lib/stay-quote.ts` | `checkStayRules` applique aussi le minimum de **chaque nuit couverte**, comme Beds24 (20 → 22/12 refusé : la nuit du 21 est en période des fêtes). `breakdown(p) ⇒ QuoteLine[]` facultatif : détail du total Beds24 (nuits, ménage, linge, taxe) ; s'il est fourni, sa somme **remplace** `expectedTotal` comme garde-fou et les lignes sortent en `stayLines`, au centime (l'arrondi va sur la première ligne). |
 | `lib/stay-agent.ts` | `check_availability` rend `minStayByArrival` = séjour minimum **effectif** de chaque jour d'arrivée possible (6 nuits Beds24 + départ le samedi ⇒ 7) ; un jour absent n'accepte pas d'arrivée. Plus de `defaultMinStayNights` : `info.booking.minStay` dit que le minimum varie et renvoie à `check_availability` (`fallbackNights` n'est qu'un repli). |
 | `components/QuoteSummary.tsx`, `lib/quote-page.ts` | Détail ligne par ligne (`stayLines`, puis suppléments) ; `notes` (rappels du site, ex. accueil des jeunes enfants) ; `included` peut être une fonction des suppléments retenus ; `withSrc` garde l'origine (`src`) sur les liens du calendrier. |
-| `lib/indexnow.ts`, `scripts/indexnow.mjs` | IndexNow (Bing, donc ChatGPT Search ; Yandex…) : `submitIndexNow`, `indexNowBody`, `sitemapUrls`. Le script (JavaScript : Node n'enlève pas les types dans `node_modules`) vérifie que `https://<hôte>/<clé>.txt` est servi, lit le sitemap et soumet. Clé publique par construction, une par site. |
+| `lib/indexnow.mjs`, `scripts/indexnow.mjs` | IndexNow (Bing, donc ChatGPT Search ; Yandex…) : `submitIndexNow`, `indexNowBody`, `sitemapUrls`, en JavaScript (Node n'enlève pas les types dans `node_modules`) ; le script n'est qu'un appelant. Clé publique par construction, une par site. |
 
-Écart connu : le calendrier du site (`stay-selection`) ne contrôle que le minimum du jour d'arrivée ; une sélection 20 → 22/12 y reste possible et c'est la page Beds24 qui la refuse.
+**Note de version** (mineure, mais à lire avant de monter) :
+- `defaultMinStayNights` disparaît des réponses `info` et `availability` : `info.booking.minStay`
+  (`fallbackNights`, `howToKnow`) et `minStayByArrival` (minimum **effectif** par jour d'arrivée
+  possible ; la profondeur de lecture se calcule pour ne jamais en faire disparaître un).
+- `QuoteSummaryLabels.included` est `string | (suppléments retenus) => string`.
+- `checkStayRules` **et** `isValidCheckOut` (calendrier) sont plus stricts : minimum de chaque
+  nuit couverte, comme Beds24 — le calendrier ne propose plus 20 → 22/12.
+- Avec `near`, `findStays` rend les séjours dans l'ordre du classement, plus chronologiquement.
+- IndexNow : une seule source, `lib/indexnow.mjs` (JavaScript + JSDoc, entrée `exports`
+  explicite), importée par `scripts/indexnow.mjs` et par le verifier. Le script refuse
+  d'envoyer sans fichier de clé servi, sans sitemap en 200, avec une liste vide ou de plus de
+  10 000 URL. Ne jamais lui passer en `--extra` une route qui interroge Beds24.
 
 ### Comment une application s'y branche
 
