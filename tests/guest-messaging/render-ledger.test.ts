@@ -3,7 +3,7 @@ import { RenderError, renderTemplate, sanitizeVar } from "../../lib/guest-messag
 import { ledgerCode, ledgerFromInfoItems, ledgerFromThread, ledgerText } from "../../lib/guest-messaging/ledger";
 import { messagingChannel, realGuestEmail } from "../../lib/guest-messaging/channel-rules";
 import { pickGuestLocale } from "../../lib/guest-messaging/language";
-import { maskVars } from "../../lib/guest-messaging/overview";
+import { buildPreview } from "../../lib/guest-messaging/overview";
 import { access, departure } from "./fixtures";
 
 describe("rendu", () => {
@@ -71,7 +71,19 @@ describe("canal, e-mail, langue", () => {
     expect(pickGuestLocale({ lang: "ru", country: "DE" })).toEqual({ locale: "de", source: "country" });
     expect(pickGuestLocale({ lang: "", country: "" })).toEqual({ locale: "en", source: "fallback" });
   });
-  it("aperçu : codes masqués", () => {
-    expect(maskVars({ code: "123456", prenom: "Test" }, ["code"])).toEqual({ code: "••••", prenom: "Test" });
+  it("aperçu : tout est masqué sauf la liste blanche, les manques sont listés", () => {
+    const p = buildPreview({ ...access, previewVisible: ["prenom"] }, { id: 1, channel: "Airbnb", locale: "fr" }, { code: "123456", prenom: "Test" });
+    expect(p.text).toContain("Bonjour Test");
+    expect(p.text).not.toContain("123456");
+    expect(p.text).toContain("••••");
+    expect(p.missing).toEqual(["guide"]);
+    // Sans liste blanche, même le prénom est masqué.
+    expect(buildPreview(access, { id: 1, channel: "Airbnb", locale: "fr" }, { code: "1", guide: "g", prenom: "Test" }).text).not.toContain("Test");
+  });
+  it("canal : le champ décide, l'inconnu ne part jamais par e-mail", () => {
+    expect(messagingChannel({})).toBe("Autre");
+    expect(messagingChannel({ channel: "expedia", apiSourceId: 0 })).toBe("Autre");
+    expect(messagingChannel({ apiSourceId: 0 })).toBe("Direct");
+    expect(messagingChannel({ referer: "Booking.com" })).toBe("Booking.com");
   });
 });

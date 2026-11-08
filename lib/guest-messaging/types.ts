@@ -106,6 +106,11 @@ export interface MessageTemplate {
    * l'historique. Comparés sans accents ni casse.
    */
   fingerprints?: readonly string[];
+  /**
+   * Variables affichées en clair dans l'aperçu du dashboard. **Toutes les autres sont masquées**
+   * (liste blanche, cerbere) : une variable secrète ajoutée plus tard reste masquée sans y penser.
+   */
+  previewVisible?: readonly string[];
 }
 
 /** Ce que le moteur sait d'une réservation. Construit par le site depuis `Beds24Booking`. */
@@ -142,6 +147,8 @@ export interface LedgerEntry {
   /** Jour d'ancrage au moment de l'envoi, pour `onAnchorChange`. */
   anchorDay?: string;
   version?: number;
+  /** Aléa propre à un envoi, pour départager deux envois concurrents (voir `dispatch.ts`). */
+  nonce?: string;
   /** `ledger` = posé par le moteur ; `thread` = reconnu dans le fil (auto-action, envoi manuel). */
   source: "ledger" | "thread";
 }
@@ -149,7 +156,10 @@ export interface LedgerEntry {
 /** État d'un message pour une réservation — ce que le dashboard affiche. */
 export type MessageState =
   | { kind: "sent"; at: string; source: LedgerEntry["source"]; version?: number }
-  /** Réservé mais jamais confirmé depuis plus de `orphanMinutes` : l'hôte tranche, jamais de renvoi. */
+  /**
+   * Réservé mais jamais confirmé depuis plus de `orphanMinutes` : l'hôte tranche, jamais de renvoi.
+   * S'affiche aussi sur une réservation annulée depuis : la trace existe, il faut la regarder.
+   */
   | { kind: "orphan"; at: string }
   /** Réservé il y a peu : un autre passage est en train d'envoyer. */
   | { kind: "in-flight"; at: string }
@@ -166,7 +176,9 @@ export type ExclusionReason =
   | "no-email"
   | "info-item"
   | "min-nights"
-  | "stay-over";
+  | "stay-over"
+  /** Dates illisibles ou départ avant l'arrivée : la réservation est écartée sans faire tomber le plan. */
+  | "bad-dates";
 
 export interface PlannedMessage {
   bookingId: number;

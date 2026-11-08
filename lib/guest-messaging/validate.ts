@@ -25,7 +25,7 @@
 import type { Channel } from "../channels";
 import { LOCALES, type Locale } from "../locales";
 import { DEFAULT_CHANNEL_RULES } from "./channel-rules";
-import { normalizeForMatch } from "./ledger";
+import { ledgerCode, normalizeForMatch } from "./ledger";
 import { renderTemplate, tokenize, usedVariables } from "./render";
 import type { ChannelMessagingRule, LocalizedText, MessageTemplate } from "./types";
 
@@ -62,8 +62,21 @@ export function validateTemplates(templates: readonly MessageTemplate[], options
     const push = (f: Omit<TemplateFinding, "templateId">) => findings.push({ templateId: t.id, ...f });
 
     if (!ID.test(t.id)) push({ level: "error", field: "id", code: "id-format", detail: `« ${t.id} » : [a-z0-9-] attendu` });
-    if (seen.has(t.id)) push({ level: "error", field: "id", code: "id-duplicate", detail: `« ${t.id} » est en double` });
-    seen.add(t.id);
+    if (/-pending$/.test(t.id)) push({ level: "error", field: "id", code: "id-reserved", detail: "un identifiant ne finit pas par -pending (collision dans le registre)" });
+    const code = ledgerCode(t.id, "sent");
+    if (seen.has(code)) push({ level: "error", field: "id", code: "id-duplicate", detail: `« ${t.id} » donne le même code de registre qu'un autre modèle` });
+    seen.add(code);
+
+    // Heures du déclencheur et de la politique de retard.
+    const times = [t.trigger.anchor === "booked" ? null : t.trigger.at, t.late.mode === "send" ? t.late.until.at : null];
+    for (const at of times) {
+      if (at !== null && !/^([01]\d|2[0-3]):[0-5]\d$/.test(at)) push({ level: "error", code: "bad-time", detail: `heure « ${at} » : HH:MM attendu` });
+    }
+    // Le moteur reconnaît ses propres messages dans le fil (reprise, cohabitation) par les empreintes.
+    if (t.fingerprints?.length) {
+      const own = LOCALES.some((l) => t.fingerprints!.some((f) => normalizeForMatch(t.body[l] ?? "").includes(normalizeForMatch(f))));
+      if (!own) push({ level: "warning", field: "fingerprints", code: "fingerprint-foreign", detail: "aucune empreinte ne reconnaît le texte actuel du modèle" });
+    }
 
     const required = new Set(t.variables);
     const optional = new Set(t.optionalVariables ?? []);
@@ -155,7 +168,9 @@ export function validateTemplates(templates: readonly MessageTemplate[], options
       }
       for (const other of templates) {
         if (other.id === t.id) continue;
-        const hit = LOCALES.find((l) => normalizeForMatch(other.body[l] ?? "").includes(n));
+        const hit = LOCALES.find(
+          (l) => normalizeForMatch(other.body[l] ?? "").includes(n) || normalizeForMatch(other.bodyWithoutLinks?.[l] ?? "").includes(n),
+        );
         if (hit) {
           findings.push({ level: "error", templateId: t.id, field: "fingerprints", code: "fingerprint-collision", detail: `« ${f} » reconnaît aussi « ${other.id} » (${hit})` });
         }

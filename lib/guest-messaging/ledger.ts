@@ -19,15 +19,24 @@ import type { LedgerEntry, MessageTemplate } from "./types";
 const PREFIX = "MSG_";
 const PENDING = "_PENDING";
 
-/** Code d'`infoItem` d'un modèle : `arrivee-code` → `MSG_ARRIVEE_CODE`. */
+/**
+ * Code d'`infoItem` d'un modèle : `arrivee-code` → `MSG_ARRIVEE_CODE`. Un identifiant qui finit
+ * par `-pending` est refusé par la validation : son code « envoyé » serait le code « en cours »
+ * d'un autre.
+ */
 export function ledgerCode(templateId: string, state: LedgerEntry["state"]): string {
   const base = PREFIX + templateId.toUpperCase().replace(/[^A-Z0-9]/g, "_");
   return state === "pending" ? base + PENDING : base;
 }
 
 /** Texte d'un `infoItem` du registre. */
-export function ledgerText(entry: { at: string; version?: number; anchorDay?: string }): string {
-  return [`at=${entry.at}`, entry.version !== undefined ? `v=${entry.version}` : "", entry.anchorDay ? `anchor=${entry.anchorDay}` : ""]
+export function ledgerText(entry: { at: string; version?: number; anchorDay?: string; nonce?: string }): string {
+  return [
+    `at=${entry.at}`,
+    entry.version !== undefined ? `v=${entry.version}` : "",
+    entry.anchorDay ? `anchor=${entry.anchorDay}` : "",
+    entry.nonce ? `n=${entry.nonce}` : "",
+  ]
     .filter(Boolean)
     .join(";");
 }
@@ -61,6 +70,7 @@ export function ledgerFromInfoItems(
       at: new Date(at).toISOString(),
       anchorDay: /^\d{4}-\d{2}-\d{2}$/.test(fields.anchor ?? "") ? fields.anchor : undefined,
       version: Number.isFinite(v) && fields.v !== undefined ? v : undefined,
+      nonce: /^[a-z0-9]{4,32}$/i.test(fields.n ?? "") ? fields.n : undefined,
       source: "ledger",
     });
   }

@@ -10,9 +10,10 @@
  */
 import type { Channel } from "../channels";
 import type { Locale } from "../locales";
-import type { Vars } from "./render";
+import { renderMessage } from "./dispatch";
+import { RenderError, type Vars } from "./render";
 import { planMessages, type PlanOptions } from "./schedule";
-import type { LocaleSource, MessageState, MessageTemplate, MessagingBooking } from "./types";
+import type { ChannelMessagingRule, LocaleSource, MessageState, MessageTemplate, MessagingBooking } from "./types";
 
 /** Mode d'un modèle sur un site. `off` : ni plan ni envoi ; `shadow` : plan affiché, rien n'est envoyé. */
 export type TemplateMode = "off" | "shadow" | "live";
@@ -112,9 +113,36 @@ export function buildGuestMessagesReport(input: {
 
 export const MASK = "••••";
 
-/** Copie des variables où les secrètes (codes d'accès) sont masquées, pour un aperçu. */
-export function maskVars(vars: Vars, secret: readonly string[]): Vars {
-  return Object.fromEntries(Object.entries(vars).map(([k, v]) => [k, secret.includes(k) && v ? MASK : v]));
+/**
+ * Copie des variables où **tout est masqué sauf** la liste blanche du modèle (`previewVisible`).
+ * Interne : le site passe par `buildPreview`, il n'a pas à choisir quoi masquer.
+ */
+function maskVars(vars: Vars, visible: readonly string[]): Vars {
+  return Object.fromEntries(Object.entries(vars).map(([k, v]) => [k, !visible.includes(k) && v ? MASK : v]));
+}
+
+/**
+ * Aperçu d'un message pour le dashboard : rendu avec les variables masquées (sauf
+ * `previewVisible`), sans lever si une variable manque — elle est listée dans `missing`.
+ * C'est la seule façon prévue de construire un `GuestMessagePreview`.
+ */
+export function buildPreview(
+  t: MessageTemplate,
+  b: Pick<MessagingBooking, "id" | "channel" | "locale">,
+  vars: Vars,
+  channelRules: Partial<Record<Channel, ChannelMessagingRule>> = {},
+): GuestMessagePreview {
+  const masked = maskVars(vars, t.previewVisible ?? []);
+  const missing = t.variables.filter((v) => !masked[v] || !masked[v]!.trim());
+  // Une variable manquante est remplacée par son nom entre chevrons, pour voir où elle irait.
+  const filled: Vars = { ...masked, ...Object.fromEntries(missing.map((v) => [v, `<${v}>`])) };
+  try {
+    const r = renderMessage(t, b, filled, channelRules);
+    return { bookingId: b.id, templateId: t.id, locale: b.locale, transport: r.transport, variant: r.variant, subject: r.subject, text: r.text, missing };
+  } catch (e) {
+    const detail = e instanceof RenderError ? e.missing : ["rendu"];
+    return { bookingId: b.id, templateId: t.id, locale: b.locale, transport: "platform", variant: "standard", subject: "", text: "", missing: [...missing, ...detail] };
+  }
 }
 
 /** Aperçu d'un message, tel que l'écran de suivi l'affiche. */

@@ -39,13 +39,32 @@ export const DEFAULT_CHANNEL_RULES: Record<Channel, ChannelMessagingRule> = {
  * Vrbo/Abritel 30, HomeToGo 78, direct 0.
  */
 export function messagingChannel(raw: { channel?: string; apiSourceId?: number; referer?: string }): Channel {
-  const c = (raw.channel ?? "").toLowerCase();
+  // 1. Le champ `channel` de Beds24, quand il est rempli, décide seul.
+  const c = (raw.channel ?? "").trim().toLowerCase();
+  if (c) {
+    if (c === "airbnb") return "Airbnb";
+    if (c === "booking" || c === "booking.com") return "Booking.com";
+    if (c === "vrbo" || c === "abritel" || c === "homeaway") return "Abritel";
+    if (c === "direct") return "Direct";
+    return "Autre";
+  }
+  // 2. Sinon le code numérique.
+  switch (raw.apiSourceId) {
+    case 46:
+      return "Airbnb";
+    case 19:
+      return "Booking.com";
+    case 30:
+      return "Abritel";
+    case 0:
+      return "Direct";
+  }
+  // 3. Sinon le referer, pour les trois plateformes seulement.
   const r = (raw.referer ?? "").toLowerCase();
-  if (c === "airbnb" || raw.apiSourceId === 46) return "Airbnb";
-  if (c === "booking" || c === "booking.com" || raw.apiSourceId === 19) return "Booking.com";
-  if (c === "vrbo" || c === "abritel" || raw.apiSourceId === 30 || r.includes("abritel")) return "Abritel";
-  if (c === "direct" || raw.apiSourceId === 0) return "Direct";
-  if (!c && raw.apiSourceId === undefined) return "Direct";
+  if (r.includes("airbnb")) return "Airbnb";
+  if (r.includes("booking")) return "Booking.com";
+  if (r.includes("abritel") || r.includes("vrbo") || r.includes("homeaway")) return "Abritel";
+  // 4. Non identifiée : « Autre », donc **aucun envoi**. Surtout pas un e-mail par défaut.
   return "Autre";
 }
 

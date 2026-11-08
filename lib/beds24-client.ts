@@ -80,7 +80,8 @@ export interface Beds24ClientConfig {
 }
 
 export interface Beds24GetOptions {
-  params?: Record<string, string>;
+  /** Un tableau répète le paramètre (`status=confirmed&status=new`, `id=1&id=2`). */
+  params?: Record<string, string | readonly string[]>;
   /** Voie à emprunter. Par défaut `defaultRoute`. */
   route?: string;
   /**
@@ -267,7 +268,10 @@ export function createBeds24Client(config: Beds24ClientConfig): Beds24Client {
   async function get<T>(path: string, options: Beds24GetOptions = {}): Promise<T> {
     const name = options.route ?? config.defaultRoute;
     const url = new URL(baseUrl + path);
-    for (const [k, v] of Object.entries(options.params ?? {})) url.searchParams.set(k, v);
+    for (const [k, v] of Object.entries(options.params ?? {})) {
+      if (typeof v === "string") url.searchParams.set(k, v);
+      else for (const item of v) url.searchParams.append(k, item);
+    }
 
     const cacheOption = options.fresh
       ? { cache: "no-store" as const }
@@ -330,17 +334,22 @@ export function createBeds24Client(config: Beds24ClientConfig): Beds24Client {
    * « 200 avec `success: false` », les noms de champs en cause sont gardés.
    */
   async function postQuiet(path: string, payload: unknown, name: string): Promise<void> {
+    const { name: actual } = resolve(name);
     const t = await token(name);
     const res = await fetch(`${baseUrl}${path}`, {
       method: "POST",
       headers: { token: t, "Content-Type": "application/json" },
       body: JSON.stringify(payload),
       cache: "no-store",
+      // Une requête pendue serait tuée par la durée maximale de la fonction entre deux écritures
+      // du registre, et laisserait une trace orpheline sans motif.
+      signal: AbortSignal.timeout(15_000),
     });
     noteQuota(res);
     const body = await res.text();
     if (!res.ok) {
-      if (res.status === 401) invalidate(name);
+      // On invalide la voie réellement empruntée, pas celle demandée (elles diffèrent après un repli).
+      if (res.status === 401) invalidate(actual);
       throw new Beds24Error(res.status, `${path} (POST)`, "");
     }
     let refusal: string | null = null;
@@ -373,38 +382,12 @@ export function createBeds24Client(config: Beds24ClientConfig): Beds24Client {
     return postQuiet("/bookings", [{ id: bookingId, infoItems: items.map(({ code, text }) => ({ code, text })) }], name);
   }
 
-  async function updateNotes(id: number, notes: string, name: string): Promise<void> {
-    const t = await token(name);
-    const res = await fetch(`${baseUrl}/bookings`, {
-      method: "POST",
-      headers: { token: t, "Content-Type": "application/json" },
-      body: JSON.stringify([{ id, notes }]),
-      cache: "no-store",
-    });
-    const body = await res.text();
-    if (!res.ok) {
-      // Un 401 signifie que l'access token est mort avant son expiration annoncée : on vide
-      // l'entrée pour que l'appel suivant en redemande un. Seule celle de cette voie.
-      if (res.status === 401) invalidate(name);
-      throw new Beds24Error(res.status, "/bookings (POST)", body);
-    }
-
-    /*
-     * Beds24 v2 répond parfois **200 avec `success: false`** dans le tableau de retour : un
-     * refus silencieux qu'il faut lire dans le corps, sinon l'interface affiche
-     * « enregistré » alors que rien ne l'a été.
-     */
-    let refusal: string | null = null;
-    try {
-      const parsed = JSON.parse(body) as { success?: boolean; errors?: unknown; error?: unknown }[];
-      const first = Array.isArray(parsed) ? parsed[0] : null;
-      if (first && first.success === false) {
-        refusal = JSON.stringify(first.errors ?? first.error ?? first).slice(0, 300);
-      }
-    } catch {
-      // Corps illisible mais statut 200 : format inattendu, pas une erreur d'écriture.
-    }
-    if (refusal) throw new Error(`Beds24 a refusé l'écriture : ${refusal}`);
+  /*
+   * Passe par `postQuiet` (2026-11-08, cerbere) : l'ancienne version recopiait dans l'erreur le
+   * corps de la réponse, qui contient la note écrite.
+   */
+  function updateNotes(id: number, notes: string, name: string): Promise<void> {
+    return postQuiet("/bookings", [{ id, notes }], name);
   }
 
   return {

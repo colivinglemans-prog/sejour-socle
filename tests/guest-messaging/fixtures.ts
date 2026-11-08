@@ -38,7 +38,7 @@ export const access: MessageTemplate = {
     "Hola{{#prenom}} {{prenom}}{{/prenom}},\n\nTu código: {{code}}\nGuía: {{guide}}",
     "Ciao{{#prenom}} {{prenom}}{{/prenom}},\n\nIl tuo codice: {{code}}\nGuida: {{guide}}",
   ),
-  fingerprints: ["votre code personnel pour la duree"],
+  fingerprints: ["votre code personnel pour la duree", "votre code :"],
 };
 
 /** Modèle de confort : veille du départ à 17:00, sauté au-delà de 6 h de retard. */

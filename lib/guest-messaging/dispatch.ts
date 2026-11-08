@@ -20,6 +20,8 @@
 import type { Channel } from "../channels";
 import { DEFAULT_CHANNEL_RULES } from "./channel-rules";
 import { logGuestMessage, type GuestMessageLog } from "./log";
+import { realGuestEmail } from "./channel-rules";
+import type { TemplateMode } from "./overview";
 import { RenderError, renderTemplate, type Vars } from "./render";
 import { anchorDayOf, messageState, type PlanOptions } from "./schedule";
 import type {
@@ -64,19 +66,31 @@ export function renderMessage(
   };
 }
 
+/** Ce que le site écrit dans le registre (`ledgerText` le met en forme). */
+export interface LedgerWrite {
+  at: string;
+  anchorDay: string;
+  nonce: string;
+}
+
 export type ReadyCheck = { ok: true } | { ok: false; reason: string };
 
 export interface DispatchDeps {
-  /** Relit la réservation juste avant l'envoi (registre et fil compris). `null` : introuvable. */
+  /**
+   * Relit la réservation (registre et fil compris). `null` : introuvable.
+   *
+   * ⚠️ **Lecture fraîche obligatoire** (`fresh: true`) : le cache de 60 s du client Beds24 rendrait
+   * un registre en retard, et le départage des envois concurrents ne verrait pas l'autre trace.
+   */
   reload(bookingId: number): Promise<MessagingBooking | null>;
   /** Vérification propre au site. Absente : toujours prêt. */
   ready?(booking: MessagingBooking, template: MessageTemplate): Promise<ReadyCheck>;
   /** Valeurs des variables, en clair (codes compris). Ne sortent jamais du serveur. */
   variables(booking: MessagingBooking, template: MessageTemplate): Promise<Vars>;
   /** Pose la trace `pending`. Doit lever si l'écriture échoue : on n'envoie pas sans trace. */
-  reserve(booking: MessagingBooking, template: MessageTemplate, entry: { at: string; anchorDay: string }): Promise<void>;
+  reserve(booking: MessagingBooking, template: MessageTemplate, entry: LedgerWrite): Promise<void>;
   /** Pose la trace `sent`. */
-  confirm(booking: MessagingBooking, template: MessageTemplate, entry: { at: string; anchorDay: string }): Promise<void>;
+  confirm(booking: MessagingBooking, template: MessageTemplate, entry: LedgerWrite): Promise<void>;
   /** Messagerie de la plateforme (`POST /bookings/messages`). */
   platform(bookingId: number, text: string): Promise<void>;
   /** Transport e-mail du site, ou `null` s'il n'en a pas encore. */
@@ -87,6 +101,13 @@ export interface DispatchDeps {
 
 export interface DispatchOptions extends PlanOptions {
   now: Date;
+  /**
+   * Mode de chaque modèle, **appliqué ici** : seul `live` envoie. Un modèle absent est `off`.
+   * L'interrupteur général d'un site se traduit en modes tous `off` — pas de booléen.
+   */
+  modes: Readonly<Record<string, TemplateMode>>;
+  /** Générateur d'aléa pour le départage (injecté en test). */
+  nonce?: () => string;
   /** Plafond d'envois par passage. */
   cap: number;
 }
@@ -117,7 +138,7 @@ export async function sendPlanned(
   options: DispatchOptions,
 ): Promise<DispatchResult> {
   const log = deps.log ?? logGuestMessage;
-  const due = plan.filter((p) => p.state.kind === "due");
+  const due = plan.filter((p) => p.state.kind === "due" && options.modes[p.templateId] === "live");
   if (due.length > options.cap) {
     log({ event: "aborted", reason: "cap", count: due.length });
     return { aborted: { reason: "cap", due: due.length, cap: options.cap }, results: [] };
@@ -145,8 +166,9 @@ const ONLY_DUE: readonly MessageState["kind"][] = ["due"];
 const MANUAL: readonly MessageState["kind"][] = ["due", "scheduled", "missed"];
 
 /**
- * Envoi déclenché par l'hôte depuis le dashboard — mêmes contrôles, même registre que le cron :
- * deux clics ou un clic pendant un passage du cron n'envoient qu'une fois.
+ * Envoi déclenché par l'hôte depuis le dashboard — mêmes contrôles, même registre, même départage
+ * que le cron : deux clics, ou un clic pendant un passage du cron, n'envoient qu'une fois tant
+ * que les écritures Beds24 sont visibles à la relecture (voir le départage dans `deliver`).
  */
 export function sendNow(
   bookingId: number,
@@ -165,8 +187,11 @@ function report(
   reason?: string,
   extra: Partial<GuestMessageLog> = {},
 ): DispatchItemResult {
-  log({ event: outcome, bookingId, templateId, reason, ...extra });
-  return { bookingId, templateId, outcome, reason };
+  // Un motif vient parfois du site (`ready`) : on n'en garde qu'un code, jamais un texte qui
+  // pourrait citer un code d'accès (un 409 Nuki le fait).
+  const safe = reason === undefined ? undefined : /^[a-z0-9:_,-]{1,60}$/.test(reason) ? reason : "site-check";
+  log({ event: outcome, bookingId, templateId, reason: safe, ...extra });
+  return { bookingId, templateId, outcome, reason: safe };
 }
 
 async function deliver(
@@ -179,6 +204,9 @@ async function deliver(
   const log = deps.log ?? logGuestMessage;
   const done = (outcome: DispatchOutcome, reason?: string, extra?: Partial<GuestMessageLog>) =>
     report(log, bookingId, t.id, outcome, reason, extra);
+
+  const mode = options.modes[t.id] ?? "off";
+  if (mode !== "live") return done("skipped", `mode-${mode}`);
 
   // 1. Relecture et recalcul : annulation, envoi concurrent (Beds24, autre passage) → on s'arrête.
   let booking: MessagingBooking | null;
@@ -210,20 +238,44 @@ async function deliver(
   } catch (e) {
     return done("blocked", e instanceof RenderError ? `missing:${e.missing.join(",")}` : "render", errorMeta(e));
   }
-  if (rendered.transport === "email" && (!deps.email || !booking.email)) {
+  const to = realGuestEmail(booking.email);
+  if (rendered.transport === "email" && (!deps.email || !to)) {
     return done("blocked", deps.email ? "no-email" : "no-email-transport");
   }
 
-  // 4. Réserver, envoyer, confirmer.
-  const entry = { at: options.now.toISOString(), anchorDay: anchorDayOf(booking, t) };
+  // 4. Réserver, départager, envoyer, confirmer.
+  const nonce = (options.nonce ?? randomNonce)();
+  const entry = { at: options.now.toISOString(), anchorDay: anchorDayOf(booking, t), nonce };
   try {
     await deps.reserve(booking, t, entry);
   } catch (e) {
     return done("failed", "reserve", errorMeta(e));
   }
+  /*
+   * Beds24 n'a pas d'écriture conditionnelle : deux envois lancés en même temps (le cron et un
+   * clic, deux onglets) voient tous deux le message « dû » et posent chacun leur trace. Après
+   * avoir posé la nôtre, on relit : si une autre trace du même modèle et du même jour d'ancrage
+   * existe et trie avant la nôtre (instant, puis aléa), on s'efface. Chacun voyant les deux
+   * traces, un seul part. Coût : une lecture par envoi.
+   */
+  try {
+    const again = await deps.reload(booking.id);
+    const rivals = (again?.ledger ?? []).filter(
+      (e) =>
+        e.templateId === t.id &&
+        e.source === "ledger" &&
+        e.nonce !== nonce &&
+        (t.onAnchorChange === "ignore" || !e.anchorDay || e.anchorDay === entry.anchorDay),
+    );
+    const beats = (e: { at: string; nonce?: string }) =>
+      Date.parse(e.at) < Date.parse(entry.at) || (Date.parse(e.at) === Date.parse(entry.at) && (e.nonce ?? "") < nonce);
+    if (rivals.some((e) => e.state === "sent" || beats(e))) return done("skipped", "race");
+  } catch (e) {
+    return done("failed", "recheck", errorMeta(e));
+  }
   try {
     if (rendered.transport === "email") {
-      await deps.email!.send({ to: booking.email!, subject: rendered.subject, text: rendered.text });
+      await deps.email!.send({ to: to!, subject: rendered.subject, text: rendered.text });
     } else {
       await deps.platform(booking.id, rendered.text);
     }
@@ -233,7 +285,7 @@ async function deliver(
   }
   try {
     // +1 ms : la trace `sent` doit trier après sa `pending`, même posées dans la même milliseconde.
-    await deps.confirm(booking, t, { at: new Date(options.now.getTime() + 1).toISOString(), anchorDay: entry.anchorDay });
+    await deps.confirm(booking, t, { at: new Date(options.now.getTime() + 1).toISOString(), anchorDay: entry.anchorDay, nonce });
   } catch (e) {
     // Parti mais non confirmé : orphelin à trancher par l'hôte, surtout pas renvoyé.
     return done("failed", "confirm", { ...errorMeta(e), transport: rendered.transport });
@@ -245,4 +297,8 @@ async function deliver(
 function errorMeta(e: unknown): Partial<GuestMessageLog> {
   const status = typeof e === "object" && e !== null && "status" in e ? Number((e as { status: unknown }).status) : undefined;
   return { error: e instanceof Error ? e.name : typeof e, status: Number.isFinite(status) ? status : undefined };
+}
+
+function randomNonce(): string {
+  return Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6);
 }

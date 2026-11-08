@@ -53,6 +53,38 @@ const EXCLUSION: Record<string, string> = {
   "stay-over": "séjour terminé",
 };
 
+/**
+ * Ce que l'écran dit d'une erreur : selon le code HTTP, jamais le texte du serveur (cerbere).
+ */
+function httpMessage(status: number): string {
+  if (status === 401 || status === 403) return "accès réservé à l'administrateur";
+  if (status === 404) return "réservation ou message introuvable";
+  if (status === 409) return "envoi refusé dans l'état actuel";
+  if (status === 429) return "trop de demandes, réessayer dans un instant";
+  if (status === 503) return "service non configuré";
+  return `erreur du serveur (${status})`;
+}
+
+/** Motifs codés qu'on sait traduire ; tout autre motif s'affiche « refusé ». */
+const REASONS: Record<string, string> = {
+  race: "un autre envoi est en cours",
+  "mode-off": "message coupé",
+  "mode-shadow": "message en mode ombre",
+  "not-found": "réservation introuvable",
+  "now-sent": "déjà envoyé",
+  "now-in-flight": "envoi déjà en cours",
+  "now-orphan": "un envoi précédent est à vérifier",
+  "excluded-status": "réservation non confirmée ou annulée",
+  "excluded-info-item": "code d'accès pas encore prêt",
+  "no-email": "pas d'adresse e-mail",
+  "no-email-transport": "envoi d'e-mail non configuré",
+  "pin-not-on-lock": "le code n'est pas encore sur la serrure",
+  "no-access-code": "code d'accès non configuré",
+  send: "la plateforme a refusé le message",
+  reserve: "écriture du registre impossible",
+};
+const reasonLabel = (r?: string) => (r ? (REASONS[r] ?? (r.startsWith("missing:") ? "information manquante" : "refusé")) : "refusé");
+
 const LOCALE_SOURCE: Record<string, string> = { beds24: "déclarée", country: "d'après le pays", fallback: "par défaut" };
 const MODE_LABEL: Record<TemplateMode, string> = { off: "coupé", shadow: "ombre", live: "actif" };
 
@@ -96,7 +128,7 @@ export default function GuestMessagesDashboard(props: GuestMessagesDashboardProp
   const load = useCallback(() => {
     fetch(props.endpoint, { cache: "no-store" })
       .then(async (r) => {
-        if (!r.ok) throw new Error((await r.json().catch(() => null))?.error ?? `HTTP ${r.status}`);
+        if (!r.ok) throw new Error(httpMessage(r.status));
         return r.json() as Promise<GuestMessagesReport>;
       })
       .then((r) => {
@@ -299,7 +331,7 @@ function Preview(props: {
     const url = `${props.previewEndpoint}?bookingId=${props.bookingId}&templateId=${encodeURIComponent(props.templateId)}`;
     fetch(url, { cache: "no-store" })
       .then(async (r) => {
-        if (!r.ok) throw new Error((await r.json().catch(() => null))?.error ?? `HTTP ${r.status}`);
+        if (!r.ok) throw new Error(httpMessage(r.status));
         return r.json() as Promise<GuestMessagePreview>;
       })
       .then(setPreview)
@@ -319,9 +351,15 @@ function Preview(props: {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ bookingId: props.bookingId, templateId: props.templateId }),
       });
-      const body = (await r.json().catch(() => null)) as { outcome?: string; reason?: string; error?: string } | null;
-      setResult(body?.outcome === "sent" ? "Envoyé." : `Non envoyé : ${body?.reason ?? body?.error ?? `HTTP ${r.status}`}`);
-      if (body?.outcome === "sent") props.onSent();
+      const body = (await r.json().catch(() => null)) as { outcome?: string; reason?: string } | null;
+      if (body?.outcome === "sent") {
+        setResult("Envoyé.");
+        props.onSent();
+      } else {
+        setResult(`Non envoyé : ${body?.outcome ? reasonLabel(body.reason) : httpMessage(r.status)}`);
+      }
+    } catch {
+      setResult("Non envoyé : réseau indisponible.");
     } finally {
       setSending(false);
     }
@@ -359,5 +397,83 @@ function Preview(props: {
         </div>
       )}
     </div>
+  );
+}
+
+export interface GuestMessagesBookingPanelProps {
+  bookingId: number;
+  accent: string;
+  /** GET `?bookingId=` → `GuestMessagesReport` réduit à cette réservation. */
+  endpoint: string;
+  previewEndpoint: string;
+  sendEndpoint?: string;
+}
+
+/**
+ * Les messages d'**une** réservation, pour la fiche du calendrier : même rendu, mêmes aperçus et
+ * même bouton que l'écran complet, chargés à la demande.
+ */
+export function GuestMessagesBookingPanel(props: GuestMessagesBookingPanelProps) {
+  const [report, setReport] = useState<GuestMessagesReport | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [open, setOpen] = useState<{ bookingId: number; templateId: string } | null>(null);
+
+  const load = useCallback(() => {
+    fetch(`${props.endpoint}?bookingId=${props.bookingId}`, { cache: "no-store" })
+      .then(async (r) => {
+        if (!r.ok) throw new Error(httpMessage(r.status));
+        return r.json() as Promise<GuestMessagesReport>;
+      })
+      .then((r) => {
+        setError(null);
+        setReport(r);
+      })
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+  }, [props.endpoint, props.bookingId]);
+
+  useEffect(load, [load]);
+
+  const booking = report?.bookings.find((b) => b.id === props.bookingId);
+  return (
+    <section className="mt-4 border-t border-gray-100 pt-3">
+      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Messages au voyageur</h3>
+      {error && <p className="text-sm text-red-700">Indisponible : {error}</p>}
+      {!report && !error && <p className="text-sm text-gray-500">Chargement…</p>}
+      {report && !booking && <p className="text-sm text-gray-500">Aucun message prévu pour cette réservation.</p>}
+      {booking && (
+        <ul className="space-y-1">
+          {booking.messages.map((m) => {
+            const t = report!.templates.find((x) => x.id === m.templateId);
+            const s = badge(m.state);
+            const isOpen = open?.templateId === m.templateId;
+            return (
+              <li key={m.templateId}>
+                <button
+                  type="button"
+                  onClick={() => setOpen(isOpen ? null : { bookingId: booking.id, templateId: m.templateId })}
+                  className="flex w-full flex-wrap items-center gap-2 rounded-lg px-1 py-1 text-left text-sm hover:bg-gray-50"
+                >
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-medium ring-1 ${TONES[s.tone]}`}>{s.label}</span>
+                  <span className="font-medium text-gray-800">{t?.label ?? m.templateId}</span>
+                  <span className="text-xs text-gray-500">{s.detail}</span>
+                </button>
+                {isOpen && (
+                  <Preview
+                    bookingId={booking.id}
+                    templateId={m.templateId}
+                    state={m.state}
+                    mode={t?.mode ?? "off"}
+                    accent={props.accent}
+                    previewEndpoint={props.previewEndpoint}
+                    sendEndpoint={props.sendEndpoint}
+                    onSent={load}
+                  />
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
   );
 }

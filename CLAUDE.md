@@ -1371,22 +1371,44 @@ dépôt de chaque site, et le socle décide quand et par où chacun part. Deux c
   après ; texte = métadonnées seules (`at`, `v`, `anchor`). `ledgerFromThread` reconnaît les
   messages de l'hôte par leurs empreintes (auto-actions Beds24 encore actives, envois manuels).
 - `dispatch.ts` — `sendPlanned` (cron, plafond par passage : au-delà **rien** ne part) et
-  `sendNow` (bouton du dashboard, aussi avant l'heure), mêmes contrôles : relecture, recalcul,
-  `ready` du site, rendu, réserver → envoyer → confirmer. `renderMessage` choisit la variante.
+  `sendNow` (bouton du dashboard, aussi avant l'heure), mêmes contrôles : **mode du modèle
+  (`modes`, seul `live` envoie — l'interrupteur général d'un site se traduit en modes `off`)**,
+  relecture fraîche, recalcul, `ready` du site, rendu, réserver → **départager** → envoyer →
+  confirmer. Le départage remplace l'écriture conditionnelle que Beds24 n'a pas : chaque trace
+  porte un aléa (`n=`), on relit après avoir posé la sienne, et on s'efface si une autre trace du
+  même modèle trie avant (instant, puis aléa). Un motif venu du site est réduit à un code
+  (`/^[a-z0-9:_,-]{1,60}$/`, sinon `site-check`). `renderMessage` choisit la variante.
+  ⚠️ Chaque écriture d'`infoItem` modifie la réservation, donc **déclenche le webhook** Beds24 :
+  chez Barbusse, la synchro de la serrure repasse une fois par message (inoffensif, à savoir).
 - `channel-rules.ts` — le seul endroit qui nomme un canal. Airbnb, Booking.com, Abritel : la
-  messagerie ; Direct : l'e-mail du site ; Autre (HomeToGo…) : rien d'automatique.
+  messagerie ; Direct : l'e-mail du site ; Autre (HomeToGo…) : rien d'automatique. Ordre de
+  reconnaissance : le champ `channel` s'il est rempli, sinon `apiSourceId`, sinon `referer`,
+  sinon « Autre » — **une réservation non identifiée n'envoie rien**, jamais un e-mail par défaut.
   `messagingChannel` (≠ `normalizeChannel`, qui range l'inconnu en Direct pour les stats) et
   `realGuestEmail` (refuse les relais de plateforme et toute injection d'en-tête).
 - `language.ts` — `pickGuestLocale` : `lang` Beds24, puis pays (`localeFromCountry`, remonté
   de Barbusse dans `locales.ts` avec `normalizeLocaleTag`), puis anglais ; la source est rendue.
 - `overview.ts` + `components/GuestMessagesDashboard.tsx` — l'écran de suivi : DTO en liste
-  blanche (prénom seul, aucun e-mail, téléphone, montant ni code), aperçu codes masqués
-  (`maskVars`), bouton « Envoyer maintenant » pour les modèles en mode `live`.
+  blanche (prénom seul, aucun e-mail, téléphone, montant ni code), aperçu par `buildPreview`, qui
+  masque **tout sauf** `MessageTemplate.previewVisible` (liste blanche : une variable secrète
+  ajoutée plus tard reste masquée sans y penser), bouton « Envoyer maintenant » pour les modèles
+  en mode `live`. `GuestMessagesBookingPanel` : les messages d'une réservation, pour la fiche du
+  calendrier. Le composant n'affiche jamais le texte d'une erreur serveur : un message selon le
+  code HTTP, et les seuls motifs codés qu'il connaît.
+- **Ce que les routes des sites portent** (cerbere) : `denyNonAdmin` en tête de chaque handler,
+  `Cache-Control: no-store`, erreurs génériques ; aperçu : `bookingId` entier et `templateId`
+  connu ; envoi : `Content-Type: application/json` exact (415 sinon), `Origin` ou
+  `Sec-Fetch-Site: same-origin` (403 sinon), corps en liste blanche, `sendNow` seul, réponse
+  `{ outcome, reason }` ; cron : `verifyCronAuth`, `cap` toujours passé.
 - `log.ts` — `logGuestMessage`, seule sortie console, en liste blanche de champs.
 - `beds24-types.ts` — `lang`, `apiSource`, `apiSourceId`, `modifiedTime`, `Beds24Message`.
-- `beds24-client.ts` — `getMessages`, `sendMessage`, `addInfoItems` (erreurs **sans** le corps
-  de la réponse : Beds24 y renvoie le texte écrit), `quota()` (crédits restants lus dans les
-  en-têtes ; le quota est partagé par tout le compte).
+- `beds24-client.ts` — `getMessages` (première page de 100 : un très long fil peut perdre une
+  ancienne empreinte, le registre `infoItems` reste), `sendMessage`, `addInfoItems` (un item
+  **sans `id`** est un ajout), `quota()` (crédits restants lus dans les en-têtes, par instance de
+  fonction : indicatif). Les écritures passent par `postQuiet` — erreurs **sans** le corps de la
+  réponse (Beds24 y renvoie le texte écrit), délai maximal de 15 s, invalidation de la voie
+  réellement empruntée ; `updateNotes` y passe aussi désormais. `params` accepte un tableau
+  pour répéter un paramètre (`status=confirmed&status=new`).
 - `cron-auth.ts` — comparaison en temps constant (`constantTimeEqual`).
 
 Mesures du 2026-11-08 (lecture seule) : un `GET /bookings` coûte ~1 crédit ; codes

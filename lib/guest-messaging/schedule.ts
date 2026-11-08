@@ -13,7 +13,7 @@
  */
 import { parisInstant } from "../time";
 import type { Channel } from "../channels";
-import { DEFAULT_CHANNEL_RULES } from "./channel-rules";
+import { DEFAULT_CHANNEL_RULES, realGuestEmail } from "./channel-rules";
 import type {
   AnchorPoint,
   ChannelMessagingRule,
@@ -42,8 +42,23 @@ export function addDays(day: string, n: number): string {
   return `${t.getUTCFullYear()}-${String(t.getUTCMonth() + 1).padStart(2, "0")}-${String(t.getUTCDate()).padStart(2, "0")}`;
 }
 
-/** Instant où il est `hhmm` (« HH:MM ») à Paris le jour `day`. */
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/** Jour « YYYY-MM-DD » lisible. */
+export function isDay(day: unknown): day is string {
+  return typeof day === "string" && DAY.test(day) && !Number.isNaN(Date.parse(`${day}T00:00:00Z`));
+}
+
+/**
+ * Instant où il est `hhmm` (« HH:MM ») à Paris le jour `day`. Lève sur une heure mal formée :
+ * cela ne peut venir que d'un modèle, et la validation l'aura signalé avant.
+ *
+ * Aux changements d'heure : au saut de mars, 02:30 (qui n'existe pas) donne 03:30 ; en octobre,
+ * 02:30 (qui existe deux fois) prend la seconde occurrence. Déterministe et monotone.
+ */
 export function parisAt(day: string, hhmm: string): Date {
+  if (!HHMM.test(hhmm)) throw new Error(`Heure invalide : « ${hhmm} » (HH:MM attendu)`);
   const [h, m] = hhmm.split(":").map(Number);
   return new Date(parisInstant(day, h!).getTime() + (m ?? 0) * 60_000);
 }
@@ -56,7 +71,9 @@ function pointInstant(b: MessagingBooking, p: AnchorPoint): Date {
 /** Échéance d'un message pour une réservation. */
 export function dueInstant(b: MessagingBooking, t: MessageTemplate): Date {
   if (t.trigger.anchor === "booked") {
-    const created = b.bookingTime ? Date.parse(b.bookingTime) : NaN;
+    // Un horodatage sans fuseau serait lu dans celui du processus (Paris en test, UTC chez
+    // l'hébergeur) : on n'accepte qu'un instant explicite.
+    const created = b.bookingTime && /(Z|[+-]\d{2}:?\d{2})$/.test(b.bookingTime) ? Date.parse(b.bookingTime) : NaN;
     // Sans date de création, l'échéance est « depuis toujours » : la politique de retard tranche.
     return new Date(Number.isNaN(created) ? 0 : created + t.trigger.delayMinutes * 60_000);
   }
@@ -73,7 +90,18 @@ export function nightsOf(b: MessagingBooking): number {
 }
 
 const latest = (entries: LedgerEntry[]) =>
-  entries.reduce<LedgerEntry | undefined>((acc, e) => (!acc || e.at > acc.at ? e : acc), undefined);
+  entries.reduce<LedgerEntry | undefined>((acc, e) => (!acc || Date.parse(e.at) > Date.parse(acc.at) ? e : acc), undefined);
+
+/**
+ * Traces qui comptent pour un modèle. Celles du fil ne servent qu'à la reprise de l'historique et
+ * à la cohabitation avec les auto-actions : dès que le moteur a posé une trace dans le registre,
+ * le fil est ignoré pour ce modèle — sinon le message que le moteur vient d'envoyer, revenu dans
+ * le fil, masquerait son propre renvoi après un changement de dates.
+ */
+function tracesOf(b: MessagingBooking, templateId: string): LedgerEntry[] {
+  const mine = b.ledger.filter((e) => e.templateId === templateId);
+  return mine.some((e) => e.source === "ledger") ? mine.filter((e) => e.source === "ledger") : mine;
+}
 
 /** État d'un message pour une réservation, à l'instant `now`. */
 export function messageState(
@@ -85,10 +113,14 @@ export function messageState(
   const statuses = options.eligibleStatuses ?? DEFAULT_ELIGIBLE_STATUSES;
   const rules = { ...DEFAULT_CHANNEL_RULES, ...options.channelRules };
   const orphanMs = (options.orphanMinutes ?? DEFAULT_ORPHAN_MINUTES) * 60_000;
+  // 0. Dates illisibles : écartée, sans faire tomber le plan des autres réservations.
+  if (!isDay(b.arrival) || !isDay(b.departure) || b.departure <= b.arrival) {
+    return { kind: "excluded", reason: "bad-dates" };
+  }
   const anchorDay = anchorDayOf(b, t);
 
   // 1. Déjà parti. Une trace sans jour d'ancrage (reconnue dans le fil) vaut envoi quoi qu'il arrive.
-  const mine = b.ledger.filter((e) => e.templateId === t.id);
+  const mine = tracesOf(b, t.id);
   const sent = latest(
     mine.filter(
       (e) => e.state === "sent" && (t.onAnchorChange === "ignore" || !e.anchorDay || e.anchorDay === anchorDay),
@@ -113,10 +145,10 @@ export function messageState(
   if (c.minNights !== undefined && nightsOf(b) < c.minNights) return { kind: "excluded", reason: "min-nights" };
   const transport = rules[b.channel]?.transport ?? null;
   if (!transport) return { kind: "excluded", reason: "no-transport" };
-  if (transport === "email" && !b.email) return { kind: "excluded", reason: "no-email" };
+  if (transport === "email" && !realGuestEmail(b.email)) return { kind: "excluded", reason: "no-email" };
 
   // Butée absolue : rien après la fin du lendemain du départ, quelle que soit la politique.
-  if (now.getTime() > parisAt(addDays(b.departure, 1), "23:59").getTime()) {
+  if (now.getTime() >= parisAt(addDays(b.departure, 2), "00:00").getTime()) {
     return { kind: "excluded", reason: "stay-over" };
   }
 

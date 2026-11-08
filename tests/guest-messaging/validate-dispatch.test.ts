@@ -71,24 +71,25 @@ function harness(b: MessagingBooking, over: Partial<DispatchDeps> = {}) {
 }
 
 const NOW = new Date("2026-12-06T10:00:00Z");
+const LIVE = { arrivee: "live", depart: "live" } as const;
 
 describe("envoi", () => {
   it("envoie le dû, réserve puis confirme, une seule fois", async () => {
     const h = harness(booking());
     const plan = planMessages([h.state.booking], [access, departure], NOW);
-    const r = await sendPlanned(plan, [access, departure], h.deps, { now: NOW, cap: 5 });
+    const r = await sendPlanned(plan, [access, departure], h.deps, { now: NOW, cap: 5, modes: LIVE });
     expect(r.results).toEqual([{ bookingId: 1001, templateId: "arrivee", outcome: "sent", reason: undefined }]);
     expect(h.platform).toHaveBeenCalledTimes(1);
     expect(h.state.booking.ledger.map((e) => e.state)).toEqual(["pending", "sent"]);
     // Second passage : rien ne repart.
-    const again = await sendPlanned(planMessages([h.state.booking], [access], NOW), [access], h.deps, { now: NOW, cap: 5 });
+    const again = await sendPlanned(planMessages([h.state.booking], [access], NOW), [access], h.deps, { now: NOW, cap: 5, modes: LIVE });
     expect(again.results).toEqual([]);
     expect(h.platform).toHaveBeenCalledTimes(1);
   });
   it("plafond dépassé : rien ne part", async () => {
     const bookings = Array.from({ length: 6 }, (_, i) => booking({ id: 2000 + i }));
     const h = harness(bookings[0]!);
-    const r = await sendPlanned(planMessages(bookings, [access], NOW), [access], h.deps, { now: NOW, cap: 5 });
+    const r = await sendPlanned(planMessages(bookings, [access], NOW), [access], h.deps, { now: NOW, cap: 5, modes: LIVE });
     expect(r.aborted).toEqual({ reason: "cap", due: 6, cap: 5 });
     expect(h.platform).not.toHaveBeenCalled();
   });
@@ -96,24 +97,24 @@ describe("envoi", () => {
     const h = harness(booking());
     const plan = planMessages([h.state.booking], [access], NOW);
     h.state.booking = { ...h.state.booking, status: "cancelled" };
-    const r = await sendPlanned(plan, [access], h.deps, { now: NOW, cap: 5 });
+    const r = await sendPlanned(plan, [access], h.deps, { now: NOW, cap: 5, modes: LIVE });
     expect(r.results[0]).toMatchObject({ outcome: "skipped", reason: "excluded-status" });
     expect(h.platform).not.toHaveBeenCalled();
   });
   it("vérification du site négative : bloqué, rien d'écrit", async () => {
     const h = harness(booking(), { ready: async () => ({ ok: false, reason: "pin-not-on-lock" }) });
-    const r = await sendPlanned(planMessages([h.state.booking], [access], NOW), [access], h.deps, { now: NOW, cap: 5 });
+    const r = await sendPlanned(planMessages([h.state.booking], [access], NOW), [access], h.deps, { now: NOW, cap: 5, modes: LIVE });
     expect(r.results[0]).toMatchObject({ outcome: "blocked", reason: "pin-not-on-lock" });
     expect(h.state.booking.ledger).toEqual([]);
   });
   it("variable manquante : bloqué", async () => {
     const h = harness(booking(), { variables: async () => ({ guide: "https://exemple.fr" }) });
-    const r = await sendPlanned(planMessages([h.state.booking], [access], NOW), [access], h.deps, { now: NOW, cap: 5 });
+    const r = await sendPlanned(planMessages([h.state.booking], [access], NOW), [access], h.deps, { now: NOW, cap: 5, modes: LIVE });
     expect(r.results[0]).toMatchObject({ outcome: "blocked", reason: "missing:code" });
   });
   it("échec d'envoi : la trace pending reste, et le message devient orphelin", async () => {
     const h = harness(booking(), { platform: async () => { throw Object.assign(new Error("Beds24 /bookings/messages 500 : texte secret"), { status: 500 }); } });
-    const r = await sendPlanned(planMessages([h.state.booking], [access], NOW), [access], h.deps, { now: NOW, cap: 5 });
+    const r = await sendPlanned(planMessages([h.state.booking], [access], NOW), [access], h.deps, { now: NOW, cap: 5, modes: LIVE });
     expect(r.results[0]).toMatchObject({ outcome: "failed", reason: "send" });
     const later = planMessages([h.state.booking], [access], new Date(NOW.getTime() + 11 * 60_000));
     expect(later[0]!.state.kind).toBe("orphan");
@@ -123,14 +124,14 @@ describe("envoi", () => {
   it("e-mail : la réservation directe passe par le transport du site", async () => {
     const send = vi.fn(async () => {});
     const h = harness(booking({ channel: "Direct", email: "test@example.org" }), { email: { send } });
-    await sendPlanned(planMessages([h.state.booking], [access], NOW), [access], h.deps, { now: NOW, cap: 5 });
+    await sendPlanned(planMessages([h.state.booking], [access], NOW), [access], h.deps, { now: NOW, cap: 5, modes: LIVE });
     expect(send).toHaveBeenCalledWith({ to: "test@example.org", subject: "Votre arrivée", text: expect.stringContaining("0000") });
   });
   it("envoi manuel : possible avant l'heure, jamais deux fois", async () => {
     const h = harness(booking());
     const early = new Date("2026-12-01T10:00:00Z");
-    expect((await sendNow(1001, access, h.deps, { now: early })).outcome).toBe("sent");
-    expect((await sendNow(1001, access, h.deps, { now: early })).outcome).toBe("skipped");
+    expect((await sendNow(1001, access, h.deps, { now: early, modes: LIVE })).outcome).toBe("sent");
+    expect((await sendNow(1001, access, h.deps, { now: early, modes: LIVE })).outcome).toBe("skipped");
     expect(h.platform).toHaveBeenCalledTimes(1);
   });
 });
