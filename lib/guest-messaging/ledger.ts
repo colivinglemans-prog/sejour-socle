@@ -18,6 +18,7 @@ import type { LedgerEntry, MessageTemplate } from "./types";
 
 const PREFIX = "MSG_";
 const PENDING = "_PENDING";
+const TEST = "_TEST";
 
 /**
  * Code d'`infoItem` d'un modèle : `arrivee-code` → `MSG_ARRIVEE_CODE`. Un identifiant qui finit
@@ -27,6 +28,15 @@ const PENDING = "_PENDING";
 export function ledgerCode(templateId: string, state: LedgerEntry["state"]): string {
   const base = PREFIX + templateId.toUpperCase().replace(/[^A-Z0-9]/g, "_");
   return state === "pending" ? base + PENDING : base;
+}
+
+/**
+ * Code d'`infoItem` d'une copie de test envoyée à l'hôte : `MSG_ARRIVEE_CODE_TEST`. Jamais lu
+ * comme un envoi au voyageur (`ledgerFromInfoItems` l'ignore). Un identifiant qui finit par
+ * `-test` est refusé par la validation, pour la même raison que `-pending`.
+ */
+export function testLedgerCode(templateId: string): string {
+  return ledgerCode(templateId, "sent") + TEST;
 }
 
 /** Texte d'un `infoItem` du registre. */
@@ -51,6 +61,21 @@ export function ledgerFromInfoItems(
     byCode.set(ledgerCode(id, "sent"), { templateId: id, state: "sent" });
     byCode.set(ledgerCode(id, "pending"), { templateId: id, state: "pending" });
   }
+  return parseItems(items, byCode);
+}
+
+/** Relit le registre de test (`MSG_<ID>_TEST`) : les copies déjà envoyées à l'hôte. */
+export function testLedgerFromInfoItems(
+  items: readonly { code: string; text?: string; createTime?: string }[] | undefined,
+  templateIds: readonly string[],
+): LedgerEntry[] {
+  return parseItems(items, new Map(templateIds.map((id) => [testLedgerCode(id), { templateId: id, state: "sent" as const }])));
+}
+
+function parseItems(
+  items: readonly { code: string; text?: string; createTime?: string }[] | undefined,
+  byCode: ReadonlyMap<string, { templateId: string; state: LedgerEntry["state"] }>,
+): LedgerEntry[] {
   const out: LedgerEntry[] = [];
   for (const item of items ?? []) {
     const known = byCode.get(item.code);

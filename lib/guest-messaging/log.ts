@@ -10,7 +10,7 @@ import type { Channel } from "../channels";
 import type { Transport } from "./types";
 
 export interface GuestMessageLog {
-  event: "sent" | "skipped" | "blocked" | "failed" | "aborted";
+  event: "sent" | "tested" | "skipped" | "blocked" | "failed" | "aborted";
   bookingId?: number;
   templateId?: string;
   /** Motif court, codé (`missing:prenom`, `now-sent`, `cap`…), jamais un texte libre venu d'ailleurs. */

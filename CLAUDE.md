@@ -1420,6 +1420,23 @@ dépôt de chaque site, et le socle décide quand et par où chacun part. Deux c
   pour répéter un paramètre (`status=confirmed&status=new`).
 - `cron-auth.ts` — comparaison en temps constant (`constantTimeEqual`).
 
+**Mode `test`** (demandé par l'hôte le 2026-11-08, avant de remplacer les auto-actions) : quatre
+modes par modèle, `off` / `shadow` / `test` / `live`. En `test`, au moment où le message
+partirait, il part **à l'hôte** par e-mail (`deps.test.to`), précédé d'un bandeau « COPIE DE
+TEST », et la copie est notée dans `MSG_<ID>_TEST` (registre de test, `testLedgerFromInfoItems`),
+jamais lu comme un envoi au voyageur. Le cron calcule son plan avec `planByMode` ; un modèle en
+`test` n'est dû que dans les 2 h qui suivent son échéance (`testFreshHours`) — sans quoi
+l'activation rattraperait tout ce que Beds24 a déjà envoyé. Plafond à part, sans arrêt du
+passage. Dans l'écran, le bouton devient « M'envoyer une copie de test », disponible même
+après une première copie.
+
+**Dernière minute** (même date) : deux conditions de modèle.
+- `minLeadHours` — réservée moins de N h avant le jour d'arrivée : écarté (`late-booking`), un
+  autre message en porte le contenu (Albiez : l'avant-arrivée passe dans le message du code).
+- `quietHours` — message de confort : écarté (`quiet`), jamais reporté, si un autre message est
+  parti ou si la réservation a été créée (la confirmation Beds24 part à ce moment) dans les N h
+  qui précèdent son échéance. Jamais sur un message qui porte un accès.
+
 Mesures du 2026-11-08 (lecture seule) : un `GET /bookings` coûte ~1 crédit ; codes
 `apiSourceId` Airbnb 46, Booking.com 19, Vrbo/Abritel 30, HomeToGo 78, direct 0 ; `lang`
 vaut `fr`, `en`, `es`, `it`, `ru` ou vide. Non mesuré, à faire avant de passer un site en

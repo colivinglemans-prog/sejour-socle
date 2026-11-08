@@ -62,7 +62,7 @@ export function validateTemplates(templates: readonly MessageTemplate[], options
     const push = (f: Omit<TemplateFinding, "templateId">) => findings.push({ templateId: t.id, ...f });
 
     if (!ID.test(t.id)) push({ level: "error", field: "id", code: "id-format", detail: `« ${t.id} » : [a-z0-9-] attendu` });
-    if (/-pending$/.test(t.id)) push({ level: "error", field: "id", code: "id-reserved", detail: "un identifiant ne finit pas par -pending (collision dans le registre)" });
+    if (/-(pending|test)$/.test(t.id)) push({ level: "error", field: "id", code: "id-reserved", detail: "un identifiant ne finit ni par -pending ni par -test (collision dans le registre)" });
     const code = ledgerCode(t.id, "sent");
     if (seen.has(code)) push({ level: "error", field: "id", code: "id-duplicate", detail: `« ${t.id} » donne le même code de registre qu'un autre modèle` });
     seen.add(code);

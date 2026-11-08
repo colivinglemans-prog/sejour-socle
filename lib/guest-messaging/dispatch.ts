@@ -16,6 +16,10 @@
  *
  * Plafond par passage : au-delà, **rien** ne part. Un pic d'envois est le signe d'un bug (une
  * fenêtre de dates fausse, un registre illisible), pas d'une journée chargée.
+ *
+ * Mode `test` : au moment où le message partirait, il part **à l'hôte** par e-mail (`deps.test`),
+ * précédé d'un bandeau, et la copie est notée dans le registre de test (`MSG_<ID>_TEST`). Le
+ * voyageur ne reçoit rien et le registre réel n'est pas touché : le vrai envoi reste dû.
  */
 import type { Channel } from "../channels";
 import { DEFAULT_CHANNEL_RULES } from "./channel-rules";
@@ -97,12 +101,21 @@ export interface DispatchDeps {
   email: EmailTransport | null;
   /** Journal. Défaut : `logGuestMessage` (console, sans donnée personnelle). */
   log?(entry: GuestMessageLog): void;
+  /**
+   * Mode `test` : adresse de l'hôte et écriture de la trace `MSG_<ID>_TEST`. Absent, un modèle
+   * en `test` est bloqué (`no-test-transport`). Exige aussi `email`.
+   */
+  test?: {
+    to: string;
+    record(booking: MessagingBooking, template: MessageTemplate, entry: LedgerWrite): Promise<void>;
+  };
 }
 
 export interface DispatchOptions extends PlanOptions {
   now: Date;
   /**
-   * Mode de chaque modèle, **appliqué ici** : seul `live` envoie. Un modèle absent est `off`.
+   * Mode de chaque modèle, **appliqué ici** : seul `live` envoie au voyageur, `test` envoie une
+   * copie à l'hôte. Un modèle absent est `off`.
    * L'interrupteur général d'un site se traduit en modes tous `off` — pas de booléen.
    */
   modes: Readonly<Record<string, TemplateMode>>;
@@ -112,7 +125,8 @@ export interface DispatchOptions extends PlanOptions {
   cap: number;
 }
 
-export type DispatchOutcome = "sent" | "skipped" | "blocked" | "failed";
+/** `tested` : copie envoyée à l'hôte (mode `test`), rien au voyageur. */
+export type DispatchOutcome = "sent" | "tested" | "skipped" | "blocked" | "failed";
 
 export interface DispatchItemResult {
   bookingId: number;
@@ -130,6 +144,10 @@ export interface DispatchResult {
 /**
  * Envoie les messages `due` d'un plan. Les autres états sont ignorés.
  * Les messages d'une même réservation partent dans l'ordre des modèles.
+ *
+ * Le plan doit venir de `planByMode` : un modèle en `test` y est calculé sur le registre de test.
+ * Les copies de test ont leur propre plafond : au-delà, elles sont sautées (`test-cap`) sans
+ * arrêter le passage — elles ne vont qu'à l'hôte.
  */
 export async function sendPlanned(
   plan: readonly PlannedMessage[],
@@ -143,8 +161,14 @@ export async function sendPlanned(
     log({ event: "aborted", reason: "cap", count: due.length });
     return { aborted: { reason: "cap", due: due.length, cap: options.cap }, results: [] };
   }
+  const tests = plan.filter((p) => p.state.kind === "due" && options.modes[p.templateId] === "test");
   const byId = new Map(templates.map((t) => [t.id, t]));
   const results: DispatchItemResult[] = [];
+  for (const [i, p] of tests.entries()) {
+    const t = byId.get(p.templateId);
+    if (!t) continue;
+    results.push(i < options.cap ? await deliverTest(p.bookingId, t, deps, options, ONLY_DUE) : report(log, p.bookingId, t.id, "skipped", "test-cap"));
+  }
   for (const p of due) {
     const t = byId.get(p.templateId);
     if (!t) {
@@ -176,7 +200,73 @@ export function sendNow(
   deps: DispatchDeps,
   options: Omit<DispatchOptions, "cap">,
 ): Promise<DispatchItemResult> {
+  if (options.modes[template.id] === "test") return deliverTest(bookingId, template, deps, options, MANUAL_TEST);
   return deliver(bookingId, template, deps, options, MANUAL);
+}
+
+/** En test, l'hôte peut redemander une copie déjà reçue. */
+const MANUAL_TEST: readonly MessageState["kind"][] = [...MANUAL, "sent"];
+
+/**
+ * Copie de test : mêmes relecture, vérification et rendu qu'un vrai envoi, puis e-mail à l'hôte
+ * et trace `MSG_<ID>_TEST`. Pas de réservation ni de départage : une copie en double ne gêne
+ * personne.
+ */
+async function deliverTest(
+  bookingId: number,
+  t: MessageTemplate,
+  deps: DispatchDeps,
+  options: Omit<DispatchOptions, "cap">,
+  accepted: readonly MessageState["kind"][],
+): Promise<DispatchItemResult> {
+  const log = deps.log ?? logGuestMessage;
+  const done = (outcome: DispatchOutcome, reason?: string, extra?: Partial<GuestMessageLog>) =>
+    report(log, bookingId, t.id, outcome, reason, extra);
+  if (!deps.test || !deps.email || !realGuestEmail(deps.test.to)) return done("blocked", "no-test-transport");
+
+  let booking: MessagingBooking | null;
+  try {
+    booking = await deps.reload(bookingId);
+  } catch (e) {
+    return done("failed", "reload", errorMeta(e));
+  }
+  if (!booking) return done("skipped", "not-found");
+  const state = messageState(booking, t, options.now, { ...options, test: true });
+  if (!accepted.includes(state.kind)) {
+    return done("skipped", state.kind === "excluded" ? `excluded-${state.reason}` : `now-${state.kind}`);
+  }
+  if (deps.ready) {
+    try {
+      const check = await deps.ready(booking, t);
+      if (!check.ok) return done("blocked", check.reason);
+    } catch (e) {
+      return done("failed", "ready", errorMeta(e));
+    }
+  }
+  let rendered: RenderedMessage;
+  try {
+    rendered = renderMessage(t, booking, await deps.variables(booking, t), options.channelRules);
+  } catch (e) {
+    return done("blocked", e instanceof RenderError ? `missing:${e.missing.join(",")}` : "render", errorMeta(e));
+  }
+  const way = rendered.transport === "email" ? "e-mail" : `messagerie ${booking.channel}`;
+  const banner = [
+    "COPIE DE TEST — ce message n'a PAS été envoyé au voyageur.",
+    `Réservation ${booking.id} · ${booking.channel} · langue ${booking.locale} · partirait par : ${way}`,
+    "─────────────────────────────",
+    "",
+  ].join("\n");
+  try {
+    await deps.email.send({ to: deps.test.to, subject: `[TEST] ${rendered.subject} — résa ${booking.id}`, text: banner + rendered.text });
+  } catch (e) {
+    return done("failed", "send", { ...errorMeta(e), transport: "email" });
+  }
+  try {
+    await deps.test.record(booking, t, { at: options.now.toISOString(), anchorDay: anchorDayOf(booking, t), nonce: (options.nonce ?? randomNonce)() });
+  } catch (e) {
+    return done("failed", "record", errorMeta(e));
+  }
+  return done("tested", undefined, { transport: rendered.transport, version: t.version, channel: booking.channel });
 }
 
 function report(

@@ -13,6 +13,7 @@
  */
 import { parisInstant } from "../time";
 import type { Channel } from "../channels";
+import type { TemplateMode } from "./overview";
 import { DEFAULT_CHANNEL_RULES, realGuestEmail } from "./channel-rules";
 import type {
   AnchorPoint,
@@ -30,6 +31,15 @@ export interface PlanOptions {
   channelRules?: Partial<Record<Channel, ChannelMessagingRule>>;
   /** Au-delà, une réservation d'envoi jamais confirmée est « orpheline ». Défaut : 10 min. */
   orphanMinutes?: number;
+  /**
+   * Calcul du mode `test` : les traces lues sont celles du registre de test (`testLedger`), et un
+   * message n'est dû que dans les `testFreshHours` qui suivent son échéance (ou la création de la
+   * réservation, si elle est plus tardive). Sans cette fraîcheur, l'activation du mode rattraperait
+   * d'un coup tous les messages déjà partis par Beds24.
+   */
+  test?: boolean;
+  /** Défaut : 2 h. */
+  testFreshHours?: number;
 }
 
 export const DEFAULT_ELIGIBLE_STATUSES = ["confirmed", "new"] as const;
@@ -98,8 +108,8 @@ const latest = (entries: LedgerEntry[]) =>
  * le fil est ignoré pour ce modèle — sinon le message que le moteur vient d'envoyer, revenu dans
  * le fil, masquerait son propre renvoi après un changement de dates.
  */
-function tracesOf(b: MessagingBooking, templateId: string): LedgerEntry[] {
-  const mine = b.ledger.filter((e) => e.templateId === templateId);
+function tracesOf(b: MessagingBooking, templateId: string, test = false): LedgerEntry[] {
+  const mine = (test ? (b.testLedger ?? []) : b.ledger).filter((e) => e.templateId === templateId);
   return mine.some((e) => e.source === "ledger") ? mine.filter((e) => e.source === "ledger") : mine;
 }
 
@@ -120,7 +130,7 @@ export function messageState(
   const anchorDay = anchorDayOf(b, t);
 
   // 1. Déjà parti. Une trace sans jour d'ancrage (reconnue dans le fil) vaut envoi quoi qu'il arrive.
-  const mine = tracesOf(b, t.id);
+  const mine = tracesOf(b, t.id, options.test);
   const sent = latest(
     mine.filter(
       (e) => e.state === "sent" && (t.onAnchorChange === "ignore" || !e.anchorDay || e.anchorDay === anchorDay),
@@ -143,6 +153,11 @@ export function messageState(
   const c = t.conditions ?? {};
   if (c.channels && !c.channels.includes(b.channel)) return { kind: "excluded", reason: "channel" };
   if (c.minNights !== undefined && nightsOf(b) < c.minNights) return { kind: "excluded", reason: "min-nights" };
+  const created = createdAt(b);
+  if (c.minLeadHours !== undefined && created !== null) {
+    const lead = parisAt(b.arrival, "00:00").getTime() - created;
+    if (lead < c.minLeadHours * 3_600_000) return { kind: "excluded", reason: "late-booking" };
+  }
   const transport = rules[b.channel]?.transport ?? null;
   if (!transport) return { kind: "excluded", reason: "no-transport" };
   if (transport === "email" && !realGuestEmail(b.email)) return { kind: "excluded", reason: "no-email" };
@@ -160,12 +175,36 @@ export function messageState(
   // 5. Calendrier.
   const due = dueInstant(b, t);
   const dueAt = due.toISOString();
+  // Message de confort : un autre message (ou la confirmation, à la création) vient de partir.
+  if (c.quietHours !== undefined) {
+    const start = due.getTime() - c.quietHours * 3_600_000;
+    const pool = options.test ? (b.testLedger ?? []) : b.ledger;
+    const recent = pool.some((e) => e.templateId !== t.id && Date.parse(e.at) >= start);
+    if (recent || (created !== null && created >= start)) return { kind: "excluded", reason: "quiet" };
+  }
   if (now.getTime() < due.getTime()) return { kind: "scheduled", dueAt, transport };
   const late =
     t.late.mode === "send"
       ? now.getTime() > pointInstant(b, t.late.until).getTime()
       : now.getTime() - due.getTime() > t.late.graceHours * 3_600_000;
-  return late ? { kind: "missed", dueAt } : { kind: "due", dueAt, transport };
+  if (late) return { kind: "missed", dueAt };
+  if (options.test) {
+    const from = Math.max(due.getTime(), created ?? 0);
+    if (now.getTime() - from > (options.testFreshHours ?? 2) * 3_600_000) return { kind: "missed", dueAt };
+  }
+  return { kind: "due", dueAt, transport };
+}
+
+/** Instant de création, s'il est explicite (avec fuseau) ; `null` sinon. */
+function createdAt(b: MessagingBooking): number | null {
+  if (!b.bookingTime || !/(Z|[+-]\d{2}:?\d{2})$/.test(b.bookingTime)) return null;
+  const t = Date.parse(b.bookingTime);
+  return Number.isNaN(t) ? null : t;
+}
+
+/** Dernière copie de test envoyée à l'hôte pour ce modèle, s'il y en a une. */
+export function lastTestCopy(b: MessagingBooking, templateId: string): string | undefined {
+  return latest((b.testLedger ?? []).filter((e) => e.templateId === templateId && e.state === "sent"))?.at;
 }
 
 /** Tous les messages de toutes les réservations, dans l'ordre des réservations puis des modèles. */
@@ -177,5 +216,23 @@ export function planMessages(
 ): PlannedMessage[] {
   return bookings.flatMap((b) =>
     templates.map((t) => ({ bookingId: b.id, templateId: t.id, state: messageState(b, t, now, options) })),
+  );
+}
+
+/**
+ * Plan du cron : chaque modèle calculé selon son mode. Un modèle en `test` l'est sur le registre
+ * de test (copies à l'hôte), les autres sur le registre réel ; un modèle `off` n'apparaît pas.
+ */
+export function planByMode(
+  bookings: readonly MessagingBooking[],
+  templates: readonly MessageTemplate[],
+  now: Date,
+  modes: Readonly<Record<string, TemplateMode>>,
+  options: PlanOptions = {},
+): PlannedMessage[] {
+  return bookings.flatMap((b) =>
+    templates
+      .filter((t) => (modes[t.id] ?? "off") !== "off")
+      .map((t) => ({ bookingId: b.id, templateId: t.id, state: messageState(b, t, now, { ...options, test: modes[t.id] === "test" }) })),
   );
 }

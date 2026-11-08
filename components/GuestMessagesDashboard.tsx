@@ -20,7 +20,8 @@ import type { MessageState } from "../lib/guest-messaging/types";
  * l'autre arrive en données : titre, accent, points d'entrée.
  *
  * L'aperçu d'un message vient du serveur, codes masqués. Le bouton « Envoyer maintenant »
- * n'apparaît que pour un modèle en mode `live` et un état qui le permet ; le serveur refait
+ * n'apparaît que pour un modèle en mode `live` et un état qui le permet (en mode `test`, il
+ * devient « M'envoyer une copie de test ») ; le serveur refait
  * tous les contrôles, ce bouton n'est qu'un raccourci.
  */
 
@@ -51,6 +52,9 @@ const EXCLUSION: Record<string, string> = {
   "info-item": "en attente du code d'accès",
   "min-nights": "séjour trop court",
   "stay-over": "séjour terminé",
+  "late-booking": "réservation tardive : contenu repris dans un autre message",
+  quiet: "un autre message vient de partir",
+  "bad-dates": "dates illisibles",
 };
 
 /**
@@ -76,6 +80,10 @@ const REASONS: Record<string, string> = {
   "now-orphan": "un envoi précédent est à vérifier",
   "excluded-status": "réservation non confirmée ou annulée",
   "excluded-info-item": "code d'accès pas encore prêt",
+  "excluded-late-booking": "réservation tardive : contenu repris dans un autre message",
+  "excluded-quiet": "un autre message vient de partir",
+  "no-test-transport": "adresse de test ou e-mail non configuré",
+  record: "copie envoyée, mais trace de test non écrite",
   "no-email": "pas d'adresse e-mail",
   "no-email-transport": "envoi d'e-mail non configuré",
   "pin-not-on-lock": "le code n'est pas encore sur la serrure",
@@ -86,7 +94,7 @@ const REASONS: Record<string, string> = {
 const reasonLabel = (r?: string) => (r ? (REASONS[r] ?? (r.startsWith("missing:") ? "information manquante" : "refusé")) : "refusé");
 
 const LOCALE_SOURCE: Record<string, string> = { beds24: "déclarée", country: "d'après le pays", fallback: "par défaut" };
-const MODE_LABEL: Record<TemplateMode, string> = { off: "coupé", shadow: "ombre", live: "actif" };
+const MODE_LABEL: Record<TemplateMode, string> = { off: "coupé", shadow: "ombre", test: "test (copie à l'hôte)", live: "actif" };
 
 function badge(state: MessageState): { label: string; detail: string; tone: "ok" | "wait" | "warn" | "bad" | "mute" } {
   switch (state.kind) {
@@ -291,6 +299,7 @@ function BookingCard(props: {
                 <span className={`rounded-full px-2 py-0.5 text-xs font-medium ring-1 ${TONES[s.tone]}`}>{s.label}</span>
                 <span className="font-medium text-gray-800">{t?.label ?? m.templateId}</span>
                 <span className="text-xs text-gray-500">{s.detail}</span>
+                {m.testAt && <span className="text-xs text-violet-700">· copie de test reçue {fmtInstant(m.testAt)}</span>}
               </button>
               {isOpen && (
                 <Preview
@@ -338,11 +347,16 @@ function Preview(props: {
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
   }, [props.previewEndpoint, props.bookingId, props.templateId]);
 
+  const isTest = props.mode === "test";
   const sendable =
-    props.sendEndpoint && props.mode === "live" && ["due", "scheduled", "missed"].includes(props.state.kind);
+    props.sendEndpoint &&
+    (isTest
+      ? ["due", "scheduled", "missed", "sent"].includes(props.state.kind)
+      : props.mode === "live" && ["due", "scheduled", "missed"].includes(props.state.kind));
 
   async function send() {
-    if (!props.sendEndpoint || !confirm("Envoyer ce message maintenant au voyageur ?")) return;
+    if (!props.sendEndpoint) return;
+    if (!isTest && !confirm("Envoyer ce message maintenant au voyageur ?")) return;
     setSending(true);
     setResult(null);
     try {
@@ -352,7 +366,10 @@ function Preview(props: {
         body: JSON.stringify({ bookingId: props.bookingId, templateId: props.templateId }),
       });
       const body = (await r.json().catch(() => null)) as { outcome?: string; reason?: string } | null;
-      if (body?.outcome === "sent") {
+      if (body?.outcome === "tested") {
+        setResult("Copie envoyée dans votre boîte.");
+        props.onSent();
+      } else if (body?.outcome === "sent") {
         setResult("Envoyé.");
         props.onSent();
       } else {
@@ -391,7 +408,7 @@ function Preview(props: {
             className="rounded-lg px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
             style={{ backgroundColor: props.accent }}
           >
-            {sending ? "Envoi…" : "Envoyer maintenant"}
+            {sending ? "Envoi…" : isTest ? "M'envoyer une copie de test" : "Envoyer maintenant"}
           </button>
           {result && <span className="text-sm text-gray-600">{result}</span>}
         </div>

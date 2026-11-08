@@ -55,6 +55,20 @@ export interface MessageConditions {
   requiredInfoItem?: string;
   /** Nombre minimal de nuits (un « bon séjour » n'a pas de sens sur une nuit). */
   minNights?: number;
+  /**
+   * Réservation prise au moins tant d'heures avant le jour d'arrivée (minuit, heure de Paris).
+   * Sert aux réservations de dernière minute : le message est écarté (`late-booking`) et son
+   * contenu utile passe dans un autre, pour ne pas tout envoyer d'un coup. Sans date de création
+   * connue, la condition est tenue pour remplie.
+   */
+  minLeadHours?: number;
+  /**
+   * Message « de confort » : il n'est pas envoyé si un autre message est parti — ou si la
+   * réservation a été créée (la confirmation Beds24 part à ce moment-là) — dans les `quietHours`
+   * précédant son échéance. Écarté (`quiet`), jamais reporté. Les messages qui portent un accès
+   * n'ont pas cette condition : ils partent toujours.
+   */
+  quietHours?: number;
 }
 
 export type LocalizedText = Record<Locale, string>;
@@ -134,6 +148,11 @@ export interface MessagingBooking {
   infoCodes: readonly string[];
   /** Registre : ce que le moteur a déjà posé, plus ce qu'on a reconnu dans le fil. */
   ledger: readonly LedgerEntry[];
+  /**
+   * Registre du mode `test` (`MSG_<ID>_TEST`) : les copies envoyées à l'hôte. Tenu à part, il
+   * ne compte jamais comme un envoi au voyageur.
+   */
+  testLedger?: readonly LedgerEntry[];
 }
 
 export type LocaleSource = "beds24" | "country" | "fallback";
@@ -177,6 +196,10 @@ export type ExclusionReason =
   | "info-item"
   | "min-nights"
   | "stay-over"
+  /** Réservée trop tard pour ce message (`minLeadHours`) : un autre en porte le contenu. */
+  | "late-booking"
+  /** Un autre message, ou la confirmation, vient de partir (`quietHours`). */
+  | "quiet"
   /** Dates illisibles ou départ avant l'arrivée : la réservation est écartée sans faire tomber le plan. */
   | "bad-dates";
 

@@ -12,11 +12,15 @@ import type { Channel } from "../channels";
 import type { Locale } from "../locales";
 import { renderMessage } from "./dispatch";
 import { RenderError, type Vars } from "./render";
-import { planMessages, type PlanOptions } from "./schedule";
+import { lastTestCopy, planMessages, type PlanOptions } from "./schedule";
 import type { ChannelMessagingRule, LocaleSource, MessageState, MessageTemplate, MessagingBooking } from "./types";
 
-/** Mode d'un modèle sur un site. `off` : ni plan ni envoi ; `shadow` : plan affiché, rien n'est envoyé. */
-export type TemplateMode = "off" | "shadow" | "live";
+/**
+ * Mode d'un modèle sur un site. `off` : ni plan ni envoi ; `shadow` : plan affiché, rien n'est
+ * envoyé ; `test` : au moment de l'envoi, une copie part à l'hôte, rien au voyageur ; `live` :
+ * envoi au voyageur.
+ */
+export type TemplateMode = "off" | "shadow" | "test" | "live";
 
 export interface GuestMessagesReport {
   generatedAt: string;
@@ -39,7 +43,8 @@ export interface GuestMessagesBookingRow {
   localeSource: LocaleSource;
   /** Prénom seul, s'il est connu. */
   firstName?: string;
-  messages: { templateId: string; state: MessageState }[];
+  /** `testAt` : dernière copie de test reçue par l'hôte pour ce message. */
+  messages: { templateId: string; state: MessageState; testAt?: string }[];
 }
 
 /** « J-5 à 16:00 », « veille du départ à 17:00 », « à la réservation »… */
@@ -76,10 +81,12 @@ export function buildGuestMessagesReport(input: {
     const k = p.state.kind === "in-flight" ? "inFlight" : p.state.kind;
     counts[k]++;
   }
-  const byBooking = new Map<number, { templateId: string; state: MessageState }[]>();
+  const byBooking = new Map<number, { templateId: string; state: MessageState; testAt?: string }[]>();
+  const bookingById = new Map(input.bookings.map((b) => [b.id, b]));
   for (const p of plan) {
     const list = byBooking.get(p.bookingId) ?? [];
-    list.push({ templateId: p.templateId, state: p.state });
+    const testAt = lastTestCopy(bookingById.get(p.bookingId)!, p.templateId);
+    list.push({ templateId: p.templateId, state: p.state, ...(testAt ? { testAt } : {}) });
     byBooking.set(p.bookingId, list);
   }
   return {
