@@ -1,4 +1,4 @@
-import type { Beds24CalendarSpan } from "./beds24-types";
+import type { Beds24CalendarSpan, Beds24Message } from "./beds24-types";
 
 /**
  * Transport Beds24 v2 : échange des jetons, appel HTTP, repli, écriture de note.
@@ -139,8 +139,34 @@ export interface Beds24Client {
    * s'imprime sur les documents envoyés au client.
    */
   updateNotes(id: number, notes: string, route: string): Promise<void>;
+  /**
+   * Fil de messagerie d'une réservation, du plus récent au plus ancien (100 au plus — la page
+   * que Beds24 sert d'abord). Hors cache. La voie doit porter `read:bookings-personal`.
+   */
+  getMessages(bookingId: number, route: string): Promise<Beds24Message[]>;
+  /**
+   * Envoie un message au voyageur : Beds24 l'ajoute au fil et le pousse vers la messagerie du
+   * canal (Airbnb, Booking.com, Vrbo/Abritel). La voie doit porter `write:bookings-personal`.
+   * Une réponse acceptée ne prouve que la prise en charge par Beds24, pas la livraison.
+   */
+  sendMessage(bookingId: number, message: string, route: string): Promise<void>;
+  /** Ajoute des `infoItems` à une réservation (ajout seul). La voie doit porter `write:bookings`. */
+  addInfoItems(bookingId: number, items: readonly { code: string; text: string }[], route: string): Promise<void>;
+  /**
+   * Derniers crédits lus dans les en-têtes Beds24 (`x-five-min-limit-remaining`), ou `null`
+   * avant tout appel. Le quota (~100 crédits / 5 min) est **partagé par tout le compte** : une
+   * tâche planifiée qui l'épuise coupe aussi le dashboard et la vitrine.
+   */
+  quota(): Beds24Quota | null;
   /** Oublie l'access token d'une voie, pour que l'appel suivant en redemande un. */
   invalidate(route: string): void;
+}
+
+export interface Beds24Quota {
+  remaining: number;
+  resetsInSeconds: number;
+  /** Instant de la lecture (ms). */
+  at: number;
 }
 
 export function createBeds24Client(config: Beds24ClientConfig): Beds24Client {
@@ -283,8 +309,68 @@ export function createBeds24Client(config: Beds24ClientConfig): Beds24Client {
       res = await call(await token(refused));
     }
 
+    noteQuota(res);
     if (!res.ok) throw new Beds24Error(res.status, path, await res.text());
     return res.json() as Promise<T>;
+  }
+
+  let lastQuota: Beds24Quota | null = null;
+  function noteQuota(res: Response): void {
+    const remaining = Number(res.headers.get("x-five-min-limit-remaining"));
+    const resets = Number(res.headers.get("x-five-min-limit-resets-in"));
+    if (res.headers.has("x-five-min-limit-remaining") && Number.isFinite(remaining)) {
+      lastQuota = { remaining, resetsInSeconds: Number.isFinite(resets) ? resets : 300, at: Date.now() };
+    }
+  }
+
+  /**
+   * POST d'écriture qui **ne recopie jamais le corps de la réponse** dans l'erreur : Beds24 y
+   * renvoie l'objet écrit — le texte d'un message, un code d'accès dans un `infoItem` — et les
+   * erreurs finissent dans les journaux d'un dépôt public. Seuls le statut et, en cas de refus
+   * « 200 avec `success: false` », les noms de champs en cause sont gardés.
+   */
+  async function postQuiet(path: string, payload: unknown, name: string): Promise<void> {
+    const t = await token(name);
+    const res = await fetch(`${baseUrl}${path}`, {
+      method: "POST",
+      headers: { token: t, "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      cache: "no-store",
+    });
+    noteQuota(res);
+    const body = await res.text();
+    if (!res.ok) {
+      if (res.status === 401) invalidate(name);
+      throw new Beds24Error(res.status, `${path} (POST)`, "");
+    }
+    let refusal: string | null = null;
+    try {
+      const parsed = JSON.parse(body) as { success?: boolean; errors?: { field?: string; action?: string }[] }[];
+      const first = Array.isArray(parsed) ? parsed[0] : null;
+      if (first && first.success === false) {
+        refusal = (first.errors ?? []).map((e) => e.field ?? e.action ?? "?").join(",") || "sans motif";
+      }
+    } catch {
+      // Corps illisible mais statut 2xx : format inattendu, pas un refus.
+    }
+    if (refusal) throw new Beds24Error(200, `${path} (POST refusé : ${refusal})`, "");
+  }
+
+  async function getMessages(bookingId: number, name: string): Promise<Beds24Message[]> {
+    const data = await get<{ data?: Beds24Message[] }>("/bookings/messages", {
+      params: { bookingId: String(bookingId) },
+      route: name,
+      fresh: true,
+    });
+    return data.data ?? [];
+  }
+
+  function sendMessage(bookingId: number, message: string, name: string): Promise<void> {
+    return postQuiet("/bookings/messages", [{ bookingId, message }], name);
+  }
+
+  function addInfoItems(bookingId: number, items: readonly { code: string; text: string }[], name: string): Promise<void> {
+    return postQuiet("/bookings", [{ id: bookingId, infoItems: items.map(({ code, text }) => ({ code, text })) }], name);
   }
 
   async function updateNotes(id: number, notes: string, name: string): Promise<void> {
@@ -321,7 +407,18 @@ export function createBeds24Client(config: Beds24ClientConfig): Beds24Client {
     if (refusal) throw new Error(`Beds24 a refusé l'écriture : ${refusal}`);
   }
 
-  return { token, refresh, keepAlive, get, updateNotes, invalidate };
+  return {
+    token,
+    refresh,
+    keepAlive,
+    get,
+    updateNotes,
+    getMessages,
+    sendMessage,
+    addInfoItems,
+    quota: () => lastQuota,
+    invalidate,
+  };
 }
 
 /**

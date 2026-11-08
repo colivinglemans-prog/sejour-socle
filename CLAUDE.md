@@ -89,6 +89,7 @@ Décisions prises une fois, à ne pas rediscuter à chaque lot.
 | Où tombe l'argent | **Une seule fonction décide** : `spreadRevenue` pour l'imputation, `availableUnitNights` pour le dénominateur. Aucune page ne recalcule. Le RevPAR est **défini comme un quotient** ; son égalité avec « prix moyen × occupation » est une conséquence arithmétique, plus une seconde formule qui peut diverger. | 2026-09-12 |
 | Exception aux règles 6 et « n'entre jamais » : serrure Nuki | `lib/nuki.ts` et `lib/access-codes.ts` montent avec **un seul consommateur** (Barbusse), par décision de l'utilisateur : un prochain logement pourrait avoir une Nuki. Albiez n'est pas tenu de s'en servir (boîte à clés mécanique, code fixe). L'exception couvre ce client d'appareil **et lui seul** : `heatzy.ts` / `cozytouch.ts` restent dehors, et la tâche planifiée qui synchronise reste chez le site. Motif et portée dans la section v3.8.0. | 2026-11-07 |
 | Exception à la règle 6 : préparation d'arrivée | `lib/arrival-readiness/` (`schedule`, `evaluate`, `format`, `nuki-probe`, `types`) monte avec **un seul consommateur** (Barbusse), par décision de l'utilisateur : le module est prévu pour les futurs équipements d'Albiez. **Portée** : le calendrier des passages, l'interface `ReadinessProbe` (`lock`, `heating`, `waterHeater`, `presence`, toutes facultatives), la mise en forme sans PIN ni nom de famille, l'anti-répétition par `nextAlertState`, et les sondes Nuki (qui s'appuient sur l'exception précédente). **Hors portée** : les sondes de chauffage et d'eau chaude (`heatzy.ts` / `cozytouch.ts` restent chez Barbusse, qui les adapte à `ReadinessProbe`), la route cron, le stockage de l'état, et toute heure ou tout seuil — tous fournis par le site, sans valeur par défaut. | 2026-11-07 |
+| Messagerie voyageur | **Le moteur monte, les valeurs restent.** Deux appelants réels dès le départ (règle 6 respectée). Dans le socle : `lib/guest-messaging/` (types, planification pure, rendu, validation des textes, registre dans les `infoItems` Beds24, envoi à dépendances injectées, charge utile de l'écran de suivi) et `components/GuestMessagesDashboard.tsx`. Chez chaque site : **les textes** (aucun texte par défaut ici, même « Bonjour »), les règles concrètes, la route cron, le transport e-mail et ses secrets, la vérification propre au bien (serrure, boîte à clés). Aucun stockage supposé. Pas de booléen `dryRun` : le mode ombre appelle `planMessages` seul. Un canal n'est nommé que dans `channel-rules.ts`. | 2026-11-08 |
 
 ## Protocole de test
 
@@ -126,7 +127,8 @@ fort enjeu — `taxe-sejour`, `fiscal/*` (`bic`, `ir`, `lmp-test`, `cotisations`
 
 Contenu d'articles de blog, dictionnaires i18n, `public/`, données propres à un bien, photos.
 `heatzy.ts` / `cozytouch.ts` et les crons (Barbusse) — seule exception, la serrure Nuki (v3.8.0). `seasons.ts` et sa descendance, `AWARDS`,
-`property.ts`, `legal.ts` (Albiez). Ce sont les **valeurs**, pas les mécanismes.
+`property.ts`, `legal.ts` (Albiez). Les textes des messages voyageurs, leurs déclencheurs concrets, le
+transport e-mail concret (SMTP d'un domaine). Ce sont les **valeurs**, pas les mécanismes.
 
 ## Les agents
 
@@ -1339,6 +1341,59 @@ séjour (blog). Deux appelants réels : le composant naît dans le socle (règle
   prédicat de correspondance, la carte d'article, le tri, les libellés traduits, la lecture
   d'ancre ou de paramètre d'URL.
 - Version mineure : composant nouveau, rien de modifié.
+
+### v3.18.0 — messagerie voyageur (remplace les « Mail & Actions » de Beds24)
+
+Les messages automatiques vivaient dans l'écran Beds24 : recopiés à la main en cinq langues,
+sans version, invisibles de l'API — donc impossibles à relire ou contrôler. Ils passent dans le
+dépôt de chaque site, et le socle décide quand et par où chacun part. Deux consommateurs réels.
+
+- `lib/guest-messaging/types.ts` — `MessageTemplate` (déclencheur `booked` / `arrival` /
+  `departure` + décalage en jours + heure de Paris ; politique de retard `send` jusqu'à un point
+  ou `skip` après `graceHours` ; conditions en données ; `onAnchorChange` ; variables
+  obligatoires et facultatives ; objet, corps, variante sans lien ; empreintes),
+  `MessagingBooking` (entrée propre du moteur — **le `Booking` canonique ne change pas**),
+  `MessageState`, `EmailTransport`.
+- `schedule.ts` — `messageState` / `planMessages`, **purs**. Ordre : déjà envoyé → réservé
+  (`in-flight`, puis `orphan` après 10 min, **jamais renvoyé**) → statut → canal → nuits →
+  voie de sortie → butée (rien après le lendemain du départ) → `infoItem` requis → calendrier.
+  `parisAt(jour, "HH:MM")` s'appuie sur `parisInstant` : juste des deux côtés d'un changement
+  d'heure.
+- `render.ts` — `{{nom}}`, `{{#nom}}…{{/nom}}`, `{{^nom}}…{{/nom}}`. Variable obligatoire
+  absente ⇒ `RenderError` (fin du « Hello , »). Une valeur n'est jamais réinterprétée ;
+  `sanitizeVar` retire contrôles et retours à la ligne.
+- `validate.ts` — `validateTemplates` : textes présents, parité des variables avec le français,
+  variable inconnue ou facultative non gardée, sections, restes de syntaxe Beds24, objet sans
+  variable, chiffres/e-mails écrits en dur, rendu à blanc, liens vers un canal qui les filtre,
+  longueur, empreintes trop courtes ou qui reconnaissent un autre modèle. Chaque site l'appelle
+  dans un test qui bloque le build.
+- `ledger.ts` — registre dans les `infoItems` : `MSG_<ID>_PENDING` avant l'envoi, `MSG_<ID>`
+  après ; texte = métadonnées seules (`at`, `v`, `anchor`). `ledgerFromThread` reconnaît les
+  messages de l'hôte par leurs empreintes (auto-actions Beds24 encore actives, envois manuels).
+- `dispatch.ts` — `sendPlanned` (cron, plafond par passage : au-delà **rien** ne part) et
+  `sendNow` (bouton du dashboard, aussi avant l'heure), mêmes contrôles : relecture, recalcul,
+  `ready` du site, rendu, réserver → envoyer → confirmer. `renderMessage` choisit la variante.
+- `channel-rules.ts` — le seul endroit qui nomme un canal. Airbnb, Booking.com, Abritel : la
+  messagerie ; Direct : l'e-mail du site ; Autre (HomeToGo…) : rien d'automatique.
+  `messagingChannel` (≠ `normalizeChannel`, qui range l'inconnu en Direct pour les stats) et
+  `realGuestEmail` (refuse les relais de plateforme et toute injection d'en-tête).
+- `language.ts` — `pickGuestLocale` : `lang` Beds24, puis pays (`localeFromCountry`, remonté
+  de Barbusse dans `locales.ts` avec `normalizeLocaleTag`), puis anglais ; la source est rendue.
+- `overview.ts` + `components/GuestMessagesDashboard.tsx` — l'écran de suivi : DTO en liste
+  blanche (prénom seul, aucun e-mail, téléphone, montant ni code), aperçu codes masqués
+  (`maskVars`), bouton « Envoyer maintenant » pour les modèles en mode `live`.
+- `log.ts` — `logGuestMessage`, seule sortie console, en liste blanche de champs.
+- `beds24-types.ts` — `lang`, `apiSource`, `apiSourceId`, `modifiedTime`, `Beds24Message`.
+- `beds24-client.ts` — `getMessages`, `sendMessage`, `addInfoItems` (erreurs **sans** le corps
+  de la réponse : Beds24 y renvoie le texte écrit), `quota()` (crédits restants lus dans les
+  en-têtes ; le quota est partagé par tout le compte).
+- `cron-auth.ts` — comparaison en temps constant (`constantTimeEqual`).
+
+Mesures du 2026-11-08 (lecture seule) : un `GET /bookings` coûte ~1 crédit ; codes
+`apiSourceId` Airbnb 46, Booking.com 19, Vrbo/Abritel 30, HomeToGo 78, direct 0 ; `lang`
+vaut `fr`, `en`, `es`, `it`, `ru` ou vide. Non mesuré, à faire avant de passer un site en
+`live` : livraison réelle sur Abritel, envoi sur une réservation directe, liens chez
+Booking.com, effet d'un `infoItem` sur le webhook.
 
 ### Comment une application s'y branche
 

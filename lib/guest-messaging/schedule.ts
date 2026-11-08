@@ -1,0 +1,149 @@
+/**
+ * Planification — **pure** : réservations + modèles + instant → état de chaque message.
+ *
+ * C'est la même fonction qui décide d'un envoi et qui alimente l'écran de suivi du dashboard :
+ * ce qui est affiché « prévu le 12 à 16 h » est exactement ce que le cron fera, il n'y a pas de
+ * seconde logique à tenir alignée.
+ *
+ * Le mode ombre n'est pas un drapeau (règle 2) : un site en ombre appelle `planMessages` et
+ * affiche le résultat ; un site en réel appelle en plus `sendPlanned` (`./dispatch`).
+ *
+ * Les heures sont celles de Paris, calculées par `parisInstant` : juste des deux côtés d'un
+ * changement d'heure. Aucun `toISOString()` sur une date locale.
+ */
+import { parisInstant } from "../time";
+import type { Channel } from "../channels";
+import { DEFAULT_CHANNEL_RULES } from "./channel-rules";
+import type {
+  AnchorPoint,
+  ChannelMessagingRule,
+  LedgerEntry,
+  MessageState,
+  MessageTemplate,
+  MessagingBooking,
+  PlannedMessage,
+} from "./types";
+
+export interface PlanOptions {
+  /** Statuts Beds24 éligibles. Défaut : `confirmed` et `new`. */
+  eligibleStatuses?: readonly string[];
+  channelRules?: Partial<Record<Channel, ChannelMessagingRule>>;
+  /** Au-delà, une réservation d'envoi jamais confirmée est « orpheline ». Défaut : 10 min. */
+  orphanMinutes?: number;
+}
+
+export const DEFAULT_ELIGIBLE_STATUSES = ["confirmed", "new"] as const;
+const DEFAULT_ORPHAN_MINUTES = 10;
+
+/** « YYYY-MM-DD » + n jours, en arithmétique UTC sur la date seule (aucun fuseau en jeu). */
+export function addDays(day: string, n: number): string {
+  const [y, m, d] = day.split("-").map(Number);
+  const t = new Date(Date.UTC(y!, m! - 1, d! + n));
+  return `${t.getUTCFullYear()}-${String(t.getUTCMonth() + 1).padStart(2, "0")}-${String(t.getUTCDate()).padStart(2, "0")}`;
+}
+
+/** Instant où il est `hhmm` (« HH:MM ») à Paris le jour `day`. */
+export function parisAt(day: string, hhmm: string): Date {
+  const [h, m] = hhmm.split(":").map(Number);
+  return new Date(parisInstant(day, h!).getTime() + (m ?? 0) * 60_000);
+}
+
+function pointInstant(b: MessagingBooking, p: AnchorPoint): Date {
+  const day = p.anchor === "arrival" ? b.arrival : b.departure;
+  return parisAt(addDays(day, p.offsetDays), p.at);
+}
+
+/** Échéance d'un message pour une réservation. */
+export function dueInstant(b: MessagingBooking, t: MessageTemplate): Date {
+  if (t.trigger.anchor === "booked") {
+    const created = b.bookingTime ? Date.parse(b.bookingTime) : NaN;
+    // Sans date de création, l'échéance est « depuis toujours » : la politique de retard tranche.
+    return new Date(Number.isNaN(created) ? 0 : created + t.trigger.delayMinutes * 60_000);
+  }
+  return pointInstant(b, t.trigger);
+}
+
+/** Jour dont dépend le message : le départ pour un message ancré au départ, l'arrivée sinon. */
+export function anchorDayOf(b: MessagingBooking, t: MessageTemplate): string {
+  return t.trigger.anchor === "departure" ? b.departure : b.arrival;
+}
+
+export function nightsOf(b: MessagingBooking): number {
+  return Math.round((Date.parse(`${b.departure}T00:00:00Z`) - Date.parse(`${b.arrival}T00:00:00Z`)) / 86_400_000);
+}
+
+const latest = (entries: LedgerEntry[]) =>
+  entries.reduce<LedgerEntry | undefined>((acc, e) => (!acc || e.at > acc.at ? e : acc), undefined);
+
+/** État d'un message pour une réservation, à l'instant `now`. */
+export function messageState(
+  b: MessagingBooking,
+  t: MessageTemplate,
+  now: Date,
+  options: PlanOptions = {},
+): MessageState {
+  const statuses = options.eligibleStatuses ?? DEFAULT_ELIGIBLE_STATUSES;
+  const rules = { ...DEFAULT_CHANNEL_RULES, ...options.channelRules };
+  const orphanMs = (options.orphanMinutes ?? DEFAULT_ORPHAN_MINUTES) * 60_000;
+  const anchorDay = anchorDayOf(b, t);
+
+  // 1. Déjà parti. Une trace sans jour d'ancrage (reconnue dans le fil) vaut envoi quoi qu'il arrive.
+  const mine = b.ledger.filter((e) => e.templateId === t.id);
+  const sent = latest(
+    mine.filter(
+      (e) => e.state === "sent" && (t.onAnchorChange === "ignore" || !e.anchorDay || e.anchorDay === anchorDay),
+    ),
+  );
+  if (sent) return { kind: "sent", at: sent.at, source: sent.source, version: sent.version };
+
+  // 2. Réservé sans confirmation : en cours, ou orphelin. Jamais renvoyé automatiquement.
+  const pending = latest(
+    mine.filter((e) => e.state === "pending" && (t.onAnchorChange === "ignore" || !e.anchorDay || e.anchorDay === anchorDay)),
+  );
+  if (pending) {
+    return now.getTime() - Date.parse(pending.at) > orphanMs
+      ? { kind: "orphan", at: pending.at }
+      : { kind: "in-flight", at: pending.at };
+  }
+
+  // 3. Éligibilité.
+  if (!statuses.includes(b.status)) return { kind: "excluded", reason: "status" };
+  const c = t.conditions ?? {};
+  if (c.channels && !c.channels.includes(b.channel)) return { kind: "excluded", reason: "channel" };
+  if (c.minNights !== undefined && nightsOf(b) < c.minNights) return { kind: "excluded", reason: "min-nights" };
+  const transport = rules[b.channel]?.transport ?? null;
+  if (!transport) return { kind: "excluded", reason: "no-transport" };
+  if (transport === "email" && !b.email) return { kind: "excluded", reason: "no-email" };
+
+  // Butée absolue : rien après la fin du lendemain du départ, quelle que soit la politique.
+  if (now.getTime() > parisAt(addDays(b.departure, 1), "23:59").getTime()) {
+    return { kind: "excluded", reason: "stay-over" };
+  }
+
+  // 4. Le code d'infoItem requis manque : affiché comme tel, le message deviendra dû quand il arrivera.
+  if (c.requiredInfoItem && !b.infoCodes.includes(c.requiredInfoItem)) {
+    return { kind: "excluded", reason: "info-item" };
+  }
+
+  // 5. Calendrier.
+  const due = dueInstant(b, t);
+  const dueAt = due.toISOString();
+  if (now.getTime() < due.getTime()) return { kind: "scheduled", dueAt, transport };
+  const late =
+    t.late.mode === "send"
+      ? now.getTime() > pointInstant(b, t.late.until).getTime()
+      : now.getTime() - due.getTime() > t.late.graceHours * 3_600_000;
+  return late ? { kind: "missed", dueAt } : { kind: "due", dueAt, transport };
+}
+
+/** Tous les messages de toutes les réservations, dans l'ordre des réservations puis des modèles. */
+export function planMessages(
+  bookings: readonly MessagingBooking[],
+  templates: readonly MessageTemplate[],
+  now: Date,
+  options: PlanOptions = {},
+): PlannedMessage[] {
+  return bookings.flatMap((b) =>
+    templates.map((t) => ({ bookingId: b.id, templateId: t.id, state: messageState(b, t, now, options) })),
+  );
+}

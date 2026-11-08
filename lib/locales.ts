@@ -66,6 +66,44 @@ export function isLocale(value: string): value is Locale {
 }
 
 /**
+ * Pays (ISO 3166-1 alpha-2, tel que Beds24 le range dans `country`) → langue à proposer.
+ *
+ * Remonté de Barbusse (`lib/site.ts`) le 2026-11-08 pour la messagerie voyageur, qui sert les
+ * deux sites. La Suisse est rangée en français : c'est le choix qu'avait fait Barbusse, et un
+ * Suisse alémanique comprend le français de la maison mieux qu'un anglais par défaut.
+ */
+const COUNTRY_TO_LOCALE: Record<string, Locale> = {
+  FR: "fr",
+  BE: "fr",
+  CH: "fr",
+  LU: "fr",
+  MC: "fr",
+  IT: "it",
+  SM: "it",
+  DE: "de",
+  AT: "de",
+  LI: "de",
+  ES: "es",
+  AD: "es",
+};
+
+/** Langue d'un voyageur d'après son pays, ou `null` si le pays ne désigne aucune de nos langues. */
+export function localeFromCountry(country?: string | null): Locale | null {
+  if (!country) return null;
+  return COUNTRY_TO_LOCALE[country.trim().toUpperCase()] ?? null;
+}
+
+/**
+ * Ramène une étiquette de langue hétéroclite à l'une des nôtres : `"fr"`, `"FR"`, `"fr-FR"`,
+ * `"fr_BE"` donnent `"fr"`. Une langue que le site ne parle pas (`"ru"`) ou une valeur vide
+ * donnent `null` — c'est à l'appelant de choisir le repli, et de pouvoir dire pourquoi.
+ */
+export function normalizeLocaleTag(tag?: string | null): Locale | null {
+  const base = (tag ?? "").trim().toLowerCase().split(/[-_]/)[0] ?? "";
+  return isLocale(base) ? base : null;
+}
+
+/**
  * Choisit une langue d'après un en-tête `Accept-Language`.
  *
  * On lit tous les tags avec leur poids `q=` et on prend le mieux noté que le site

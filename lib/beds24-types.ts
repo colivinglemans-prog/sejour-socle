@@ -94,6 +94,36 @@ export interface Beds24Booking {
   arrivalTime?: string;
   invoiceItems?: Beds24InvoiceItem[];
   infoItems?: Beds24InfoItem[];
+  /**
+   * Langue déclarée par le canal, deux lettres. Relevé le 2026-11-08 : `fr` en majorité, mais
+   * aussi `""` et `ru`. Voir `pickGuestLocale` (`./guest-messaging/language`).
+   */
+  lang?: string;
+  /** Libellé du canal tel que Beds24 l'affiche (`"Airbnb"`, `"VRBO"`, `"HomeToGo"`, `"Direct"`). */
+  apiSource?: string;
+  /**
+   * Code numérique du canal. Relevé le 2026-11-08 sur les deux comptes : Airbnb 46,
+   * Booking.com 19, Vrbo/Abritel 30, HomeToGo 78, direct 0.
+   */
+  apiSourceId?: number;
+  /** Dernière modification (ISO UTC). */
+  modifiedTime?: string;
+}
+
+/**
+ * Message du fil d'une réservation (`GET /bookings/messages`).
+ *
+ * `source` : `guest` (le voyageur), `host` (nous — à la main, par l'API ou par une auto-action
+ * Beds24), `system` (la plateforme), `internalNote`.
+ */
+export interface Beds24Message {
+  id: number;
+  bookingId: number;
+  /** ISO UTC. */
+  time: string;
+  source: "host" | "guest" | "internalNote" | "system";
+  message: string;
+  read?: boolean;
 }
 
 export interface Beds24Property {

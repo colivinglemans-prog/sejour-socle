@@ -1,0 +1,132 @@
+/**
+ * Écran de suivi de la messagerie voyageur — la charge utile, construite côté serveur.
+ *
+ * DTO en **liste blanche** (cerbere) : identifiant, dates, canal, langue, prénom, et l'état de
+ * chaque message. Jamais d'e-mail, de téléphone, de nom de famille, de montant, ni de code
+ * d'accès. L'aperçu d'un texte passe par `maskVars` : les variables secrètes y sont remplacées
+ * par `••••`, le texte en clair n'existe qu'au moment de l'envoi, sur le serveur.
+ *
+ * Route réservée à l'admin côté site (`guard.denyNonAdmin`), le rôle restreint reçoit un 403.
+ */
+import type { Channel } from "../channels";
+import type { Locale } from "../locales";
+import type { Vars } from "./render";
+import { planMessages, type PlanOptions } from "./schedule";
+import type { LocaleSource, MessageState, MessageTemplate, MessagingBooking } from "./types";
+
+/** Mode d'un modèle sur un site. `off` : ni plan ni envoi ; `shadow` : plan affiché, rien n'est envoyé. */
+export type TemplateMode = "off" | "shadow" | "live";
+
+export interface GuestMessagesReport {
+  generatedAt: string;
+  /** Interrupteur général coupé : rien ne part, quel que soit le mode des modèles. */
+  killSwitch: boolean;
+  templates: { id: string; label: string; version: number; when: string; mode: TemplateMode }[];
+  bookings: GuestMessagesBookingRow[];
+  counts: Record<"sent" | "due" | "scheduled" | "orphan" | "missed" | "inFlight" | "excluded", number>;
+  /** Crédits Beds24 restants au moment du calcul, si connus. */
+  quotaRemaining?: number;
+}
+
+export interface GuestMessagesBookingRow {
+  id: number;
+  arrival: string;
+  departure: string;
+  channel: Channel;
+  status: string;
+  locale: Locale;
+  localeSource: LocaleSource;
+  /** Prénom seul, s'il est connu. */
+  firstName?: string;
+  messages: { templateId: string; state: MessageState }[];
+}
+
+/** « J-5 à 16:00 », « veille du départ à 17:00 », « à la réservation »… */
+export function describeTrigger(t: MessageTemplate): string {
+  const tr = t.trigger;
+  if (tr.anchor === "booked") return tr.delayMinutes ? `${tr.delayMinutes} min après la réservation` : "à la réservation";
+  const at = tr.at.replace(":", "h");
+  const n = tr.offsetDays;
+  if (tr.anchor === "arrival") {
+    if (n === 0) return `jour d'arrivée à ${at}`;
+    if (n === -1) return `veille de l'arrivée à ${at}`;
+    if (n === 1) return `lendemain de l'arrivée à ${at}`;
+    return `${n < 0 ? `J${n}` : `J+${n}`} à ${at}`;
+  }
+  if (n === 0) return `jour du départ à ${at}`;
+  if (n === -1) return `veille du départ à ${at}`;
+  if (n === 1) return `lendemain du départ à ${at}`;
+  return `départ ${n < 0 ? n : `+${n}`} j à ${at}`;
+}
+
+export function buildGuestMessagesReport(input: {
+  bookings: readonly (MessagingBooking & { firstName?: string })[];
+  templates: readonly MessageTemplate[];
+  modes: Readonly<Record<string, TemplateMode>>;
+  killSwitch: boolean;
+  now: Date;
+  options?: PlanOptions;
+  quotaRemaining?: number;
+}): GuestMessagesReport {
+  const active = input.templates.filter((t) => (input.modes[t.id] ?? "off") !== "off");
+  const plan = planMessages(input.bookings, active, input.now, input.options);
+  const counts: GuestMessagesReport["counts"] = { sent: 0, due: 0, scheduled: 0, orphan: 0, missed: 0, inFlight: 0, excluded: 0 };
+  for (const p of plan) {
+    const k = p.state.kind === "in-flight" ? "inFlight" : p.state.kind;
+    counts[k]++;
+  }
+  const byBooking = new Map<number, { templateId: string; state: MessageState }[]>();
+  for (const p of plan) {
+    const list = byBooking.get(p.bookingId) ?? [];
+    list.push({ templateId: p.templateId, state: p.state });
+    byBooking.set(p.bookingId, list);
+  }
+  return {
+    generatedAt: input.now.toISOString(),
+    killSwitch: input.killSwitch,
+    templates: input.templates.map((t) => ({
+      id: t.id,
+      label: t.label,
+      version: t.version,
+      when: describeTrigger(t),
+      mode: input.modes[t.id] ?? "off",
+    })),
+    // Projection explicite, champ par champ : rien de `MessagingBooking` ne fuit par mégarde.
+    bookings: [...input.bookings]
+      .sort((a, b) => a.arrival.localeCompare(b.arrival) || a.id - b.id)
+      .map((b) => ({
+        id: b.id,
+        arrival: b.arrival,
+        departure: b.departure,
+        channel: b.channel,
+        status: b.status,
+        locale: b.locale,
+        localeSource: b.localeSource,
+        firstName: b.firstName,
+        messages: byBooking.get(b.id) ?? [],
+      })),
+    counts,
+    quotaRemaining: input.quotaRemaining,
+  };
+}
+
+export const MASK = "••••";
+
+/** Copie des variables où les secrètes (codes d'accès) sont masquées, pour un aperçu. */
+export function maskVars(vars: Vars, secret: readonly string[]): Vars {
+  return Object.fromEntries(Object.entries(vars).map(([k, v]) => [k, secret.includes(k) && v ? MASK : v]));
+}
+
+/** Aperçu d'un message, tel que l'écran de suivi l'affiche. */
+export interface GuestMessagePreview {
+  bookingId: number;
+  templateId: string;
+  locale: Locale;
+  transport: "platform" | "email";
+  variant: "standard" | "without-links";
+  subject: string;
+  /** Texte rendu, codes masqués. */
+  text: string;
+  /** Variables obligatoires manquantes : le message serait bloqué. */
+  missing: string[];
+}
