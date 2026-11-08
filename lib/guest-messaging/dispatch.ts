@@ -25,7 +25,6 @@ import type { Channel } from "../channels";
 import { DEFAULT_CHANNEL_RULES } from "./channel-rules";
 import { logGuestMessage, type GuestMessageLog } from "./log";
 import { realGuestEmail } from "./channel-rules";
-import type { TemplateMode } from "./overview";
 import { RenderError, renderTemplate, type Vars } from "./render";
 import { anchorDayOf, messageState, type PlanOptions } from "./schedule";
 import type {
@@ -35,6 +34,7 @@ import type {
   MessageTemplate,
   MessagingBooking,
   PlannedMessage,
+  TemplateMode,
   Transport,
 } from "./types";
 
@@ -261,12 +261,17 @@ async function deliverTest(
   } catch (e) {
     return done("failed", "send", { ...errorMeta(e), transport: "email" });
   }
+  const meta = { transport: rendered.transport, version: t.version, channel: booking.channel } as const;
+  // Copie redemandée à la main : la trace existe déjà, on n'en empile pas une de plus.
+  if (state.kind === "sent") return done("tested", undefined, meta);
   try {
     await deps.test.record(booking, t, { at: options.now.toISOString(), anchorDay: anchorDayOf(booking, t), nonce: (options.nonce ?? randomNonce)() });
   } catch (e) {
-    return done("failed", "record", errorMeta(e));
+    // La copie est partie : on le dit (`tested`), avec le motif. Rendre `failed` laisserait le
+    // message dû, et le cron renverrait la copie — code compris — à chaque passage.
+    return done("tested", "record", { ...meta, ...errorMeta(e) });
   }
-  return done("tested", undefined, { transport: rendered.transport, version: t.version, channel: booking.channel });
+  return done("tested", undefined, meta);
 }
 
 function report(

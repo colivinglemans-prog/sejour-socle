@@ -197,3 +197,48 @@ describe("réglages lus dans l'environnement", () => {
     expect(testRecipientFrom({ MESSAGES_TEST_TO: "pas une adresse" })).toBeUndefined();
   });
 });
+
+describe("relecture cerbere / douanier", () => {
+  it("trace de test impossible à écrire : la copie compte comme partie (pas de renvoi en boucle)", async () => {
+    const { sendNow } = await import("../../lib/guest-messaging/dispatch");
+    const { booking, access } = await import("./fixtures");
+    const send = vi.fn(async () => {});
+    const b = booking();
+    const r = await sendNow(1001, access, {
+      reload: async () => b,
+      variables: async () => ({ code: "0000", guide: "https://exemple.fr/g" }),
+      reserve: async () => {},
+      confirm: async () => {},
+      platform: async () => {},
+      email: { send },
+      log: () => {},
+      test: { to: "hote@exemple.fr", record: async () => { throw new Error("beds24"); } },
+    }, { now: new Date("2026-12-05T15:30:00Z"), modes: { arrivee: "test" } });
+    expect(r).toMatchObject({ outcome: "tested", reason: "record" });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+  it("copie redemandée : pas de nouvelle trace", async () => {
+    const { sendNow } = await import("../../lib/guest-messaging/dispatch");
+    const { booking, access } = await import("./fixtures");
+    const record = vi.fn(async () => {});
+    const b = booking({ testLedger: [{ templateId: "arrivee", state: "sent", at: "2026-12-05T15:00:00Z", source: "ledger" }] });
+    const r = await sendNow(1001, access, {
+      reload: async () => b,
+      variables: async () => ({ code: "0000", guide: "https://exemple.fr/g" }),
+      reserve: async () => {},
+      confirm: async () => {},
+      platform: async () => {},
+      email: { send: async () => {} },
+      log: () => {},
+      test: { to: "hote@exemple.fr", record },
+    }, { now: new Date("2026-12-05T15:30:00Z"), modes: { arrivee: "test" } });
+    expect(r.outcome).toBe("tested");
+    expect(record).not.toHaveBeenCalled();
+  });
+  it("quietHours sur un message à la réservation : refusé par la validation", async () => {
+    const { validateTemplates } = await import("../../lib/guest-messaging/validate");
+    const { departure } = await import("./fixtures");
+    const t = { ...departure, trigger: { anchor: "booked" as const, delayMinutes: 0 }, conditions: { quietHours: 12 } };
+    expect(validateTemplates([t]).some((f) => f.code === "quiet-booked")).toBe(true);
+  });
+});

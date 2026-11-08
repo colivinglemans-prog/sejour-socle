@@ -16,6 +16,13 @@
 import type { Channel } from "../channels";
 import type { Locale } from "../locales";
 
+/**
+ * Mode d'un modèle sur un site. `off` : ni plan ni envoi ; `shadow` : plan affiché, rien n'est
+ * envoyé ; `test` : au moment de l'envoi, une copie part à l'hôte, rien au voyageur ; `live` :
+ * envoi au voyageur.
+ */
+export type TemplateMode = "off" | "shadow" | "test" | "live";
+
 /** Voie de sortie d'un message. */
 export type Transport = "platform" | "email";
 

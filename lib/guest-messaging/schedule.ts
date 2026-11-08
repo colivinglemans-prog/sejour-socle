@@ -13,7 +13,6 @@
  */
 import { parisInstant } from "../time";
 import type { Channel } from "../channels";
-import type { TemplateMode } from "./overview";
 import { DEFAULT_CHANNEL_RULES, realGuestEmail } from "./channel-rules";
 import type {
   AnchorPoint,
@@ -23,6 +22,7 @@ import type {
   MessageTemplate,
   MessagingBooking,
   PlannedMessage,
+  TemplateMode,
 } from "./types";
 
 export interface PlanOptions {

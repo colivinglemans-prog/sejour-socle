@@ -13,14 +13,9 @@ import type { Locale } from "../locales";
 import { renderMessage } from "./dispatch";
 import { RenderError, type Vars } from "./render";
 import { lastTestCopy, planMessages, type PlanOptions } from "./schedule";
-import type { ChannelMessagingRule, LocaleSource, MessageState, MessageTemplate, MessagingBooking } from "./types";
+import type { ChannelMessagingRule, LocaleSource, MessageState, MessageTemplate, MessagingBooking, TemplateMode } from "./types";
 
-/**
- * Mode d'un modèle sur un site. `off` : ni plan ni envoi ; `shadow` : plan affiché, rien n'est
- * envoyé ; `test` : au moment de l'envoi, une copie part à l'hôte, rien au voyageur ; `live` :
- * envoi au voyageur.
- */
-export type TemplateMode = "off" | "shadow" | "test" | "live";
+export type { TemplateMode } from "./types";
 
 export interface GuestMessagesReport {
   generatedAt: string;

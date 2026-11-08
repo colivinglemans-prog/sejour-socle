@@ -62,6 +62,9 @@ export function validateTemplates(templates: readonly MessageTemplate[], options
     const push = (f: Omit<TemplateFinding, "templateId">) => findings.push({ templateId: t.id, ...f });
 
     if (!ID.test(t.id)) push({ level: "error", field: "id", code: "id-format", detail: `« ${t.id} » : [a-z0-9-] attendu` });
+    if (t.conditions?.quietHours !== undefined && t.trigger.anchor === "booked") {
+      push({ level: "error", field: "id", code: "quiet-booked", detail: "quietHours sur un message envoyé à la réservation : la création tombe toujours dans la fenêtre, il ne partirait jamais" });
+    }
     if (/-(pending|test)$/.test(t.id)) push({ level: "error", field: "id", code: "id-reserved", detail: "un identifiant ne finit ni par -pending ni par -test (collision dans le registre)" });
     const code = ledgerCode(t.id, "sent");
     if (seen.has(code)) push({ level: "error", field: "id", code: "id-duplicate", detail: `« ${t.id} » donne le même code de registre qu'un autre modèle` });
