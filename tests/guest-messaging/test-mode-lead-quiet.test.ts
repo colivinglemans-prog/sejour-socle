@@ -142,6 +142,12 @@ describe("réservation tardive (minLeadHours)", () => {
       reason: "late-booking",
     });
   });
+  it("isLateBooking : la même mesure, exportée pour le message qui reprend le contenu", async () => {
+    const { isLateBooking } = await import("../../lib/guest-messaging/schedule");
+    expect(isLateBooking({ arrival: "2026-12-10", bookingTime: "2026-12-08T12:00:00Z" }, 48)).toBe(true);
+    expect(isLateBooking({ arrival: "2026-12-10", bookingTime: "2026-12-07T22:00:00Z" }, 48)).toBe(false);
+    expect(isLateBooking({ arrival: "2026-12-10", bookingTime: "2026-12-08 12:00:00" }, 48)).toBe(false);
+  });
   it("date de création inconnue : la condition est tenue pour remplie", () => {
     expect(messageState(booking({ bookingTime: undefined }), early, NOW).kind).not.toBe("excluded");
   });
@@ -160,6 +166,14 @@ describe("message de confort (quietHours)", () => {
   });
   it("la confirmation (création de la réservation) compte", () => {
     expect(messageState(booking({ bookingTime: "2026-12-12T10:00:00Z" }), comfort, DUE)).toEqual({ kind: "excluded", reason: "quiet" });
+  });
+  it("en test, un vrai envoi (modèle en live, Beds24) compte aussi", () => {
+    const b = booking({ ledger: [{ templateId: "arrivee", state: "sent", at: "2026-12-12T08:00:00Z", source: "ledger" }] });
+    expect(messageState(b, comfort, DUE, { test: true })).toEqual({ kind: "excluded", reason: "quiet" });
+  });
+  it("une réservation d'envoi (pending) d'un autre modèle ne compte pas", () => {
+    const b = booking({ ledger: [{ templateId: "arrivee", state: "pending", at: "2026-12-12T08:00:00Z", source: "ledger" }] });
+    expect(messageState(b, comfort, DUE).kind).toBe("due");
   });
   it("un message parti avant la fenêtre ne gêne pas", () => {
     const b = booking({ ledger: [{ templateId: "arrivee", state: "sent", at: "2026-12-11T15:00:00Z", source: "ledger" }] });

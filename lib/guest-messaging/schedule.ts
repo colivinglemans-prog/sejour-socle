@@ -83,9 +83,9 @@ export function dueInstant(b: MessagingBooking, t: MessageTemplate): Date {
   if (t.trigger.anchor === "booked") {
     // Un horodatage sans fuseau serait lu dans celui du processus (Paris en test, UTC chez
     // l'hébergeur) : on n'accepte qu'un instant explicite.
-    const created = b.bookingTime && /(Z|[+-]\d{2}:?\d{2})$/.test(b.bookingTime) ? Date.parse(b.bookingTime) : NaN;
+    const created = createdAt(b);
     // Sans date de création, l'échéance est « depuis toujours » : la politique de retard tranche.
-    return new Date(Number.isNaN(created) ? 0 : created + t.trigger.delayMinutes * 60_000);
+    return new Date(created === null ? 0 : created + t.trigger.delayMinutes * 60_000);
   }
   return pointInstant(b, t.trigger);
 }
@@ -154,10 +154,7 @@ export function messageState(
   if (c.channels && !c.channels.includes(b.channel)) return { kind: "excluded", reason: "channel" };
   if (c.minNights !== undefined && nightsOf(b) < c.minNights) return { kind: "excluded", reason: "min-nights" };
   const created = createdAt(b);
-  if (c.minLeadHours !== undefined && created !== null) {
-    const lead = parisAt(b.arrival, "00:00").getTime() - created;
-    if (lead < c.minLeadHours * 3_600_000) return { kind: "excluded", reason: "late-booking" };
-  }
+  if (c.minLeadHours !== undefined && isLateBooking(b, c.minLeadHours)) return { kind: "excluded", reason: "late-booking" };
   const transport = rules[b.channel]?.transport ?? null;
   if (!transport) return { kind: "excluded", reason: "no-transport" };
   if (transport === "email" && !realGuestEmail(b.email)) return { kind: "excluded", reason: "no-email" };
@@ -178,8 +175,11 @@ export function messageState(
   // Message de confort : un autre message (ou la confirmation, à la création) vient de partir.
   if (c.quietHours !== undefined) {
     const start = due.getTime() - c.quietHours * 3_600_000;
-    const pool = options.test ? (b.testLedger ?? []) : b.ledger;
-    const recent = pool.some((e) => e.templateId !== t.id && Date.parse(e.at) >= start);
+    // En test, le voyageur reçoit quand même les vrais envois (modèles en `live`, Beds24) : on
+    // les compte, avec les copies de test. Seuls les envois confirmés comptent — une réservation
+    // d'envoi (`pending`) peut être relâchée, et l'état redeviendrait dû après coup.
+    const pool = options.test ? [...b.ledger, ...(b.testLedger ?? [])] : b.ledger;
+    const recent = pool.some((e) => e.state === "sent" && e.templateId !== t.id && Date.parse(e.at) >= start);
     if (recent || (created !== null && created >= start)) return { kind: "excluded", reason: "quiet" };
   }
   if (now.getTime() < due.getTime()) return { kind: "scheduled", dueAt, transport };
@@ -196,10 +196,21 @@ export function messageState(
 }
 
 /** Instant de création, s'il est explicite (avec fuseau) ; `null` sinon. */
-function createdAt(b: MessagingBooking): number | null {
+function createdAt(b: Pick<MessagingBooking, "bookingTime">): number | null {
   if (!b.bookingTime || !/(Z|[+-]\d{2}:?\d{2})$/.test(b.bookingTime)) return null;
   const t = Date.parse(b.bookingTime);
   return Number.isNaN(t) ? null : t;
+}
+
+/**
+ * Réservation prise moins de `minLeadHours` heures avant le jour d'arrivée (minuit, heure de
+ * Paris) : la mesure exacte de la condition `minLeadHours`. Exportée pour que le message qui
+ * reprend le contenu d'un modèle écarté (`late-booking`) décide avec la même règle. Sans date de
+ * création explicite : `false` — le modèle part, rien n'est perdu, au pire en double.
+ */
+export function isLateBooking(b: Pick<MessagingBooking, "arrival" | "bookingTime">, minLeadHours: number): boolean {
+  const created = createdAt(b);
+  return created !== null && parisAt(b.arrival, "00:00").getTime() - created < minLeadHours * 3_600_000;
 }
 
 /** Dernière copie de test envoyée à l'hôte pour ce modèle, s'il y en a une. */

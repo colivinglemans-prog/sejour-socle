@@ -1433,9 +1433,12 @@ après une première copie.
 **Dernière minute** (même date) : deux conditions de modèle.
 - `minLeadHours` — réservée moins de N h avant le jour d'arrivée : écarté (`late-booking`), un
   autre message en porte le contenu (Albiez : l'avant-arrivée passe dans le message du code).
+  Ce message décide avec `isLateBooking(b, heures)` (schedule.ts), la même mesure : sans date de
+  création explicite, `false` des deux côtés — au pire un doublon, jamais un contenu perdu.
 - `quietHours` — message de confort : écarté (`quiet`), jamais reporté, si un autre message est
   parti ou si la réservation a été créée (la confirmation Beds24 part à ce moment) dans les N h
-  qui précèdent son échéance. Jamais sur un message qui porte un accès.
+  qui précèdent son échéance. Jamais sur un message qui porte un accès. Seuls les envois
+  confirmés comptent (pas les `pending`) ; en `test`, les vrais envois comptent avec les copies.
 
 Mesures du 2026-11-08 (lecture seule) : un `GET /bookings` coûte ~1 crédit ; codes
 `apiSourceId` Airbnb 46, Booking.com 19, Vrbo/Abritel 30, HomeToGo 78, direct 0 ; `lang`
