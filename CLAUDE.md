@@ -1401,6 +1401,12 @@ dépôt de chaque site, et le socle décide quand et par où chacun part. Deux c
   `Sec-Fetch-Site: same-origin` (403 sinon), corps en liste blanche, `sendNow` seul, réponse
   `{ outcome, reason }` ; cron : `verifyCronAuth`, `cap` toujours passé.
 - `log.ts` — `logGuestMessage`, seule sortie console, en liste blanche de champs.
+- `smtp.ts` — `createSmtpTransport` / `smtpConfigFrom` : le transport e-mail des réservations
+  directes, **le même pour les deux sites** (SMTP authentifié OVH/Zimbra de leur domaine, aucune
+  modification DNS). `nodemailer` est une dépendance paire **optionnelle**, chargée à la demande.
+  Délais de 10 s, 465 en TLS ou 587 en STARTTLS, expéditeur = compte authentifié, copie cachée
+  optionnelle, erreurs réduites au code SMTP (`SmtpError`) — celles de nodemailer citent
+  l'adresse du destinataire. Le module ne lit aucune variable d'environnement.
 - `beds24-types.ts` — `lang`, `apiSource`, `apiSourceId`, `modifiedTime`, `Beds24Message`.
 - `beds24-client.ts` — `getMessages` (première page de 100 : un très long fil peut perdre une
   ancienne empreinte, le registre `infoItems` reste), `sendMessage`, `addInfoItems` (un item
