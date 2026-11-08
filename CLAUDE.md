@@ -1252,6 +1252,20 @@ découverte n'est pas fixé — l'URL du connecteur est donnée dans `llms.txt`.
 `npm run verifier`, section « Serveur MCP » (initialize, empreinte de `tools/list`, `tools/call`
 sur les fixtures, sans réseau).
 
+### v3.14.0 — la durée demandée d'abord, le séjour minimum réel, le détail du prix, IndexNow
+
+Retours des tests voyageur du 2026-11-08.
+
+| Chemin | Contenu |
+|---|---|
+| `lib/stay-search.ts` | `shortestStay(ctx, jour, auMoins, extra)` : la durée la plus courte réservable pour une arrivée (minimum du jour, minimum de chaque nuit couverte, premier départ ouvert). Alternatives classées par **3 × nuits subies + jours d'écart** (`EXTRA_NIGHT_WEIGHT`) : la semaine du samedi passe devant 9 nuits du jeudi au samedi suivant. Au moins un séjour de la **durée exacte** demandée s'il en existe un (Noël : le 2 nuits hors fêtes en plus des 3 nuits). Avec `near`, les séjours sortent **dans l'ordre du classement**, plus chronologiquement. |
+| `lib/stay-quote.ts` | `checkStayRules` applique aussi le minimum de **chaque nuit couverte**, comme Beds24 (20 → 22/12 refusé : la nuit du 21 est en période des fêtes). `breakdown(p) ⇒ QuoteLine[]` facultatif : détail du total Beds24 (nuits, ménage, linge, taxe) ; s'il est fourni, sa somme **remplace** `expectedTotal` comme garde-fou et les lignes sortent en `stayLines`, au centime (l'arrondi va sur la première ligne). |
+| `lib/stay-agent.ts` | `check_availability` rend `minStayByArrival` = séjour minimum **effectif** de chaque jour d'arrivée possible (6 nuits Beds24 + départ le samedi ⇒ 7) ; un jour absent n'accepte pas d'arrivée. Plus de `defaultMinStayNights` : `info.booking.minStay` dit que le minimum varie et renvoie à `check_availability` (`fallbackNights` n'est qu'un repli). |
+| `components/QuoteSummary.tsx`, `lib/quote-page.ts` | Détail ligne par ligne (`stayLines`, puis suppléments) ; `notes` (rappels du site, ex. accueil des jeunes enfants) ; `included` peut être une fonction des suppléments retenus ; `withSrc` garde l'origine (`src`) sur les liens du calendrier. |
+| `lib/indexnow.ts`, `scripts/indexnow.mjs` | IndexNow (Bing, donc ChatGPT Search ; Yandex…) : `submitIndexNow`, `indexNowBody`, `sitemapUrls`. Le script (JavaScript : Node n'enlève pas les types dans `node_modules`) vérifie que `https://<hôte>/<clé>.txt` est servi, lit le sitemap et soumet. Clé publique par construction, une par site. |
+
+Écart connu : le calendrier du site (`stay-selection`) ne contrôle que le minimum du jour d'arrivée ; une sélection 20 → 22/12 y reste possible et c'est la page Beds24 qui la refuse.
+
 ### Comment une application s'y branche
 
 ```jsonc

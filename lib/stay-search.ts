@@ -11,6 +11,7 @@
  */
 import type { AvailabilityResponse } from "./availability";
 import { addDays, daysBetween, parseDate } from "./dates";
+import type { SelectionContext } from "./stay-selection";
 import {
   checkStayRules,
   isDay,
@@ -65,6 +66,35 @@ export interface StaySearchResult {
 
 /** La plus longue plage de recherche acceptée, pour borner la lecture et le calcul. */
 export const MAX_SEARCH_DAYS = 120;
+
+/**
+ * La durée la plus courte réservable pour une arrivée, à partir de `atLeast` nuits : le séjour
+ * minimum du jour d'abord, puis, si le départ tombe un jour fermé, les nuits nécessaires pour
+ * atteindre le premier départ ouvert (au plus `extra` de plus). `null` si l'arrivée est
+ * impossible (nuit prise, arrivée fermée…).
+ *
+ * C'est le « séjour minimum effectif » : chez Albiez en janvier, Beds24 dit 6 nuits, mais le
+ * départ n'ouvre que le samedi — une arrivée le samedi demande donc 7 nuits.
+ */
+export function shortestStay(ctx: SelectionContext, day: string, atLeast: number, extra: number): number | null {
+  const first = Math.max(atLeast, ctx.minStayOf(day));
+  for (let n = first; n <= first + extra && n <= MAX_STAY_NIGHTS; n++) {
+    const broken = checkStayRules(ctx, day, addDays(day, n));
+    if (!broken) return n;
+    // Un départ fermé ou le minimum d'une nuit couverte se règlent en restant plus longtemps ;
+    // tout le reste (nuit prise, arrivée fermée) rend l'arrivée impossible.
+    if (broken.ok === false && broken.reason !== "no-check-out" && broken.reason !== "min-stay") return null;
+  }
+  return null;
+}
+
+/**
+ * Poids d'une nuit ajoutée face à un jour d'écart, pour classer les alternatives : une nuit de
+ * plus que nécessaire « coûte » trois jours de décalage. Un séjour de la durée voulue, même un
+ * peu plus loin, passe devant un séjour allongé tout près — la semaine du samedi plutôt que neuf
+ * nuits du jeudi au samedi suivant.
+ */
+const EXTRA_NIGHT_WEIGHT = 3;
 
 export async function findStays(
   cfg: StayQuoteConfig,
@@ -128,14 +158,7 @@ export async function findStays(
   /** La durée retenue pour une arrivée, ou `null` si aucune n'est réservable. */
   const nightsFor = (d: string): number | null => {
     if (!extraNights) return checkStayRules(ctx, d, addDays(d, q.nights)) ? null : q.nights;
-    const first = Math.max(q.nights, ctx.minStayOf(d));
-    for (let n = first; n <= first + extraNights && n <= MAX_STAY_NIGHTS; n++) {
-      const broken = checkStayRules(ctx, d, addDays(d, n));
-      if (!broken) return n;
-      // Seul un départ fermé se règle en restant plus longtemps.
-      if (broken.ok === false && broken.reason !== "no-check-out") return null;
-    }
-    return null;
+    return shortestStay(ctx, d, q.nights, extraNights);
   };
 
   const arrivals: { day: string; nights: number }[] = [];
@@ -149,9 +172,23 @@ export async function findStays(
   }
   if (q.near) {
     const near = q.near;
-    arrivals.sort(
-      (a, b) => Math.abs(daysBetween(near, a.day)) - Math.abs(daysBetween(near, b.day)) || (a.day < b.day ? -1 : 1),
-    );
+    // Nuits ajoutées au-delà de ce qu'exigent la demande et la règle du jour d'arrivée : c'est
+    // l'allongement « subi » pour atteindre un départ ouvert.
+    const stretch = (a: { day: string; nights: number }) => a.nights - Math.max(q.nights, ctx.minStayOf(a.day));
+    const score = (a: { day: string; nights: number }) =>
+      EXTRA_NIGHT_WEIGHT * stretch(a) + Math.abs(daysBetween(near, a.day));
+    arrivals.sort((a, b) => score(a) - score(b) || (a.day < b.day ? -1 : 1));
+    // Au moins un séjour de la durée exacte demandée, s'il en existe un : à Noël, la demande de
+    // deux nuits doit aussi recevoir le week-end de deux nuits le plus proche, pas seulement des
+    // séjours de trois nuits pendant les fêtes.
+    const head = arrivals.slice(0, limit);
+    if (extraNights && !head.some((a) => a.nights === q.nights)) {
+      const exact = arrivals.findIndex((a) => a.nights === q.nights);
+      if (exact >= limit) {
+        const [best] = arrivals.splice(exact, 1);
+        arrivals.splice(limit - 1, 0, best);
+      }
+    }
   }
 
   const stays: PricedStay[] = [];
@@ -172,7 +209,8 @@ export async function findStays(
       if (quote.reason === "service-unavailable" || quote.reason === "price-blocked") break;
     }
   }
-  if (q.near) stays.sort((a, b) => (a.checkIn < b.checkIn ? -1 : 1));
+  // Avec `near`, l'ordre est celui du classement (le meilleur d'abord) : une IA relaie souvent
+  // la première proposition. Sans `near`, l'ordre chronologique de la recherche est conservé.
   return stays.length ? { stays, candidates: arrivals.length } : { stays, candidates: arrivals.length, failure };
 }
 

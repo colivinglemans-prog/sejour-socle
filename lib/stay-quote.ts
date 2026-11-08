@@ -78,7 +78,15 @@ export interface StayQuoteConfig {
    * `tolerance`, on ne publie pas le prix.
    */
   expectedTotal?: (p: { nightly: number[]; adults: number; children: number; nights: number }) => number;
-  /** Écart toléré entre `expectedTotal` et le total Beds24, en euros. 1 € par défaut. */
+  /**
+   * Le détail du total Beds24, ligne par ligne (nuits remisées, ménage, linge, taxe de séjour),
+   * recalculé depuis les tarifs bruts par nuit. Quand il est fourni, il **remplace**
+   * `expectedTotal` : la somme des lignes sert de garde-fou, et les lignes sont montrées au
+   * voyageur (devis, page de devis). Un détail qui ne retombe pas sur le total ne s'affiche
+   * jamais : le prix est bloqué, comme avec `expectedTotal`.
+   */
+  breakdown?: (p: { nightly: number[]; adults: number; children: number; nights: number; lang: string }) => QuoteLine[];
+  /** Écart toléré entre la grille (`breakdown` ou `expectedTotal`) et le total Beds24, en euros. 1 € par défaut. */
   tolerance?: number;
   /**
    * Arrivée trop proche pour être sûre que le logement est prêt (ménage, code de serrure) :
@@ -135,6 +143,11 @@ export type StayQuote =
       currency: "EUR";
       /** Total Beds24 : nuitées remisées, suppléments obligatoires, taxe de séjour. */
       stayTotal: number;
+      /**
+       * Le détail de `stayTotal` quand le site fournit `breakdown`, au centime : la somme des
+       * lignes vaut exactement `stayTotal` (l'arrondi est reporté sur la première ligne).
+       */
+      stayLines?: QuoteLine[];
       /** Suppléments facultatifs retenus, en plus. */
       extras: QuoteLine[];
       /** Ce que le voyageur paiera. */
@@ -269,8 +282,16 @@ export function checkStayRules(ctx: SelectionContext, checkIn: string, checkOut:
     return fail("no-check-out", `Pas de départ possible le ${checkOut}.`);
   }
   const minStay = ctx.minStayOf(checkIn);
-  if (daysBetween(checkIn, checkOut) < minStay) {
+  const nights = daysBetween(checkIn, checkOut);
+  if (nights < minStay) {
     return fail("min-stay", `Séjour minimum de ${minStay} nuits pour une arrivée le ${checkIn}.`, minStay);
+  }
+  // Beds24 applique aussi le minimum de chaque nuit couverte : 20 → 22 décembre est refusé
+  // (« minimum 3 Nuits ») parce que la nuit du 21 est en période des fêtes, même si l'arrivée du
+  // 20 n'en fait pas partie. Mieux vaut le dire ici que laisser la page de paiement le refuser.
+  for (let d = addDays(checkIn, 1); d < checkOut; d = addDays(d, 1)) {
+    const m = ctx.minStayOf(d);
+    if (nights < m) return fail("min-stay", `Séjour minimum de ${m} nuits pour ces dates (nuit du ${d}).`, m);
   }
   // Filet : les deux fonctions du calendrier doivent dire oui elles aussi.
   if (!isValidCheckIn(ctx, checkIn) || !isValidCheckOut(ctx, checkIn, checkOut)) {
@@ -327,9 +348,11 @@ export async function priceStay(
     await warnHost(deps, `Devis IA : ${nightly.length} tarifs de nuit pour ${nights} nuits (${req.checkIn}).`);
     return fail("price-blocked", "Le prix n'a pas pu être vérifié. Demandez un devis.");
   }
-  if (cfg.expectedTotal) {
-    const expected = cfg.expectedTotal({ nightly, adults: req.adults, children: req.children, nights });
-    if (Math.abs(expected - price.total) > (cfg.tolerance ?? 1)) {
+  const grid = { nightly, adults: req.adults, children: req.children, nights, lang: req.lang };
+  const rawLines = cfg.breakdown?.(grid);
+  const expected = rawLines ? rawLines.reduce((s, l) => s + l.amount, 0) : cfg.expectedTotal?.(grid);
+  if (expected !== undefined) {
+    if (!Number.isFinite(expected) || Math.abs(expected - price.total) > (cfg.tolerance ?? 1)) {
       await warnHost(
         deps,
         `Devis IA bloqué : Beds24 annonce ${price.total} €, la grille donne ${round2(expected)} € ` +
@@ -337,6 +360,15 @@ export async function priceStay(
       );
       return fail("price-blocked", "Le prix n'a pas pu être vérifié. Demandez un devis.");
     }
+  }
+
+  let stayLines: QuoteLine[] | undefined;
+  if (rawLines?.length) {
+    stayLines = rawLines.map((l) => ({ ...l, amount: round2(l.amount) }));
+    // Les lignes arrondies doivent retomber exactement sur le total Beds24 : l'écart de centimes
+    // (déjà borné par la tolérance ci-dessus) va sur la première ligne, les nuits.
+    const delta = round2(price.total - stayLines.reduce((s, l) => s + l.amount, 0));
+    stayLines[0] = { ...stayLines[0], amount: round2(stayLines[0].amount + delta) };
   }
 
   const guests = req.adults + req.children;
@@ -364,6 +396,7 @@ export async function priceStay(
     children: req.children,
     currency: "EUR",
     stayTotal: price.total,
+    ...(stayLines ? { stayLines } : {}),
     extras,
     total,
     perPersonPerNight: Math.round(total / guests / nights),

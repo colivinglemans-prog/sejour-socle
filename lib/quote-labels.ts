@@ -103,7 +103,7 @@ export const QUOTE_LABELS: Record<string, Generic> = {
 };
 
 /** Les textes d'une langue, complétés par la ligne propre au site. */
-export function quoteLabels(lang: string, included: string): QuoteSummaryLabels {
+export function quoteLabels(lang: string, included: QuoteSummaryLabels["included"]): QuoteSummaryLabels {
   return { ...(QUOTE_LABELS[lang] ?? QUOTE_LABELS.fr), included };
 }
 

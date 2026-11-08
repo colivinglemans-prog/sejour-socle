@@ -14,8 +14,13 @@ import type { CancellationPolicy, PaymentPolicy } from "../config/policies";
 import { bookingUrl } from "./booking-url";
 import { addDays, daysBetween } from "./dates";
 import { signQuote, QUOTE_VALIDITY_DAYS, type QuoteKeys } from "./quote-token";
-import { isDay, quoteStay, type StayQuote, type StayQuoteConfig, type StayQuoteDeps } from "./stay-quote";
-import { findStays, MAX_SEARCH_DAYS, nearbyStays, type PricedStay } from "./stay-search";
+import { isDay, quoteStay, selectionContext, type StayQuote, type StayQuoteConfig, type StayQuoteDeps } from "./stay-quote";
+import { findStays, MAX_SEARCH_DAYS, nearbyStays, shortestStay, type PricedStay } from "./stay-search";
+
+/** Jours lus après la plage demandée, pour la durée minimale des dernières arrivées. */
+const AVAILABILITY_LOOKAHEAD_DAYS = 21;
+/** Nuits ajoutées au plus pour atteindre un départ ouvert (une semaine et demie de rotation). */
+const MAX_EXTRA_NIGHTS = 14;
 
 /** Les faits publics d'un logement, dans une langue. Rédigés par le site, jamais générés ici. */
 export interface PropertyFacts {
@@ -158,7 +163,14 @@ export function propertyInfo(cfg: StayAgentConfig, p: ToolParams): ToolResult {
         currency: "EUR",
         maxGuests: cfg.quote.capacity.maxTotal,
         ...(cfg.childrenDescription ? { children: cfg.childrenDescription } : {}),
-        defaultMinStayNights: cfg.quote.defaultMinStay,
+        // Pas de « séjour minimum » unique : il varie selon les dates (fêtes, semaines du samedi).
+        // Une IA qui lirait un seul chiffre proposerait des séjours refusés ensuite.
+        minStay: {
+          variesByDate: true,
+          fallbackNights: cfg.quote.defaultMinStay,
+          howToKnow:
+            "check_availability donne, pour chaque jour d'arrivée possible, la durée minimale réelle (minStayByArrival) ; fallbackNights ne vaut que si le calendrier n'impose rien.",
+        },
         pricesOpenDaysAhead: cfg.quote.maxHorizonDays,
         optionalExtras: (cfg.quote.optionalExtras ?? []).map((e) => ({
           id: e.id,
@@ -180,13 +192,21 @@ export async function availability(cfg: StayAgentConfig, deps: StayQuoteDeps, p:
   const span = daysBetween(from, to);
   if (span < 0 || span > MAX_SEARCH_DAYS) return bad(`Plage de ${MAX_SEARCH_DAYS} jours au plus, from avant to.`);
   try {
-    const a = await deps.availability(addDays(from, -1), to);
+    // Lu au-delà de `to` : la durée minimale d'une arrivée en fin de plage dépend des jours
+    // suivants (nuits libres, premier départ ouvert).
+    const a = await deps.availability(addDays(from, -1), addDays(to, AVAILABILITY_LOOKAHEAD_DAYS));
     const nights: string[] = [];
     for (let d = from; d <= to; d = addDays(d, 1)) if (a.dates[d] === true) nights.push(d);
     const inRange = (d: string) => d >= from && d <= to;
-    const minStay = Object.fromEntries(
-      Object.entries(a.minStay ?? {}).filter(([d, n]) => inRange(d) && n > cfg.quote.defaultMinStay),
-    );
+    // Le séjour minimum **effectif** de chaque arrivée possible : règle Beds24 du jour, allongée
+    // jusqu'au premier départ ouvert (6 nuits + départ le samedi seulement ⇒ 7). Un jour absent
+    // n'est pas une arrivée possible.
+    const ctx = selectionContext(a, deps.today, cfg.quote.defaultMinStay);
+    const minStayByArrival: Record<string, number> = {};
+    for (const d of nights) {
+      const n = shortestStay(ctx, d, 1, MAX_EXTRA_NIGHTS);
+      if (n !== null) minStayByArrival[d] = n;
+    }
     return {
       status: 200,
       body: {
@@ -194,11 +214,13 @@ export async function availability(cfg: StayAgentConfig, deps: StayQuoteDeps, p:
         from,
         to,
         freeNights: nights,
-        defaultMinStayNights: cfg.quote.defaultMinStay,
-        minStayByArrival: minStay,
+        minStayByArrival,
         noArrival: (a.sansArrivee ?? []).filter(inRange),
         noDeparture: (a.sansDepart ?? []).filter(inRange),
-        hint: "Une nuit libre est celle qui commence ce jour-là. Utiliser get_quote pour le prix exact.",
+        hint:
+          "Une nuit libre est celle qui commence ce jour-là. minStayByArrival : pour chaque jour où l'on peut arriver, " +
+          "le nombre minimal de nuits réellement réservable (règle du jour et premier départ possible). " +
+          "Un jour absent de minStayByArrival n'accepte pas d'arrivée. get_quote donne le prix exact.",
       },
     };
   } catch {

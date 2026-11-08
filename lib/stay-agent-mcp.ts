@@ -115,7 +115,7 @@ export function buildMcpServer(cfg: StayAgentConfig, deps: () => StayAgentDeps):
     {
       title: "Nuits libres",
       description:
-        `Nuits libres d'une période (${MAX_SEARCH_DAYS} jours au plus), séjours minimum au-dessus du défaut, ` +
+        `Nuits libres d'une période (${MAX_SEARCH_DAYS} jours au plus), durée minimale réelle de chaque jour d'arrivée possible (minStayByArrival), ` +
         "jours sans arrivée ou sans départ. Pour un prix, utiliser get_quote.",
       inputSchema: { from: day("Premier jour"), to: day("Dernier jour, inclus"), lang },
       annotations: { readOnlyHint: true, openWorldHint: false },

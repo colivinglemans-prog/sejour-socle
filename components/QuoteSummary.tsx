@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { QuotePageState } from "../lib/quote-page";
+import { withSrc, type QuotePageState } from "../lib/quote-page";
 import type { PricedStay } from "../lib/stay-search";
 
 /**
@@ -15,8 +15,12 @@ export interface QuoteSummaryLabels {
   /** Ligne du détail : le séjour tel que Beds24 le facture (nuits, frais, taxe). */
   stay: string;
   perPersonPerNight: string;
-  /** « Taxe de séjour, ménage, draps compris » — propre à chaque site. */
-  included: string;
+  /**
+   * « Taxe de séjour, ménage, draps compris » — propre à chaque site. Une fonction reçoit les
+   * suppléments retenus dans le devis : « linge en option » ne doit pas s'afficher sous une
+   * ligne de linge déjà comptée.
+   */
+  included: string | ((chosenExtras: string[]) => string);
   book: string;
   validUntil: (date: string) => string;
   priceChanged: string;
@@ -44,9 +48,15 @@ export interface QuoteSummaryProps {
    * (`cancellationText` de `quote-labels`) — jamais écrit dans le composant.
    */
   cancellation?: string;
+  /**
+   * Rappels du site à lire avant de réserver, hors prix : l'accueil des jeunes enfants, par
+   * exemple. Affichés sous le total, sans mise en avant (ce ne sont pas des consignes urgentes).
+   */
+  notes?: string[];
   /** Encart du site au-dessus du devis (photo, nom du logement). */
   header?: ReactNode;
 }
+
 
 const LOCALE_TAG: Record<string, string> = { fr: "fr-FR", en: "en-GB", de: "de-DE", es: "es-ES", it: "it-IT" };
 
@@ -107,9 +117,12 @@ export default function QuoteSummary({
   conditionsUrl,
   notices = [],
   cancellation,
+  notes = [],
   header,
 }: QuoteSummaryProps) {
   const f = fmt(lang);
+  const src = state.status === "invalid" ? undefined : state.quote.src;
+  const calendar = (s: Parameters<QuoteSummaryProps["calendarUrl"]>[0]) => withSrc(calendarUrl(s), src);
   if (state.status === "invalid") {
     return (
       <section className="mx-auto max-w-2xl px-4 py-16 text-center">
@@ -127,7 +140,7 @@ export default function QuoteSummary({
       {state.status === "expired" && (
         <div className="space-y-4">
           <p>{labels.expired}</p>
-          <a className={button} href={calendarUrl(q)}>
+          <a className={button} href={calendar(q)}>
             {labels.openCalendar}
           </a>
         </div>
@@ -142,7 +155,7 @@ export default function QuoteSummary({
               <h2 className="text-xl font-semibold">{labels.alternatives}</h2>
               <ul className="space-y-3">
                 {state.alternatives.map((a) => (
-                  <Alternative key={a.checkIn} a={a} lang={lang} labels={labels} calendarUrl={calendarUrl} />
+                  <Alternative key={a.checkIn} a={a} lang={lang} labels={labels} calendarUrl={calendar} />
                 ))}
               </ul>
             </>
@@ -168,13 +181,16 @@ export default function QuoteSummary({
               {f.euros(state.current?.perPersonPerNight ?? Math.round(q.total / (q.adults + q.children) / Math.max(1, Math.round((Date.parse(q.checkOut) - Date.parse(q.checkIn)) / 86_400_000))))}{" "}
               {labels.perPersonPerNight}
             </p>
-            {/* Le détail n'existe que revérifié : un supplément choisi (le linge) s'y lit en clair. */}
-            {state.current && state.current.extras.length > 0 && (
+            {/* Le détail n'existe que revérifié : nuits, frais et taxe quand le site les décompose,
+                et chaque supplément choisi (le linge) en clair. */}
+            {state.current && (state.current.stayLines?.length || state.current.extras.length > 0) && (
               <dl className="mt-4 space-y-1 text-sm">
-                <div className="flex justify-between gap-4">
-                  <dt>{labels.stay}</dt>
-                  <dd>{f.money(state.current.stayTotal)}</dd>
-                </div>
+                {(state.current.stayLines ?? [{ id: "stay", label: labels.stay, amount: state.current.stayTotal }]).map((l) => (
+                  <div key={l.id} className="flex justify-between gap-4">
+                    <dt>{l.label}</dt>
+                    <dd>{f.money(l.amount)}</dd>
+                  </div>
+                ))}
                 {state.current.extras.map((e) => (
                   <div key={e.id} className="flex justify-between gap-4">
                     <dt>{e.label}</dt>
@@ -183,9 +199,16 @@ export default function QuoteSummary({
                 ))}
               </dl>
             )}
-            <p className="mt-3 text-sm">{labels.included}</p>
+            <p className="mt-3 text-sm">
+              {typeof labels.included === "function" ? labels.included(q.extras ?? []) : labels.included}
+            </p>
           </div>
           {cancellation && <p className="text-sm">{cancellation}</p>}
+          {notes.map((n) => (
+            <p key={n} className="text-sm text-secondary">
+              {n}
+            </p>
+          ))}
           {state.status === "price-changed" && <p className="text-sm">{labels.priceChanged}</p>}
           {state.status === "unchecked" && <p className="text-sm">{labels.unchecked}</p>}
           {[...new Set([...notices, ...(state.current?.notices ?? [])])].map((n) => (
@@ -197,7 +220,7 @@ export default function QuoteSummary({
             <a className={button} href={state.bookUrl} rel="nofollow">
               {labels.book}
             </a>
-            <a className={link} href={calendarUrl(q)}>
+            <a className={link} href={calendar(q)}>
               {labels.openCalendar}
             </a>
           </div>

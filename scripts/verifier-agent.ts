@@ -20,9 +20,10 @@ import { quoteStay, type StayQuote, type StayQuoteConfig, type StayQuoteDeps } f
 import { findStays, nearbyStays } from "../lib/stay-search";
 import type { StayAgentConfig, StayAgentDeps } from "../lib/stay-agent";
 import { createAgentRoute, openApi, runTool } from "../lib/stay-agent-http";
-import { propertyInfo } from "../lib/stay-agent";
+import { availability, propertyInfo } from "../lib/stay-agent";
 import { cancellationText } from "../lib/quote-labels";
-import { loadQuotePage } from "../lib/quote-page";
+import { loadQuotePage, withSrc } from "../lib/quote-page";
+import { indexNowBody, sitemapUrls, submitIndexNow } from "../lib/indexnow";
 import { monthlyAvailability } from "../lib/availability";
 import { createMcpRoute } from "../lib/stay-agent-mcp";
 
@@ -314,6 +315,95 @@ async function main() {
   const ms = monday.map((s) => `${s.checkIn}+${s.nights}`).join(", ");
   check("Albiez, arrivée un lundi fermé : la semaine samedi → samedi la plus proche est proposée",
     monday.length === 3 && monday.some((s) => s.checkIn === "2027-01-16" && s.checkOut === "2027-01-23"), ms);
+
+  // v3.14.0 — la durée demandée d'abord (test voyageur du 2026-11-08). Albiez en janvier, tel que
+  // relevé : nuits prises du 5 au 10, 3 nuits minimum jusqu'au 15, puis semaines samedi → samedi
+  // (6 nuits Beds24 + départ le samedi seulement). Une semaine demandée ne doit pas recevoir
+  // « 9 à 12 nuits » avant la semaine du 16 au 23.
+  const janAlbiez = async (a: string, b: string): Promise<AvailabilityResponse> => {
+    // Vacances de Noël louées (du 19/12 au 01/01), nuits du 5 au 10 janvier prises.
+    const booked: string[] = [];
+    for (let d = "2026-12-19"; d <= "2027-01-01"; d = addDays(d, 1)) booked.push(d);
+    for (let d = "2027-01-05"; d <= "2027-01-10"; d = addDays(d, 1)) booked.push(d);
+    const base = await fakeAvailability({ booked })(a, b);
+    const closed: string[] = [];
+    const minStay: Record<string, number> = {};
+    for (let d = a; d <= b; d = addDays(d, 1)) {
+      minStay[d] = d >= "2027-01-16" ? 6 : 3;
+      if (d >= "2027-01-17" && new Date(`${d}T12:00:00Z`).getUTCDay() !== 6) closed.push(d);
+    }
+    return { ...base, minStay, sansArrivee: closed, sansDepart: closed };
+  };
+  const jdeps = () => deps({ availability: janAlbiez, price: albiezPrice });
+  for (const [checkIn, checkOut, reason] of [
+    ["2027-01-04", "2027-01-11", "unavailable"],
+    ["2027-01-11", "2027-01-18", "no-check-out"],
+    ["2027-01-18", "2027-01-25", "no-check-in"],
+  ] as const) {
+    const alts = await nearbyStays(ALBIEZ, jdeps(), { checkIn, checkOut, adults: 4, children: 0, ...fr }, { ok: false, reason, detail: "" });
+    const firstWeek = alts.findIndex((s) => s.nights === 7);
+    const longBefore = alts.slice(0, Math.max(firstWeek, 0)).some((s) => s.nights > 7);
+    check(`Albiez, semaine demandée le ${checkIn} : 16 → 23 proposé, aucun séjour allongé avant une semaine de 7 nuits`,
+      alts.some((s) => s.checkIn === "2027-01-16" && s.checkOut === "2027-01-23") && firstWeek >= 0 && !longBefore,
+      alts.map((s) => `${s.checkIn}+${s.nights}`).join(", "));
+  }
+  const xmasExact = xmas.find((s) => s.nights === 2 && s.checkOut <= "2026-12-21");
+  check("Noël : aussi le séjour de 2 nuits demandé, le plus proche hors période des fêtes", Boolean(xmasExact), xs);
+
+  // Séjour minimum effectif exposé aux IA : 6 nuits Beds24 + départ le samedi seulement ⇒ 7.
+  const effStay = await availability(
+    { ...({} as StayAgentConfig), quote: ALBIEZ } as StayAgentConfig,
+    jdeps(),
+    { from: "2027-01-11", to: "2027-01-31" },
+  );
+  const msb = (effStay.body.minStayByArrival ?? {}) as Record<string, number>;
+  check("availability : séjour minimum effectif (samedi 16 → 7 nuits, jeudi 14 → 9 jusqu'au samedi 23, lundi 18 absent)",
+    msb["2027-01-16"] === 7 && msb["2027-01-23"] === 7 && msb["2027-01-14"] === 9 && msb["2027-01-11"] === 3 && !("2027-01-18" in msb),
+    JSON.stringify(msb));
+  check("availability : plus de « defaultMinStayNights » trompeur", !("defaultMinStayNights" in effStay.body));
+
+  // Détail du prix (breakdown) : la somme des lignes sert de garde-fou et retombe au centime.
+  const BARBUSSE_LINES: StayQuoteConfig = {
+    ...BARBUSSE,
+    expectedTotal: undefined,
+    breakdown: ({ nightly, adults, children, nights }) => [
+      { id: "nights", label: "Nuits", amount: nightly.reduce((s, n) => s + n, 0) * 0.93 },
+      { id: "cleaning", label: "Ménage", amount: 280 },
+      { id: "linen", label: "Linge", amount: 15 * (adults + children) },
+      { id: "tax", label: "Taxe de séjour", amount: 2.2 * adults * nights },
+    ],
+  };
+  const qLines = await quoteStay(BARBUSSE_LINES, deps(), { checkIn: "2026-12-18", checkOut: "2026-12-20", adults: 14, children: 4, ...fr });
+  const lineSum = qLines.ok ? round2((qLines.stayLines ?? []).reduce((s, l) => s + l.amount, 0)) : NaN;
+  check("détail du prix : 4 lignes, somme = 1 657,85 € au centime (taxe 61,60 € sur les 14 adultes)",
+    qLines.ok && qLines.stayLines?.length === 4 && lineSum === 1657.85 && qLines.stayLines[3].amount === 61.6,
+    qLines.ok ? JSON.stringify(qLines.stayLines) : show(qLines));
+  const dLines = deps({ price: fakePrice({ total: (t) => t + 40 }).price });
+  const qLinesOff = await quoteStay(BARBUSSE_LINES, dLines, { checkIn: "2027-01-15", checkOut: "2027-01-17", adults: 9, children: 0, ...fr });
+  check("détail du prix qui ne retombe pas sur Beds24 : prix bloqué, jamais affiché", !qLinesOff.ok && qLinesOff.reason === "price-blocked", show(qLinesOff));
+  check("withSrc : l'origine suit le lien du calendrier, avant l'ancre",
+    withSrc("/fr?arrivee=2027-01-16#reserver", "chatgpt") === "/fr?arrivee=2027-01-16&src=chatgpt#reserver" &&
+      withSrc("/fr?src=claude#x", "chatgpt") === "/fr?src=claude#x" && withSrc("/fr", undefined) === "/fr");
+
+  // IndexNow : corps conforme au protocole, sans réseau.
+  const inBody = indexNowBody({
+    host: "www.exemple.fr", key: "0123456789abcdef0123456789abcdef",
+    urls: ["https://www.exemple.fr/fr", "https://www.exemple.fr/fr", "https://ailleurs.fr/x", "pas une url"],
+  });
+  check("IndexNow : hôte, clé, keyLocation par défaut, URL dédoublonnées et limitées à l'hôte",
+    inBody.host === "www.exemple.fr" && inBody.keyLocation === "https://www.exemple.fr/0123456789abcdef0123456789abcdef.txt" &&
+      inBody.urlList.length === 1);
+  let badKey = false;
+  try { indexNowBody({ host: "www.exemple.fr", key: "pas-hexa!", urls: ["https://www.exemple.fr/"] }); } catch { badKey = true; }
+  check("IndexNow : clé hors format refusée", badKey);
+  const posted: { url: string; body: string }[] = [];
+  const inRes = await submitIndexNow(
+    { host: "www.exemple.fr", key: "0123456789abcdef", urls: ["https://www.exemple.fr/fr"] },
+    { fetchImpl: (async (url: string, init: RequestInit) => { posted.push({ url, body: String(init.body) }); return new Response(null, { status: 202 }); }) as unknown as typeof fetch },
+  );
+  check("IndexNow : POST vers api.indexnow.org, 202 accepté", inRes.ok && inRes.status === 202 && posted[0]?.url === "https://api.indexnow.org/indexnow" &&
+    JSON.parse(posted[0].body).urlList[0] === "https://www.exemple.fr/fr");
+  check("sitemap : les <loc> sont lus", sitemapUrls("<urlset><url><loc>https://a.fr/x?a=1&amp;b=2</loc></url><url><loc> https://a.fr/y </loc></url></urlset>").join(" ") === "https://a.fr/x?a=1&b=2 https://a.fr/y");
 
   const noAlt = await nearbyStays(BARBUSSE, deps(), { checkIn: "2027-03-12", checkOut: "2027-03-14", adults: 30, children: 0, ...fr },
     { ok: false, reason: "capacity", detail: "" });

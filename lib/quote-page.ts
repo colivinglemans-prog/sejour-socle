@@ -91,3 +91,14 @@ function decodeUnverified(token: string): QuotePayload | null {
     return null;
   }
 }
+
+/**
+ * Reporte l'origine déclarée (`src` du devis) sur un lien du site, avant l'ancre : sans elle,
+ * une réservation passée par « Voir le calendrier » ne serait plus attribuée à l'assistant.
+ */
+export function withSrc(url: string, src: string | undefined): string {
+  if (!src || /[?&]src=/.test(url)) return url;
+  const hash = url.indexOf("#");
+  const [base, anchor] = hash === -1 ? [url, ""] : [url.slice(0, hash), url.slice(hash)];
+  return `${base}${base.includes("?") ? "&" : "?"}src=${encodeURIComponent(src)}${anchor}`;
+}
