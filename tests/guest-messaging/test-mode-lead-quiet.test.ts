@@ -166,3 +166,20 @@ describe("message de confort (quietHours)", () => {
     expect(messageState(b, comfort, DUE).kind).toBe("due");
   });
 });
+
+describe("réglages lus dans l'environnement", () => {
+  it("modes : ombre par défaut, test reconnu, valeur inconnue ignorée, interrupteur général", async () => {
+    const { parseModes } = await import("../../lib/guest-messaging/overview");
+    const r = parseModes(["a", "b", "c"], "a:test, b:live, c:n'importe", false);
+    expect(r.display).toEqual({ a: "test", b: "live", c: "shadow" });
+    const k = parseModes(["a"], "a:live", true);
+    expect(k.modes).toEqual({ a: "off" });
+    expect(k.display).toEqual({ a: "live" });
+  });
+  it("adresse de test : MESSAGES_TEST_TO, puis l'expéditeur, jamais une adresse invalide", async () => {
+    const { testRecipientFrom } = await import("../../lib/guest-messaging/smtp");
+    expect(testRecipientFrom({ MESSAGES_TEST_TO: "moi@exemple.fr", SMTP_FROM: "contact@exemple.fr" })).toBe("moi@exemple.fr");
+    expect(testRecipientFrom({ SMTP_USER: "contact@exemple.fr" })).toBe("contact@exemple.fr");
+    expect(testRecipientFrom({ MESSAGES_TEST_TO: "pas une adresse" })).toBeUndefined();
+  });
+});

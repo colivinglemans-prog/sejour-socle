@@ -165,3 +165,23 @@ export interface GuestMessagePreview {
   /** Variables obligatoires manquantes : le message serait bloqué. */
   missing: string[];
 }
+
+/**
+ * Modes des modèles lus dans une variable d'environnement du site (`MESSAGES_MODES`, par exemple
+ * `avis:live,depart:test`). **Ombre par défaut** ; une valeur inconnue est ignorée.
+ * `killSwitch` (`MESSAGES_KILL_SWITCH=1`) donne des modes effectifs tous `off` — c'est ce que voit
+ * le moteur — tandis que `display` garde les modes demandés pour l'écran de suivi.
+ */
+export function parseModes(
+  ids: readonly string[],
+  raw: string | undefined,
+  killSwitch: boolean,
+): { modes: Record<string, TemplateMode>; display: Record<string, TemplateMode>; killSwitch: boolean } {
+  const display: Record<string, TemplateMode> = Object.fromEntries(ids.map((id) => [id, "shadow" as TemplateMode]));
+  for (const part of (raw ?? "").split(",")) {
+    const [id, mode] = part.split(":").map((x) => x?.trim());
+    if (id && ids.includes(id) && (mode === "off" || mode === "shadow" || mode === "test" || mode === "live")) display[id] = mode;
+  }
+  const modes = killSwitch ? Object.fromEntries(ids.map((id) => [id, "off" as TemplateMode])) : display;
+  return { modes, display, killSwitch };
+}

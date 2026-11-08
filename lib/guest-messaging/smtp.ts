@@ -96,3 +96,16 @@ export function createSmtpTransport(config: SmtpConfig): EmailTransport {
     },
   };
 }
+
+/**
+ * Adresse qui reçoit les copies du mode `test` : `MESSAGES_TEST_TO`, à défaut l'expéditeur
+ * (`SMTP_FROM`, puis `SMTP_USER`) — la boîte `contact@` du site. `undefined` si aucune n'est une
+ * adresse valable : les modèles en `test` sont alors bloqués (`no-test-transport`).
+ */
+export function testRecipientFrom(env: Record<string, string | undefined>, prefix = "SMTP_"): string | undefined {
+  for (const v of [env.MESSAGES_TEST_TO, env[prefix + "FROM"], env[prefix + "USER"]]) {
+    const ok = realGuestEmail(v?.trim());
+    if (ok) return ok;
+  }
+  return undefined;
+}
