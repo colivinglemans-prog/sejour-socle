@@ -175,6 +175,7 @@ deux validations.
 | — | Arrivées — santé Nuki, `listLogSince`, `missedArrivals`, `arrival-readiness` (exception règle 6) | `chef-de-stand` | `v3.10.0` |
 | — | Contrôles — `excludedPaths` comparé par segments entiers (`pathHasFragment`) | `chef-de-stand` | `v3.10.1` |
 | — | Contrôles — `llms.policies` exige l'unité (« 30 jours », « J-30 », « 50 % », « 48 h ») : un nombre nu donnait de faux verts | `le-dahu` | `v3.10.2` |
+| — | Référencement — **Google Search Console dans le dashboard** (`google-auth`, `search-console`, `SearchConsoleDashboard`) | `le-douanier`, `le-dahu`, `chef-de-stand` | `v3.16.0` |
 | — | Veille des dates d'événements (`lib/events-watch.ts`) | — | `v0.7.0` |
 
 Plan détaillé : `C:\Users\alexa\.claude\plans\cheerful-toasting-rivest.md`.
@@ -1294,6 +1295,35 @@ Retours des tests voyageur du 2026-11-08.
 - `PropertyFacts.capacity` : `recommended?` facultatif dit pour combien le logement est pensé ;
   `min` reste accepté mais **ignoré** (`@deprecated`) — il se lisait comme un minimum de voyageurs.
   Version mineure : nouveau champ, nouveau comportement des alternatives.
+
+### v3.16.0 — Google Search Console dans le dashboard
+
+Les deux sites voulaient lire **les recherches qui mènent à eux** (requêtes, clics, impressions,
+position) sans ouvrir Search Console. Deux consommateurs réels dès le départ : le module naît
+dans le socle (règle 6 respectée).
+
+- `lib/google-auth.ts` — jeton d'accès d'un **compte de service** Google, signé en RS256 par
+  `jose` (déjà là), sans `googleapis`. `parseServiceAccount(raw)` lit le JSON de clé collé dans
+  une variable d'environnement et rétablit les `\n` échappés de `private_key`. Cache mémoire
+  par (`client_email`, portées triées). Réutilisable pour Business Profile plus tard.
+- `lib/search-console.ts` — `getSearchConsoleReport({ credentials, siteUrl, days, today })` :
+  totaux **par une requête sans dimension** (la somme des requêtes est sous-estimée, Google
+  anonymise les rares), période précédente, série quotidienne complétée des jours vides,
+  top 50 requêtes / 25 pages / 15 pays / appareils. `searchConsoleWindows` (pure, testée) :
+  fin à `today − GSC_DATA_LAG_DAYS` (3), et `previous: null` quand la fenêtre précédente sort
+  des `GSC_RETENTION_MONTHS` (16) — cas des 12 mois. `listSearchConsoleSites` pour diagnostiquer
+  une propriété mal nommée. Le lib ne lit **aucune** variable d'environnement.
+- `components/SearchConsoleDashboard.tsx` — même grammaire que `StatsDashboard` ; `accent`
+  **obligatoire** (aucun site n'hérite du rose de l'autre), erreur en bandeau, jamais des zéros.
+  N'importe le lib qu'en `import type`, pour garder `jose` hors du paquet client.
+
+**Nommage** : `SearchConsole…` et jamais `Seo…` — `lib/seo.ts` *émet* des signaux pour les
+moteurs, ce module-ci *lit* le résultat côté Google.
+
+**Côté site** : une route admin (`guard.denyNonAdmin`, `dynamic = "force-dynamic"`) qui lit
+`GOOGLE_SERVICE_ACCOUNT_JSON` et `GSC_SITE_URL` (`sc-domain:…` pour une propriété Domaine), une
+page, un lien de nav `adminOnly`. Rien dans `proxy.ts` : le viewer est en liste blanche.
+La clé ne vit que dans Vercel et `.env.local` — les dépôts sont publics.
 
 ### Comment une application s'y branche
 
