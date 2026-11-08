@@ -1328,6 +1328,12 @@ moteurs, ce module-ci *lit* le résultat côté Google.
 page, un lien de nav `adminOnly`. Rien dans `proxy.ts` : le viewer est en liste blanche.
 La clé ne vit que dans Vercel et `.env.local` — les dépôts sont publics.
 
+
+**v3.18.2** (2026-11-08) : variations colorées sur la page Référencement. `MetricCard` prend un
+`subTone?: "up" | "down"` facultatif (vert / rouge, symbole ▲/▼ conservé dans le texte) ;
+`SearchConsoleDashboard` le renseigne, la position comptant « up » quand elle gagne des places.
+Une variation nulle s'écrit « = période précédente », sans flèche. Les cartes de revenus
+(`StatsDashboard`) n'en mettent pas : la règle « aucune couleur de carte » reste la leur.
 ### v3.17.0 — Pastilles de filtre du blog (`FilterChips`)
 
 Les deux sites filtrent leur liste d'articles : Albiez par saison (guide), Barbusse par motif de

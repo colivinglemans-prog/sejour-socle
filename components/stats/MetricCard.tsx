@@ -15,6 +15,13 @@ export interface MetricCardProps {
   value: string;
   /** Sous-ligne chiffrée : le brut et les commissions, les nuitées, la part des séjours. */
   sub?: string;
+  /**
+   * Sens de la sous-ligne quand c'est une variation : « up » l'imprime en vert, « down » en
+   * rouge. Le symbole ▲/▼ reste dans le texte — la couleur ne porte jamais seule
+   * l'information. Facultatif : les cartes de revenus n'en mettent pas, la règle « aucune
+   * couleur de carte » vaut pour elles (une baisse saisonnière n'est pas une alerte).
+   */
+  subTone?: "up" | "down";
   /** La définition opposable de l'indicateur, imprimée sous la valeur. */
   definition: string;
   /**
@@ -28,12 +35,19 @@ export interface MetricCardProps {
   note?: string;
 }
 
-export default function MetricCard({ label, value, sub, definition, note }: MetricCardProps) {
+const SUB_TONE = {
+  up: "font-medium text-emerald-600",
+  down: "font-medium text-red-600",
+} as const;
+
+export default function MetricCard({ label, value, sub, subTone, definition, note }: MetricCardProps) {
   return (
     <div className="flex flex-col rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
       <p className="text-xs font-medium uppercase tracking-wide text-slate-400">{label}</p>
       <p className="mt-1.5 text-2xl font-bold text-slate-900">{value}</p>
-      {sub && <p className="mt-1 text-xs text-slate-500">{sub}</p>}
+      {sub && (
+        <p className={`mt-1 text-xs ${subTone ? SUB_TONE[subTone] : "text-slate-500"}`}>{sub}</p>
+      )}
       <p className="mt-2 text-xs leading-snug text-slate-400">{definition}</p>
       {note && (
         <p className="mt-2 border-t border-slate-100 pt-2 text-xs leading-snug text-slate-400">

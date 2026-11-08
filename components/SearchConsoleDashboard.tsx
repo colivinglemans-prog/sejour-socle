@@ -59,50 +59,72 @@ const int = (n: number) => Math.round(n).toLocaleString("fr-FR");
 const pct = (ratio: number) => `${(ratio * 100).toFixed(1).replace(".", ",")} %`;
 const pos = (n: number) => n.toFixed(1).replace(".", ",");
 
+/** Une sous-ligne de variation et son sens : « up » = mieux (vert), « down » = moins bien (rouge). */
+interface Delta {
+  text: string;
+  tone?: "up" | "down";
+}
+
 /** Variation relative, ou le tiret quand il n'y a rien à quoi comparer. */
-function delta(now: number, before: number | undefined, lowerIsBetter = false): string {
-  if (before === undefined) return "— pas de période précédente comparable";
+function delta(now: number, before: number | undefined, lowerIsBetter = false): Delta {
+  if (before === undefined) return { text: "— pas de période précédente comparable" };
   if (lowerIsBetter) {
+    // Position : un chiffre qui baisse est un gain de places, donc ▲ et vert.
     const gain = before - now;
-    if (before === 0) return "— pas de position la période précédente";
-    return `${gain >= 0 ? "▲" : "▼"} ${pos(Math.abs(gain))} place${Math.abs(gain) >= 2 ? "s" : ""} vs période précédente`;
+    if (before === 0) return { text: "— pas de position la période précédente" };
+    if (gain === 0) return { text: "= période précédente" };
+    return {
+      text: `${gain > 0 ? "▲" : "▼"} ${pos(Math.abs(gain))} place${Math.abs(gain) >= 2 ? "s" : ""} vs période précédente`,
+      tone: gain > 0 ? "up" : "down",
+    };
   }
-  if (before === 0) return now === 0 ? "= période précédente" : "▲ — rien la période précédente";
+  if (before === 0) {
+    return now === 0
+      ? { text: "= période précédente" }
+      : { text: "▲ — rien la période précédente", tone: "up" };
+  }
   const r = (now - before) / before;
-  return `${r >= 0 ? "▲" : "▼"} ${pct(Math.abs(r))} vs période précédente`;
+  if (r === 0) return { text: "= période précédente" };
+  return { text: `${r > 0 ? "▲" : "▼"} ${pct(Math.abs(r))} vs période précédente`, tone: r > 0 ? "up" : "down" };
 }
 
 /** Un taux se compare en points : « ▲ 12 % » d'un taux de 3 % se lirait comme 15 %. */
-function ctrDelta(now: number, before: number | undefined): string {
-  if (before === undefined) return "— pas de période précédente comparable";
+function ctrDelta(now: number, before: number | undefined): Delta {
+  if (before === undefined) return { text: "— pas de période précédente comparable" };
   const diff = (now - before) * 100;
-  return `${diff >= 0 ? "▲" : "▼"} ${Math.abs(diff).toFixed(1).replace(".", ",")} pt vs période précédente`;
+  if (Math.abs(diff) < 0.05) return { text: "= période précédente" };
+  return {
+    text: `${diff > 0 ? "▲" : "▼"} ${Math.abs(diff).toFixed(1).replace(".", ",")} pt vs période précédente`,
+    tone: diff > 0 ? "up" : "down",
+  };
 }
+
+const withDelta = (d: Delta) => ({ sub: d.text, subTone: d.tone });
 
 function cards(t: SearchConsoleMetrics, p: SearchConsoleMetrics | null) {
   return [
     {
       label: "Clics",
       value: int(t.clicks),
-      sub: delta(t.clicks, p?.clicks),
+      ...withDelta(delta(t.clicks, p?.clicks)),
       definition: "Visites venues des résultats web de Google (hors Images, Actualités, Discover).",
     },
     {
       label: "Impressions",
       value: int(t.impressions),
-      sub: delta(t.impressions, p?.impressions),
+      ...withDelta(delta(t.impressions, p?.impressions)),
       definition: "Nombre de fois où une page du site est apparue dans les résultats.",
     },
     {
       label: "Taux de clic",
       value: pct(t.ctr),
-      sub: ctrDelta(t.ctr, p?.ctr),
+      ...withDelta(ctrDelta(t.ctr, p?.ctr)),
       definition: "Clics ÷ impressions.",
     },
     {
       label: "Position moyenne",
       value: t.impressions ? pos(t.position) : "—",
-      sub: t.impressions ? delta(t.position, p?.position, true) : undefined,
+      ...(t.impressions ? withDelta(delta(t.position, p?.position, true)) : {}),
       definition: "Rang moyen dans les résultats, pondéré par les impressions. 1 = premier.",
     },
   ];
