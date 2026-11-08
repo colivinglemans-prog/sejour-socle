@@ -340,7 +340,12 @@ async function deliver(
 
   // 4. Réserver, départager, envoyer, confirmer.
   const nonce = (options.nonce ?? randomNonce)();
-  const entry = { at: options.now.toISOString(), anchorDay: anchorDayOf(booking, t), nonce };
+  // Horodatage **au moment de l'écriture**, pas au début du passage (cerbere, 2026-11-08) : avec
+  // l'heure de début, un passage parti plus tôt mais qui écrit plus tard se croyait prioritaire
+  // sur une trace déjà relue par l'autre, et les deux envoyaient. Jamais avant `options.now`
+  // (horloge injectée en test).
+  const writtenAt = new Date(Math.max(Date.now(), options.now.getTime()));
+  const entry = { at: writtenAt.toISOString(), anchorDay: anchorDayOf(booking, t), nonce };
   try {
     await deps.reserve(booking, t, entry);
   } catch (e) {
@@ -380,7 +385,7 @@ async function deliver(
   }
   try {
     // +1 ms : la trace `sent` doit trier après sa `pending`, même posées dans la même milliseconde.
-    await deps.confirm(booking, t, { at: new Date(options.now.getTime() + 1).toISOString(), anchorDay: entry.anchorDay, nonce });
+    await deps.confirm(booking, t, { at: new Date(Math.max(Date.now(), writtenAt.getTime() + 1)).toISOString(), anchorDay: entry.anchorDay, nonce });
   } catch (e) {
     // Parti mais non confirmé : orphelin à trancher par l'hôte, surtout pas renvoyé.
     return done("failed", "confirm", { ...errorMeta(e), transport: rendered.transport });

@@ -1430,6 +1430,8 @@ l'activation rattraperait tout ce que Beds24 a déjà envoyé. Plafond à part, 
 passage. Dans l'écran, le bouton devient « M'envoyer une copie de test », disponible même
 après une première copie.
 
+**v3.18.1** (cerbere, 2026-11-08) : la trace `pending` est horodatée **au moment de son écriture**, plus au début du passage. Avec l'heure de début, un passage parti plus tôt mais écrivant plus tard se croyait prioritaire sur une trace déjà relue par l'autre : deux envois au voyageur. Fenêtre résiduelle : la latence d'une écriture Beds24.
+
 **Dernière minute** (même date) : deux conditions de modèle.
 - `minLeadHours` — réservée moins de N h avant le jour d'arrivée : écarté (`late-booking`), un
   autre message en porte le contenu (Albiez : l'avant-arrivée passe dans le message du code).
