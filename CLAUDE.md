@@ -1395,7 +1395,10 @@ dépôt de chaque site, et le socle décide quand et par où chacun part. Deux c
   en mode `live`. `GuestMessagesBookingPanel` : les messages d'une réservation, pour la fiche du
   calendrier. Le composant n'affiche jamais le texte d'une erreur serveur : un message selon le
   code HTTP, et les seuls motifs codés qu'il connaît.
-- **Ce que les routes des sites portent** (cerbere) : `denyNonAdmin` en tête de chaque handler,
+- `http.ts` — `createGuestMessagesRoutes({ guard, templateIds, report, preview, sendOne })` :
+  les trois handlers de l'écran de suivi, **écrits une fois** parce que ce sont eux qui portent les
+  contrôles ci-dessous ; chaque site les monte dans ses `route.ts`. Le cron reste chez le site.
+- **Ce que les routes portent** (cerbere) : `denyNonAdmin` en tête de chaque handler,
   `Cache-Control: no-store`, erreurs génériques ; aperçu : `bookingId` entier et `templateId`
   connu ; envoi : `Content-Type: application/json` exact (415 sinon), `Origin` ou
   `Sec-Fetch-Site: same-origin` (403 sinon), corps en liste blanche, `sendNow` seul, réponse
