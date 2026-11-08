@@ -9,6 +9,9 @@
  * Aucune couleur de carte : les cinq teintes décoratives de Barbusse ne codaient rien, de son
  * propre aveu, et le rose signifie Airbnb, qui n'est qu'un canal sur quatre. L'accent du site
  * ne vit que sur les graphes.
+ *
+ * Seule exception : la sous-ligne d'une **variation** peut être verte ou rouge (`subTone`),
+ * parce que là la couleur code quelque chose — le sens. La carte elle-même reste sans couleur.
  */
 export interface MetricCardProps {
   label: string;
@@ -36,7 +39,7 @@ export interface MetricCardProps {
 }
 
 const SUB_TONE = {
-  up: "font-medium text-emerald-600",
+  up: "font-medium text-emerald-700",
   down: "font-medium text-red-600",
 } as const;
 

@@ -72,7 +72,8 @@ function delta(now: number, before: number | undefined, lowerIsBetter = false): 
     // Position : un chiffre qui baisse est un gain de places, donc ▲ et vert.
     const gain = before - now;
     if (before === 0) return { text: "— pas de position la période précédente" };
-    if (gain === 0) return { text: "= période précédente" };
+    // Même seuil que l'affichage (une décimale) : « ▲ 0,0 place » en vert ne voudrait rien dire.
+    if (Math.abs(gain) < 0.05) return { text: "= période précédente" };
     return {
       text: `${gain > 0 ? "▲" : "▼"} ${pos(Math.abs(gain))} place${Math.abs(gain) >= 2 ? "s" : ""} vs période précédente`,
       tone: gain > 0 ? "up" : "down",
@@ -84,7 +85,7 @@ function delta(now: number, before: number | undefined, lowerIsBetter = false): 
       : { text: "▲ — rien la période précédente", tone: "up" };
   }
   const r = (now - before) / before;
-  if (r === 0) return { text: "= période précédente" };
+  if (Math.abs(r) < 0.0005) return { text: "= période précédente" };
   return { text: `${r > 0 ? "▲" : "▼"} ${pct(Math.abs(r))} vs période précédente`, tone: r > 0 ? "up" : "down" };
 }
 

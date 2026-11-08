@@ -1328,12 +1328,6 @@ moteurs, ce module-ci *lit* le résultat côté Google.
 page, un lien de nav `adminOnly`. Rien dans `proxy.ts` : le viewer est en liste blanche.
 La clé ne vit que dans Vercel et `.env.local` — les dépôts sont publics.
 
-
-**v3.18.2** (2026-11-08) : variations colorées sur la page Référencement. `MetricCard` prend un
-`subTone?: "up" | "down"` facultatif (vert / rouge, symbole ▲/▼ conservé dans le texte) ;
-`SearchConsoleDashboard` le renseigne, la position comptant « up » quand elle gagne des places.
-Une variation nulle s'écrit « = période précédente », sans flèche. Les cartes de revenus
-(`StatsDashboard`) n'en mettent pas : la règle « aucune couleur de carte » reste la leur.
 ### v3.17.0 — Pastilles de filtre du blog (`FilterChips`)
 
 Les deux sites filtrent leur liste d'articles : Albiez par saison (guide), Barbusse par motif de
@@ -1453,6 +1447,14 @@ Mesures du 2026-11-08 (lecture seule) : un `GET /bookings` coûte ~1 crédit ; c
 vaut `fr`, `en`, `es`, `it`, `ru` ou vide. Non mesuré, à faire avant de passer un site en
 `live` : livraison réelle sur Abritel, envoi sur une réservation directe, liens chez
 Booking.com, effet d'un `infoItem` sur le webhook.
+
+### v3.19.0 — variations colorées sur la page Référencement (2026-11-08)
+
+`MetricCard` prend un `subTone?: "up" | "down"` facultatif : sous-ligne de variation en vert
+(`emerald-700`, contraste AA en `text-xs`) ou en rouge (`red-600`), le symbole ▲/▼ restant dans le
+texte. `SearchConsoleDashboard` le renseigne ; la position compte « up » quand elle gagne des places.
+Une variation qui s'arrondit à zéro s'écrit « = période précédente », sans flèche ni couleur.
+`StatsDashboard` (pages montrables à un banquier) n'en met pas : la carte reste sans couleur.
 
 ### Comment une application s'y branche
 
