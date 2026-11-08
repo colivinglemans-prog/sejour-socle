@@ -31,7 +31,13 @@ export interface PropertyFacts {
    * un `min` se lisait comme « 4 personnes au moins » et faisait douter une IA d'une réservation
    * à deux.
    */
-  capacity: { max: number; recommended?: number; note?: string };
+  capacity: {
+    max: number;
+    recommended?: number;
+    note?: string;
+    /** @deprecated Ignoré depuis v3.15.0 — se lisait comme un minimum de voyageurs ; utiliser `recommended`. */
+    min?: number;
+  };
   checkIn: string;
   checkOut: string;
   /** Compris dans le prix (draps, ménage de fin de séjour…). */
@@ -155,12 +161,16 @@ export function propertyInfo(cfg: StayAgentConfig, p: ToolParams): ToolResult {
   const lang = langOf(cfg, p);
   const f = cfg.facts(lang);
   const pages = Object.fromEntries(Object.entries(f.pages).map(([path, label]) => [`${cfg.siteUrl}${path}`, label]));
+  // `min` (déprécié) ne sort jamais : il se lisait comme un minimum de voyageurs.
+  const { min: _deprecatedMin, ...capacity } = f.capacity;
+  void _deprecatedMin;
   return {
     status: 200,
     body: {
       ok: true,
       lang,
       ...f,
+      capacity,
       pages,
       booking: {
         instantBooking: cfg.instantBooking,

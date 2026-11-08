@@ -204,16 +204,27 @@ export async function findStays(
     }
     // Et le séjour qui commence le jour même demandé, de la durée réservable la plus proche de la
     // demande (plus courte comprise) : un lundi d'Albiez en janvier, « du 11 au 16 » répond mieux
-    // à « j'arrive le 11 » qu'une semaine qui commence cinq jours plus tard. Il ne déloge pas le
-    // séjour de durée exacte : il prend l'avant-dernière place s'il le faut.
-    if (extraNights && near >= from && near <= q.to && !arrivals.slice(0, limit).some((a) => a.day === near)) {
+    // à « j'arrive le 11 » qu'une semaine qui commence cinq jours plus tard. Il est PLACÉ d'office,
+    // pas classé : à la dernière place de la tête, ou à l'avant-dernière si le séjour de durée
+    // exacte occupe la dernière. Il REMPLACE l'élément de cette place (repoussé juste après la
+    // tête) au lieu de s'insérer devant — une insertion décalerait le séjour exact hors de la
+    // tête, et il ne serait jamais chiffré.
+    const nearAllowed = !q.arrivalWeekdays || q.arrivalWeekdays.includes(parseDate(near).getDay());
+    if (extraNights && nearAllowed && near >= from && near <= q.to && !arrivals.slice(0, limit).some((a) => a.day === near)) {
       const n = closestStay(ctx, near, q.nights, extraNights);
       if (n !== null && !cfg.refuse?.({ ...probe, checkIn: near, checkOut: addDays(near, n) })) {
         const at = arrivals.findIndex((a) => a.day === near);
         if (at >= 0) arrivals.splice(at, 1);
-        const keepExact = arrivals.slice(0, limit).findIndex((a) => a.nights === q.nights);
-        const slot = keepExact === limit - 1 ? Math.max(0, limit - 2) : limit - 1;
-        arrivals.splice(Math.min(slot, arrivals.length), 0, { day: near, nights: n });
+        const exactAt = arrivals.slice(0, limit).findIndex((a) => a.nights === q.nights);
+        const slot = exactAt === limit - 1 ? limit - 2 : limit - 1;
+        if (slot >= 0) {
+          const anchor = { day: near, nights: n };
+          if (slot >= arrivals.length) arrivals.push(anchor);
+          else {
+            const [displaced] = arrivals.splice(slot, 1, anchor);
+            arrivals.splice(limit, 0, displaced);
+          }
+        }
       }
     }
   }

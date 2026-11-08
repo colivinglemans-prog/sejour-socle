@@ -359,6 +359,25 @@ async function main() {
     mon11.some((s) => s.checkIn === "2027-01-11" && s.checkOut === "2027-01-16") &&
       mon11.some((s) => s.checkIn === "2027-01-16" && s.nights === 7),
     mon11.map((s) => `${s.checkIn}+${s.nights}`).join(", "));
+  // Les deux placements ensemble (relecture le-douanier v3.15.0) : le séjour de durée exacte est
+  // replacé en dernière position ET le séjour du jour demandé doit entrer — il prend
+  // l'avant-dernière place sans pousser l'exact hors de la tête (qui ne serait jamais chiffré).
+  const D = "2027-02-10";
+  const bothMin: Record<string, number> = {};
+  for (let k = -10; k <= 10; k++) bothMin[addDays(D, k)] = 3;
+  bothMin[D] = 1;
+  const both = await nearbyStays(BARBUSSE, deps({ availability: fakeAvailability({ booked: [addDays(D, 1)], minStay: bothMin }) }),
+    { checkIn: D, checkOut: addDays(D, 2), adults: 9, children: 0, ...fr }, { ok: false, reason: "unavailable", detail: "" });
+  const bs = both.map((s) => `${s.checkIn}+${s.nights}`).join(", ");
+  check("Alternatives : séjour de durée exacte ET séjour du jour demandé, tous deux chiffrés",
+    both.length === 3 && both.some((s) => s.nights === 2) && both.some((s) => s.checkIn === D), bs);
+  // closestStay respecte les jours d'arrivée demandés.
+  const wdOnly = await findStays(BARBUSSE, deps({ availability: fakeAvailability({ booked: [addDays(D, 1)], minStay: bothMin }) }), {
+    from: addDays(D, -21), to: addDays(D, 21), nights: 2, adults: 9, children: 0, ...fr,
+    near: D, limit: 3, maxExtraNights: 7, arrivalWeekdays: [5],
+  });
+  check("Le séjour du jour demandé n'entre pas hors des jours d'arrivée demandés (vendredis seulement)",
+    wdOnly.stays.every((s) => new Date(`${s.checkIn}T12:00:00Z`).getUTCDay() === 5), wdOnly.stays.map((s) => s.checkIn).join(","));
   // Le message du minimum imposé par une nuit couverte nomme la nuit et le départ au plus tôt.
   const q2022 = await quoteStay(BARBUSSE, deps({ availability: fakeAvailability({ minStay: xmasMin }) }),
     { checkIn: "2026-12-20", checkOut: "2026-12-22", adults: 14, children: 4, ...fr });
@@ -515,6 +534,9 @@ async function main() {
   const agentDeps = (over: Partial<StayAgentDeps> = {}): StayAgentDeps => ({ ...deps(), keys: () => keys, ...over });
 
   const info = await runTool("info", AGENT, agentDeps(), { lang: "en" });
+  const withMin = await runTool("info", { ...AGENT, facts: (l) => ({ ...AGENT.facts(l), capacity: { max: 6, min: 4, recommended: 4 } }) }, agentDeps(), {});
+  const cap = (withMin.body as Record<string, any>).capacity;
+  check("info : capacity.min (déprécié) n'est jamais exposé, recommended oui", cap && !("min" in cap) && cap.recommended === 4 && cap.max === 6, JSON.stringify(cap));
   const ib = info.body as Record<string, any>;
   check("info : langue, fiche et politiques issues des constantes",
     ib.name === "The House" && ib.cancellation.refunds[0].refundPercent === 100 &&
