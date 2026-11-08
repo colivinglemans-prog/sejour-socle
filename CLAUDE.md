@@ -176,6 +176,7 @@ deux validations.
 | — | Contrôles — `excludedPaths` comparé par segments entiers (`pathHasFragment`) | `chef-de-stand` | `v3.10.1` |
 | — | Contrôles — `llms.policies` exige l'unité (« 30 jours », « J-30 », « 50 % », « 48 h ») : un nombre nu donnait de faux verts | `le-dahu` | `v3.10.2` |
 | — | Référencement — **Google Search Console dans le dashboard** (`google-auth`, `search-console`, `SearchConsoleDashboard`) | `le-douanier`, `le-dahu`, `chef-de-stand` | `v3.16.0` |
+| — | Blog / guide — **pastilles de filtre** `FilterChips` (purement visuelles ; modèle d'article, prédicat et carte restent dans chaque site) | `le-douanier`, `le-dahu`, `chef-de-stand` | `v3.17.0` |
 | — | Veille des dates d'événements (`lib/events-watch.ts`) | — | `v0.7.0` |
 
 Plan détaillé : `C:\Users\alexa\.claude\plans\cheerful-toasting-rivest.md`.
@@ -1324,6 +1325,20 @@ moteurs, ce module-ci *lit* le résultat côté Google.
 `GOOGLE_SERVICE_ACCOUNT_JSON` et `GSC_SITE_URL` (`sc-domain:…` pour une propriété Domaine), une
 page, un lien de nav `adminOnly`. Rien dans `proxy.ts` : le viewer est en liste blanche.
 La clé ne vit que dans Vercel et `.env.local` — les dépôts sont publics.
+
+### v3.17.0 — Pastilles de filtre du blog (`FilterChips`)
+
+Les deux sites filtrent leur liste d'articles : Albiez par saison (guide), Barbusse par motif de
+séjour (blog). Deux appelants réels : le composant naît dans le socle (règle 6).
+
+- `components/FilterChips.tsx` — rangée de boutons `aria-pressed` dans un `role="group"`,
+  compteur facultatif, `onChange(key)`. **Purement visuelle** : elle ne connaît ni les articles,
+  ni la saison, ni le parcours, ni l'URL. Tokens de thème seulement (`primary`, `border`,
+  `secondary`, `foreground`), transition coupée sous `prefers-reduced-motion`.
+- **Ne monte pas** (veto le-dahu / chef-de-stand) : `BlogPostMeta`, `Season`, `Journey`, le
+  prédicat de correspondance, la carte d'article, le tri, les libellés traduits, la lecture
+  d'ancre ou de paramètre d'URL.
+- Version mineure : composant nouveau, rien de modifié.
 
 ### Comment une application s'y branche
 
