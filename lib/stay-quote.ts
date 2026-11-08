@@ -291,7 +291,16 @@ export function checkStayRules(ctx: SelectionContext, checkIn: string, checkOut:
   // 20 n'en fait pas partie. Mieux vaut le dire ici que laisser la page de paiement le refuser.
   for (let d = addDays(checkIn, 1); d < checkOut; d = addDays(d, 1)) {
     const m = ctx.minStayOf(d);
-    if (nights < m) return fail("min-stay", `Séjour minimum de ${m} nuits pour ces dates (nuit du ${d}).`, m);
+    if (nights < m) {
+      // L'arrivée elle-même n'impose pas ce minimum : on nomme la nuit en cause et le départ au
+      // plus tôt, sinon l'IA lit « nuit du 21 » pour une demande qui arrive le 20 et s'y perd.
+      return fail(
+        "min-stay",
+        `Séjour minimum de ${m} nuits pour ces dates : la nuit du ${d} est soumise à ${m} nuits minimum, ` +
+          `donc une arrivée le ${checkIn} doit repartir au plus tôt le ${addDays(checkIn, m)}.`,
+        m,
+      );
+    }
   }
   // Filet : les deux fonctions du calendrier doivent dire oui elles aussi.
   if (!isValidCheckIn(ctx, checkIn) || !isValidCheckOut(ctx, checkIn, checkOut)) {

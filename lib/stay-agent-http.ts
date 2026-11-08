@@ -40,7 +40,11 @@ function json(r: ToolResult, maxAge: number): Response {
 function paramsOf(url: URL): ToolParams {
   const out: ToolParams = {};
   // Les noms de paramètres sont insensibles à la casse : `checkIn` comme `checkin`.
-  for (const [k, v] of url.searchParams) out[k.toLowerCase()] = v.slice(0, 100);
+  for (const [k, v] of url.searchParams) {
+    const key = k.toLowerCase();
+    // Un paramètre répété (`weekdays=fri&weekdays=sat`, `extras=a&extras=b`) vaut une liste.
+    out[key] = (out[key] === undefined ? v : `${out[key]},${v}`).slice(0, 100);
+  }
   return out;
 }
 
@@ -135,9 +139,9 @@ export function openApi(cfg: StayAgentConfig): Record<string, unknown> {
         q("from", day("Première arrivée envisagée"), true),
         q("to", day("Dernière arrivée envisagée"), true),
         q("nights", int("Nombre de nuits", { minimum: 1, maximum: MAX_STAY_NIGHTS }), true),
-        q("weekdays", str("Jours d'arrivée acceptés, ex. fri ou fri,sat")),
+        q("weekdays", str("Jours d'arrivée acceptés : fri, fri,sat, ou le paramètre répété weekdays=fri&weekdays=sat")),
         q("near", day("Trier autour de ce jour")),
-        q("limit", int("Résultats au plus", { minimum: 1, maximum: 8, default: 5 })),
+        q("limit", int("Nombre de séjours : 5 par défaut, 8 au plus", { minimum: 1, maximum: 8, default: 5 })),
         ...guests,
         purpose,
         ...common,

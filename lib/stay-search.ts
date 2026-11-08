@@ -89,6 +89,19 @@ export function shortestStay(ctx: SelectionContext, day: string, atLeast: number
 }
 
 /**
+ * La durée réservable la plus proche de `wanted` pour une arrivée donnée, plus courte comprise
+ * (entre 1 et `wanted + extra` nuits) ; à écart égal, la plus courte. `null` si aucune.
+ */
+export function closestStay(ctx: SelectionContext, day: string, wanted: number, extra: number): number | null {
+  let best: number | null = null;
+  for (let n = 1; n <= wanted + extra && n <= MAX_STAY_NIGHTS; n++) {
+    if (checkStayRules(ctx, day, addDays(day, n))) continue;
+    if (best === null || Math.abs(n - wanted) < Math.abs(best - wanted)) best = n;
+  }
+  return best;
+}
+
+/**
  * Poids d'une nuit ajoutée face à un jour d'écart, pour classer les alternatives : une nuit de
  * plus que nécessaire « coûte » trois jours de décalage. Un séjour de la durée voulue, même un
  * peu plus loin, passe devant un séjour allongé tout près — la semaine du samedi plutôt que neuf
@@ -187,6 +200,20 @@ export async function findStays(
       if (exact >= limit) {
         const [best] = arrivals.splice(exact, 1);
         arrivals.splice(limit - 1, 0, best);
+      }
+    }
+    // Et le séjour qui commence le jour même demandé, de la durée réservable la plus proche de la
+    // demande (plus courte comprise) : un lundi d'Albiez en janvier, « du 11 au 16 » répond mieux
+    // à « j'arrive le 11 » qu'une semaine qui commence cinq jours plus tard. Il ne déloge pas le
+    // séjour de durée exacte : il prend l'avant-dernière place s'il le faut.
+    if (extraNights && near >= from && near <= q.to && !arrivals.slice(0, limit).some((a) => a.day === near)) {
+      const n = closestStay(ctx, near, q.nights, extraNights);
+      if (n !== null && !cfg.refuse?.({ ...probe, checkIn: near, checkOut: addDays(near, n) })) {
+        const at = arrivals.findIndex((a) => a.day === near);
+        if (at >= 0) arrivals.splice(at, 1);
+        const keepExact = arrivals.slice(0, limit).findIndex((a) => a.nights === q.nights);
+        const slot = keepExact === limit - 1 ? Math.max(0, limit - 2) : limit - 1;
+        arrivals.splice(Math.min(slot, arrivals.length), 0, { day: near, nights: n });
       }
     }
   }

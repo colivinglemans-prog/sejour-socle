@@ -144,16 +144,19 @@ export function buildMcpServer(cfg: StayAgentConfig, deps: () => StayAgentDeps):
     {
       title: "Trouver des dates",
       description:
-        "Quand les dates sont floues (« une semaine en janvier », « un week-end en mars ») : jusqu'à 8 séjours " +
-        "libres et chiffrés, chacun avec ses liens. `from` et `to` bornent les dates d'ARRIVÉE. " +
+        "Quand les dates sont floues (« une semaine en janvier », « un week-end en mars ») : 5 séjours " +
+        "libres et chiffrés par défaut (8 au plus avec `limit`), chacun avec ses liens. `from` et `to` bornent les dates d'ARRIVÉE. " +
         RELAY,
       inputSchema: {
         from: day("Première arrivée envisagée"),
         to: day(`Dernière arrivée envisagée (${MAX_SEARCH_DAYS} jours au plus après from)`),
         nights: z.number().int().min(1).max(MAX_STAY_NIGHTS).describe("Nombre de nuits"),
-        weekdays: z.string().optional().describe("Jours d'arrivée acceptés, ex. fri ou fri,sat"),
+        weekdays: z
+          .union([z.string(), z.array(z.string())])
+          .optional()
+          .describe("Jours d'arrivée acceptés : \"fri\", \"fri,sat\" ou [\"fri\", \"sat\"]"),
         near: day("Trier autour de ce jour").optional(),
-        limit: z.number().int().min(1).max(8).optional().describe("Résultats au plus, 5 par défaut"),
+        limit: z.number().int().min(1).max(8).optional().describe("Nombre de séjours : 5 par défaut, 8 au plus"),
         ...guests,
         lang,
         src,

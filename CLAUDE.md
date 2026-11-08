@@ -1277,6 +1277,22 @@ Retours des tests voyageur du 2026-11-08.
   d'envoyer sans fichier de clé servi, sans sitemap en 200, avec une liste vide ou de plus de
   10 000 URL. Ne jamais lui passer en `--extra` une route qui interroge Beds24.
 
+### v3.14.1 — retours du 2e tour de tests voyageur
+
+- `find_stays` (MCP) : `weekdays` accepte une chaîne (`"fri,sat"`) ou un tableau (`["fri","sat"]`) ;
+  côté REST, un paramètre répété (`weekdays=fri&weekdays=sat`, `extras=…&extras=…`) vaut une liste.
+  Descriptions alignées : « 5 séjours par défaut, 8 au plus (`limit`) ».
+- Message `min-stay` quand c'est une nuit couverte qui impose le minimum : il nomme la nuit **et**
+  le départ au plus tôt (« la nuit du 21 est soumise à 3 nuits minimum, donc une arrivée le 20 doit
+  repartir au plus tôt le 23 ») au lieu d'un « (nuit du 21) » qui égarait l'IA.
+- Alternatives (`nearbyStays`) : `closestStay` ajoute le séjour qui **commence le jour demandé**, à
+  la durée réservable la plus proche (plus courte comprise : lundi 11 → samedi 16), sans déloger
+  le séjour de durée exacte. Ordre : classement `3 × nuits subies + jours d'écart`, à égalité la date
+  la plus tôt (Noël 24 → 26 : 21 → 24, 27 → 30, puis 19 → 21).
+- `PropertyFacts.capacity` : `min` retiré (il se lisait comme un minimum de voyageurs) ;
+  `recommended?` facultatif dit pour combien le logement est pensé. **Cassant** pour un site qui
+  renseignait `min` : à remplacer par `recommended` (Albiez).
+
 ### Comment une application s'y branche
 
 ```jsonc

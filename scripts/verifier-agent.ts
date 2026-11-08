@@ -350,6 +350,22 @@ async function main() {
   const xmasExact = xmas.find((s) => s.nights === 2 && s.checkOut <= "2026-12-21");
   check("Noël : aussi le séjour de 2 nuits demandé, le plus proche hors période des fêtes", Boolean(xmasExact), xs);
 
+  // v3.14.1 — le séjour qui commence le jour demandé (test voyageur du 2026-11-08, tour 2) : un
+  // lundi 11 janvier à Albiez, « du 11 au 16 » (5 nuits, départ le samedi) doit figurer parmi les
+  // propositions, sans déloger la semaine de 7 nuits.
+  const mon11 = await nearbyStays(ALBIEZ, jdeps(), { checkIn: "2027-01-11", checkOut: "2027-01-18", adults: 4, children: 0, ...fr },
+    { ok: false, reason: "no-check-out", detail: "" });
+  check("Albiez, lundi 11 : le séjour qui commence le 11 (11 → 16) est proposé, la semaine 16 → 23 aussi",
+    mon11.some((s) => s.checkIn === "2027-01-11" && s.checkOut === "2027-01-16") &&
+      mon11.some((s) => s.checkIn === "2027-01-16" && s.nights === 7),
+    mon11.map((s) => `${s.checkIn}+${s.nights}`).join(", "));
+  // Le message du minimum imposé par une nuit couverte nomme la nuit et le départ au plus tôt.
+  const q2022 = await quoteStay(BARBUSSE, deps({ availability: fakeAvailability({ minStay: xmasMin }) }),
+    { checkIn: "2026-12-20", checkOut: "2026-12-22", adults: 14, children: 4, ...fr });
+  check("20 → 22 décembre : message clair (nuit du 21, départ au plus tôt le 23)",
+    !q2022.ok && q2022.reason === "min-stay" && q2022.detail.includes("2026-12-21") && q2022.detail.includes("2026-12-23") &&
+      q2022.detail.includes("arrivée le 2026-12-20"), q2022.ok ? "" : q2022.detail);
+
   // Séjour minimum effectif exposé aux IA : 6 nuits Beds24 + départ le samedi seulement ⇒ 7.
   const effStay = await availability(
     { ...({} as StayAgentConfig), quote: ALBIEZ } as StayAgentConfig,
@@ -695,6 +711,11 @@ async function main() {
     !callTaken.json.result?.isError && (callTaken.json.result?.structuredContent?.alternatives?.length ?? 0) > 0);
   const callFind = await rpc("tools/call", { name: "find_stays", arguments: { from: "2027-03-01", to: "2027-03-31", nights: 2, adults: 14, weekdays: "fri" } });
   check("MCP find_stays : séjours chiffrés", (callFind.json.result?.structuredContent?.stays?.length ?? 0) > 0);
+  const callArr = await rpc("tools/call", { name: "find_stays", arguments: { from: "2027-03-01", to: "2027-03-31", nights: 2, adults: 14, weekdays: ["fri", "sat"] } });
+  const arrStays = (callArr.json.result?.structuredContent?.stays ?? []) as Array<{ checkIn: string }>;
+  check("MCP find_stays : weekdays en tableau accepté (vendredis et samedis)",
+    !callArr.json.result?.isError && arrStays.length > 0 && arrStays.every((x) => [5, 6].includes(new Date(`${x.checkIn}T12:00:00Z`).getUTCDay())),
+    JSON.stringify(callArr.json.error ?? arrStays.map((x) => x.checkIn)));
   const getRes = await mcp.GET();
   const delRes = await mcp.DELETE();
   check("MCP GET et DELETE : 405, Allow: POST, OPTIONS, CORS",
@@ -729,6 +750,13 @@ async function main() {
     throwText.includes('"isError":true') && !throwText.includes("secret interne"), throwText.slice(0, 160));
 
   const route = createAgentRoute(AGENT, () => agentDeps());
+  const resWd = await route.GET(new Request("https://www.exemple.fr/api/agent/find?from=2027-03-01&to=2027-03-31&nights=2&adults=4&weekdays=fri&weekdays=sat"), {
+    params: Promise.resolve({ tool: "find" }),
+  });
+  const wdStays = (((await resWd.json()) as Record<string, unknown>).stays ?? []) as Array<{ checkIn: string }>;
+  check("route HTTP : weekdays répété (fri & sat) vaut une liste",
+    wdStays.length > 0 && wdStays.some((x) => new Date(`${x.checkIn}T12:00:00Z`).getUTCDay() === 6) &&
+      wdStays.every((x) => [5, 6].includes(new Date(`${x.checkIn}T12:00:00Z`).getUTCDay())), wdStays.map((x) => x.checkIn).join(","));
   const res = await route.GET(new Request("https://www.exemple.fr/api/agent/quote?checkIn=2027-01-15&checkOut=2027-01-17&adults=9"), {
     params: Promise.resolve({ tool: "quote" }),
   });

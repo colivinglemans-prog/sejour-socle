@@ -25,7 +25,13 @@ export interface PropertyFacts {
   name: string;
   summary: string;
   address: string;
-  capacity: { min?: number; max: number; note?: string };
+  /**
+   * `max` est une limite ; `recommended` n'en est pas une : c'est le nombre de voyageurs pour
+   * lequel le logement est pensé (Albiez : 4, même prix de 1 à 4). Pas de minimum de voyageurs —
+   * un `min` se lisait comme « 4 personnes au moins » et faisait douter une IA d'une réservation
+   * à deux.
+   */
+  capacity: { max: number; recommended?: number; note?: string };
   checkIn: string;
   checkOut: string;
   /** Compris dans le prix (draps, ménage de fin de séjour…). */
