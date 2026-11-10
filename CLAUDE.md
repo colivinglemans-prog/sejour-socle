@@ -1477,9 +1477,16 @@ alors que la serrure était déjà revenue. Une alerte qu'on cesse de lire ne pr
   Un identifiant déjà confirmé reste KO sans nouvelle attente, et sa gravité qui monte escalade
   aussitôt. Par défaut (1), le comportement est celui de v3.9.0 : aucun appelant du socle ne
   change. Un état écrit avant (sans `pending`) se relit tel quel.
-- `config/deploy-site.ts` — `heartbeat.severity?` (`blocking` par défaut) : `warning` quand le
-  site envoie déjà lui-même l'alerte nommant les tâches en retard. Le contrôle est montré
-  (`warn`) sans ouvrir une seconde alerte pour la même panne.
+  **Limites à connaître** : un appelant qui perd son état (magasin injoignable) doit repasser à
+  `confirmAfter: 1`, sinon le compteur repart de zéro à chaque passage et l'alerte ne part
+  jamais. Et les reports d'échecs non revus (`alertInputs`, `readinessAlertInputs`) ne reprennent
+  que `failing`, pas `pending` : les combiner avec `confirmAfter > 1` remettrait le compteur à
+  zéro à chaque passage qui ne relance pas la sonde (aucun appelant aujourd'hui).
+- `testing/deploy/checks/heartbeat.ts` — deux contrôles au lieu d'un : `heartbeat.reachable`
+  (la route répond de façon lisible, **toujours bloquant** : une route en 500 est le cas où le
+  site ne peut pas alerter lui-même) et `heartbeat.crons` (tâches en retard), dont la sévérité
+  vient de `config/deploy-site.ts` `heartbeat.severity?` (`blocking` par défaut ; `warning`
+  quand le site envoie déjà l'alerte nommant les tâches — montré en `warn`, sans seconde alerte).
 - `.github/workflows/deploy-checks.yml` — « rétabli » part en **priorité 1** (sans son ni
   vibration), plus 3. Effet seulement pour un site qui appelle le workflow par le SHA de ce tag.
 
