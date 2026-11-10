@@ -2,25 +2,25 @@ import { describe, expect, it } from "vitest";
 import { searchConsolePageLabel } from "../lib/search-console-pages";
 
 describe("searchConsolePageLabel", () => {
-  const domain = "sc-domain:albiez-aiguilles.fr";
+  const domain = "sc-domain:exemple.fr";
 
   it("retire le domaine d'une propriété Domaine, www ou apex", () => {
-    expect(searchConsolePageLabel(domain, "https://www.albiez-aiguilles.fr/fr/guide/ski")).toBe("/fr/guide/ski");
-    expect(searchConsolePageLabel(domain, "https://albiez-aiguilles.fr/")).toBe("/");
+    expect(searchConsolePageLabel(domain, "https://www.exemple.fr/fr/guide/ski")).toBe("/fr/guide/ski");
+    expect(searchConsolePageLabel(domain, "https://exemple.fr/")).toBe("/");
   });
 
   it("garde l'hôte d'un autre sous-domaine", () => {
-    expect(searchConsolePageLabel(domain, "https://blog.albiez-aiguilles.fr/a")).toBe("blog.albiez-aiguilles.fr/a");
+    expect(searchConsolePageLabel(domain, "https://blog.exemple.fr/a")).toBe("blog.exemple.fr/a");
   });
 
   it("retire le préfixe d'une propriété préfixe d'URL", () => {
-    const prefix = "https://www.coliving-barbusse.fr/";
-    expect(searchConsolePageLabel(prefix, "https://www.coliving-barbusse.fr/it/blog/kz")).toBe("/it/blog/kz");
-    expect(searchConsolePageLabel(prefix, "https://coliving-barbusse.fr/fr")).toBe("coliving-barbusse.fr/fr");
+    const prefix = "https://www.autre-exemple.fr/";
+    expect(searchConsolePageLabel(prefix, "https://www.autre-exemple.fr/it/blog/kz")).toBe("/it/blog/kz");
+    expect(searchConsolePageLabel(prefix, "https://autre-exemple.fr/fr")).toBe("autre-exemple.fr/fr");
   });
 
   it("décode le chemin et garde la requête", () => {
-    expect(searchConsolePageLabel(domain, "https://www.albiez-aiguilles.fr/fr/r%C3%A9sidence?x=1")).toBe(
+    expect(searchConsolePageLabel(domain, "https://www.exemple.fr/fr/r%C3%A9sidence?x=1")).toBe(
       "/fr/résidence?x=1",
     );
   });

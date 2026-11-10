@@ -21,7 +21,7 @@ export function searchConsolePageLabel(siteUrl: string, pageUrl: string): string
 
   if (siteUrl.startsWith("sc-domain:")) {
     const domain = siteUrl.slice("sc-domain:".length).toLowerCase();
-    const host = page.host.toLowerCase();
+    const host = page.hostname.toLowerCase();
     return host === domain || host === `www.${domain}` ? path : page.host + path;
   }
   const prefix = siteUrl.replace(/\/$/, "");
