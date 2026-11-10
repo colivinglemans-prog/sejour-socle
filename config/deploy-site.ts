@@ -132,8 +132,13 @@ export interface DeploySite {
     viewerForbiddenFields?: string[];
   };
 
-  /** Route publique de heartbeat. Absente si le site n'a pas de stockage (Albiez). */
-  heartbeat?: { path: string };
+  /**
+   * Route publique de heartbeat. Absente si le site n'a pas de stockage (Albiez).
+   * `severity` (v3.21.0, `blocking` par défaut) : `warning` quand le site envoie déjà lui-même une
+   * alerte nommant les tâches en retard — la surveillance la montre sans ouvrir une seconde alerte
+   * pour la même panne.
+   */
+  heartbeat?: { path: string; severity?: import("../testing/deploy/types").CheckSeverity };
 
   /** Contrôles propres au site, écrits chez lui avec le même contrat. */
   extraChecks?: import("../testing/deploy/types").Check[];

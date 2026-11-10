@@ -9,7 +9,14 @@
  * - `recover` : tout est revenu au vert ;
  * - `none` : rien d'ouvert, rien à ouvrir.
  *
- * Générique : sert à la surveillance post-déploiement et à la veille d'arrivée.
+ * **Confirmation** (`confirmAfter`, v3.21.0) : un appareil qui décroche une minute ne mérite pas
+ * une alerte. Avec `confirmAfter: 2`, un identifiant n'entre dans `failing` qu'au deuxième
+ * passage KO **consécutif** ; entre-temps il attend dans `pending`. Un échec vu une seule fois
+ * puis disparu ne produit rien — ni ouverture, ni rétablissement. Par défaut (1), le
+ * comportement est celui d'avant : la surveillance et la veille d'arrivée n'ont pas bougé.
+ *
+ * Générique : sert à la surveillance post-déploiement, à la veille d'arrivée et aux alertes des
+ * tâches planifiées d'un site.
  */
 
 export type AlertAction = "none" | "open" | "persist" | "escalate" | "recover";
@@ -30,49 +37,76 @@ export interface AlertState {
   since: string | null;
   /** Dernier passage évalué (ISO 8601). */
   updatedAt: string;
-  /** Identifiants KO → gravité. Vide quand l'alerte est fermée. */
+  /** Identifiants KO confirmés → gravité. Vide quand l'alerte est fermée. */
   failing: Record<string, number>;
+  /**
+   * Identifiants KO pas encore confirmés → nombre de passages KO consécutifs. Absent d'un état
+   * écrit avant v3.21.0, ou quand rien n'attend.
+   */
+  pending?: Record<string, number>;
 }
 
 export interface AlertTransition {
   action: AlertAction;
   state: AlertState;
-  /** Identifiants KO de ce passage, triés. */
+  /** Identifiants KO **confirmés** de ce passage, triés. */
   failingIds: string[];
+}
+
+export interface AlertOptions {
+  /**
+   * Nombre de passages KO consécutifs avant qu'un identifiant compte (1 par défaut). Un
+   * identifiant déjà confirmé reste KO tant qu'il échoue : la confirmation ne joue qu'à l'entrée.
+   */
+  confirmAfter?: number;
 }
 
 export function nextAlertState(
   prev: AlertState | null,
   results: readonly AlertInput[],
   now: Date,
+  options: AlertOptions = {},
 ): AlertTransition {
-  const failing: Record<string, number> = {};
+  const confirmAfter = Math.max(1, Math.floor(options.confirmAfter ?? 1));
+  const seen: Record<string, number> = {};
   for (const r of results) {
     if ((r.status === "fail" || r.status === "error") && r.severity === "blocking") {
-      failing[r.id] = Math.max(failing[r.id] ?? 0, r.gravity ?? 1);
+      seen[r.id] = Math.max(seen[r.id] ?? 0, r.gravity ?? 1);
     }
   }
+
+  const wasOpen = prev?.open === true;
+  const before = wasOpen ? prev.failing : {};
+  const prevPending = prev?.pending ?? {};
+  const failing: Record<string, number> = {};
+  const pending: Record<string, number> = {};
+  for (const [id, gravity] of Object.entries(seen)) {
+    const streak = id in before ? confirmAfter : (prevPending[id] ?? 0) + 1;
+    if (streak >= confirmAfter) failing[id] = gravity;
+    else pending[id] = streak;
+  }
+
   const failingIds = Object.keys(failing).sort();
   const updatedAt = now.toISOString();
-  const wasOpen = prev?.open === true;
+  const withPending = (s: Omit<AlertState, "pending">): AlertState =>
+    Object.keys(pending).length > 0 ? { ...s, pending } : s;
 
   if (failingIds.length === 0) {
     return {
       action: wasOpen ? "recover" : "none",
-      state: { open: false, since: null, updatedAt, failing: {} },
+      state: withPending({ open: false, since: null, updatedAt, failing: {} }),
       failingIds,
     };
   }
 
   if (!wasOpen) {
-    return { action: "open", state: { open: true, since: updatedAt, updatedAt, failing }, failingIds };
+    return { action: "open", state: withPending({ open: true, since: updatedAt, updatedAt, failing }), failingIds };
   }
 
-  const before = prev.failing;
   const escalated = failingIds.some((id) => !(id in before) || failing[id] > before[id]);
   return {
     action: escalated ? "escalate" : "persist",
-    state: { open: true, since: prev.since ?? updatedAt, updatedAt, failing },
+    state: withPending({ open: true, since: prev.since ?? updatedAt, updatedAt, failing }),
     failingIds,
   };
 }

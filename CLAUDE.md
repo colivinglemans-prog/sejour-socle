@@ -1465,6 +1465,26 @@ sans dépendance serveur, parce que `SearchConsoleDashboard` (client) l'importe 
 `search-console.ts` charge la signature des jetons. Avant, une propriété Domaine affichait
 `www.site.fr/fr/…`, illisible sur mobile.
 
+### v3.21.0 — alertes confirmées sur deux passages (2026-11-10)
+
+Demandé par l'exploitant de Barbusse : trop d'alertes, dont une « serrure hors ligne » reçue
+alors que la serrure était déjà revenue. Une alerte qu'on cesse de lire ne protège plus rien.
+
+- `lib/alert-state.ts` — `nextAlertState(prev, results, now, { confirmAfter })`. Avec
+  `confirmAfter: 2`, un identifiant n'entre dans `failing` qu'au deuxième passage KO
+  **consécutif** et attend dans `state.pending` (compteur par identifiant) ; un passage vert
+  remet le compteur à zéro. Un KO isolé ne produit **rien** — ni ouverture, ni rétablissement.
+  Un identifiant déjà confirmé reste KO sans nouvelle attente, et sa gravité qui monte escalade
+  aussitôt. Par défaut (1), le comportement est celui de v3.9.0 : aucun appelant du socle ne
+  change. Un état écrit avant (sans `pending`) se relit tel quel.
+- `config/deploy-site.ts` — `heartbeat.severity?` (`blocking` par défaut) : `warning` quand le
+  site envoie déjà lui-même l'alerte nommant les tâches en retard. Le contrôle est montré
+  (`warn`) sans ouvrir une seconde alerte pour la même panne.
+- `.github/workflows/deploy-checks.yml` — « rétabli » part en **priorité 1** (sans son ni
+  vibration), plus 3. Effet seulement pour un site qui appelle le workflow par le SHA de ce tag.
+
+Version mineure : une option, un champ facultatif d'état, un champ facultatif de configuration.
+
 ### Comment une application s'y branche
 
 ```jsonc

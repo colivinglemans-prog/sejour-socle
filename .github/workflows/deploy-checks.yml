@@ -216,7 +216,8 @@ jobs:
             } else if (action === "recover" && issue) {
               await github.rest.issues.createComment({ ...context.repo, issue_number: issue.number, body: `Rétabli. ${runUrl}` });
               await github.rest.issues.update({ ...context.repo, issue_number: issue.number, state: "closed" });
-              core.setOutput("ntfy_priority", "3");
+              // Priorité 1 : un rétablissement s'affiche sans son ni vibration (v3.21.0).
+              core.setOutput("ntfy_priority", "1");
               core.setOutput("ntfy_title", `[Surveillance] ${site} : rétabli`);
               core.setOutput("ntfy_body", runUrl);
             }

@@ -4,15 +4,19 @@
  * synchro de la serrure est en retard » renseignerait un cambrioleur. Le nom part par ntfy, depuis
  * le site, pas d'ici.
  */
-import type { Check, CheckOutcome } from "../types";
+import type { Check, CheckOutcome, CheckSeverity } from "../types";
 
-export function heartbeatChecks(): Check[] {
+/**
+ * `severity` vient de `site.heartbeat.severity` : un site qui alerte déjà lui-même, avec les noms,
+ * déclare `warning` pour ne pas recevoir deux notifications pour la même tâche en retard.
+ */
+export function heartbeatChecks(severity: CheckSeverity = "blocking"): Check[] {
   return [
     {
       id: "heartbeat.crons",
       title: "Les tâches planifiées du site ont tourné à l'heure",
       level: "vital",
-      severity: "blocking",
+      severity,
       async run(ctx): Promise<CheckOutcome> {
         const hb = ctx.site.heartbeat;
         if (!hb) return { status: "skip", detail: "Pas de heartbeat déclaré pour ce site" };

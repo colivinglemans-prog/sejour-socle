@@ -40,7 +40,7 @@ export function allChecks(site: DeploySite): Check[] {
     ...indexingChecks(),
     ...llmsChecks(),
     ...securityChecks(),
-    ...heartbeatChecks(),
+    ...heartbeatChecks(site.heartbeat?.severity),
     ...(site.extraChecks ?? []),
   ];
 }
