@@ -20,6 +20,7 @@ import type {
   SearchConsoleReport,
   SearchConsoleRow,
 } from "../lib/search-console";
+import { searchConsolePageLabel } from "../lib/search-console-pages";
 import MetricCard from "./stats/MetricCard";
 import { longDate, shortDate } from "./stats/format";
 
@@ -237,15 +238,7 @@ export default function SearchConsoleDashboard({
     return () => controller.abort();
   }, [endpoint, days]);
 
-  const origin = report?.siteUrl.startsWith("http") ? report.siteUrl.replace(/\/$/, "") : null;
-  const pagePath = (url: string) => {
-    try {
-      const u = new URL(url);
-      return origin && url.startsWith(origin) ? u.pathname || "/" : u.host + u.pathname;
-    } catch {
-      return url;
-    }
-  };
+  const pagePath = (url: string) => (report ? searchConsolePageLabel(report.siteUrl, url) : url);
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">

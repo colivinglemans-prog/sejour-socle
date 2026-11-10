@@ -1456,6 +1456,15 @@ texte. `SearchConsoleDashboard` le renseigne ; la position compte « up » quand
 Une variation qui s'arrondit à zéro s'écrit « = période précédente », sans flèche ni couleur.
 `StatsDashboard` (pages montrables à un banquier) n'en met pas : la carte reste sans couleur.
 
+### v3.20.0 — chemins courts dans le tableau des pages Search Console (2026-11-10)
+
+`lib/search-console-pages.ts` : `searchConsolePageLabel(siteUrl, pageUrl)` rend le chemin seul,
+décodé. Propriété « Domaine » (`sc-domain:x`) : l'apex et `www.` disparaissent, un autre
+sous-domaine garde son hôte ; propriété « préfixe d'URL » : son préfixe disparaît. Module à part,
+sans dépendance serveur, parce que `SearchConsoleDashboard` (client) l'importe et que
+`search-console.ts` charge la signature des jetons. Avant, une propriété Domaine affichait
+`www.site.fr/fr/…`, illisible sur mobile.
+
 ### Comment une application s'y branche
 
 ```jsonc
