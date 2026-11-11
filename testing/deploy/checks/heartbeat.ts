@@ -11,12 +11,27 @@
  * - `heartbeat.crons` — des tâches sont-elles en retard ? Sévérité fournie par le site
  *   (`site.heartbeat.severity`) : `warning` quand le site envoie déjà l'alerte nommant les
  *   tâches, pour ne pas recevoir deux notifications pour la même panne.
+ *
+ * ⚠️ La route est lue **une seule fois par passage** (`readHeartbeat`, mémorisée par contexte) :
+ * elle a des effets de bord chez le site (état d'alerte réécrit, ntfy). Deux lectures parallèles
+ * enverraient deux alertes pour la même panne, et compteraient deux passages pour un.
  */
 import type { Check, CheckContext, CheckOutcome, CheckSeverity } from "../types";
 
 type Reading = { kind: "skip" } | { kind: "ok" } | { kind: "overdue"; overdue: number } | { kind: "unexpected"; httpStatus: number };
 
-async function readHeartbeat(ctx: CheckContext): Promise<Reading> {
+const readings = new WeakMap<CheckContext, Promise<Reading>>();
+
+function readHeartbeat(ctx: CheckContext): Promise<Reading> {
+  let reading = readings.get(ctx);
+  if (!reading) {
+    reading = fetchHeartbeat(ctx);
+    readings.set(ctx, reading);
+  }
+  return reading;
+}
+
+async function fetchHeartbeat(ctx: CheckContext): Promise<Reading> {
   const hb = ctx.site.heartbeat;
   if (!hb) return { kind: "skip" };
   const res = await ctx.http.get(hb.path, { timeoutMs: 15_000 });

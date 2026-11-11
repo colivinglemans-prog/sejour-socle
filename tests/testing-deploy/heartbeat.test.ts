@@ -42,6 +42,17 @@ describe("heartbeat", () => {
     expect((await runById(heartbeatChecks("warning"), "heartbeat.reachable", context(overdue, declared))).status).toBe("pass");
   });
 
+  it("la route n'est lue qu'une fois par passage, même en parallèle (effets de bord chez le site)", async () => {
+    let calls = 0;
+    const routes = { ...defaultRoutes(), [PATH]: () => (calls++, { status: 200, body: JSON.stringify({ ok: true, overdue: 0 }), headers: JSON_HEADERS }) };
+    const ctx = context(routes, declared);
+    const checks = heartbeatChecks("warning");
+    await Promise.all(checks.map((c) => c.run(ctx)));
+    expect(calls).toBe(1);
+    await runById(checks, "heartbeat.crons", context(routes, declared));
+    expect(calls).toBe(2);
+  });
+
   it("route illisible : bloquant même quand le site a déclaré `warning`", async () => {
     const reach = await runById(heartbeatChecks("warning"), "heartbeat.reachable", context(broken, declared));
     expect(reach.status).toBe("error");

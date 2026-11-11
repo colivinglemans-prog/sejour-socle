@@ -1487,6 +1487,8 @@ alors que la serrure était déjà revenue. Une alerte qu'on cesse de lire ne pr
   site ne peut pas alerter lui-même) et `heartbeat.crons` (tâches en retard), dont la sévérité
   vient de `config/deploy-site.ts` `heartbeat.severity?` (`blocking` par défaut ; `warning`
   quand le site envoie déjà l'alerte nommant les tâches — montré en `warn`, sans seconde alerte).
+  La route est lue **une fois par passage** (mémorisée par contexte) : elle peut avoir des effets
+  de bord chez le site (état d'alerte, ntfy), et deux lectures parallèles doubleraient l'alerte.
 - `.github/workflows/deploy-checks.yml` — « rétabli » part en **priorité 1** (sans son ni
   vibration), plus 3. Effet seulement pour un site qui appelle le workflow par le SHA de ce tag.
 
