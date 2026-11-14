@@ -80,7 +80,12 @@ export async function callBingWebmaster(
     // Le message d'une erreur réseau peut citer l'URL, donc la clé : on ne le reprend pas.
     throw new BingWebmasterError(method, siteUrl, 0, null, "Bing injoignable (erreur réseau).");
   }
-  const text = await res.text();
+  let text: string;
+  try {
+    text = await res.text();
+  } catch {
+    throw new BingWebmasterError(method, siteUrl, res.status, null, "Réponse de Bing interrompue.");
+  }
   let body: unknown = null;
   try {
     body = JSON.parse(text);
@@ -93,7 +98,9 @@ export async function callBingWebmaster(
     // Le texte vient de Bing : par précaution, la clé y est masquée si jamais il la recopiait.
     const message =
       typeof b?.Message === "string"
-        ? b.Message.replace(/^ERROR!+\s*/, "").split(apiKey || "\u0000").join("[clé masquée]").slice(0, 200)
+        ? b.Message.replace(/^ERROR!+\s*/, "").split(apiKey || "\u0000").join("[clé masquée]")
+            .split(encodeURIComponent(apiKey) || "\u0000").join("[clé masquée]")
+            .slice(0, 200)
         : "réponse illisible";
     throw new BingWebmasterError(method, siteUrl, res.status, code, message);
   }
@@ -257,10 +264,10 @@ export async function getBingWebmasterReport({
 export function bingWebmasterErrorResponse(e: unknown): { status: number; error: string } {
   if (e instanceof BingWebmasterError) {
     if (e.invalidKey) {
-      return { status: 502, error: "Bing refuse la clé API (BING_WEBMASTER_API_KEY) : à régénérer dans Bing Webmaster → Paramètres → Accès API." };
+      return { status: 502, error: "Bing refuse la clé API Bing Webmaster : à régénérer dans Bing Webmaster → Paramètres → Accès API." };
     }
     if (e.notAuthorized) {
-      return { status: 502, error: "La clé est valide, mais ce compte Bing ne gère pas la propriété « ${e.siteUrl} » (c'est souvent le domaine nu, https://exemple.fr/)." };
+      return { status: 502, error: `La clé est valide, mais ce compte Bing ne gère pas la propriété « ${e.siteUrl} » (c'est souvent le domaine nu, https://exemple.fr/).` };
     }
     return { status: 502, error: e.message };
   }

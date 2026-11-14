@@ -179,7 +179,7 @@ deux validations.
 | — | Contrôles — `llms.policies` exige l'unité (« 30 jours », « J-30 », « 50 % », « 48 h ») : un nombre nu donnait de faux verts | `le-dahu` | `v3.10.2` |
 | — | Référencement — **Google Search Console dans le dashboard** (`google-auth`, `search-console`, `SearchConsoleDashboard`) | `le-douanier`, `le-dahu`, `chef-de-stand` | `v3.16.0` |
 | — | Blog / guide — **pastilles de filtre** `FilterChips` (purement visuelles ; modèle d'article, prédicat et carte restent dans chaque site) | `le-douanier`, `le-dahu`, `chef-de-stand` | `v3.17.0` |
-| — | Référencement — **Bing Webmaster dans le dashboard** (`bing-webmaster`, `BingWebmasterPanel`, prop `bingEndpoint`) | relecture du parent (agents non disponibles dans la session de travail) | `v3.23.0` |
+| — | Référencement — **Bing Webmaster dans le dashboard** (`bing-webmaster`, `BingWebmasterPanel`, prop `bingEndpoint`) | `le-douanier`, `cerbere`, `chef-de-stand`, `le-dahu` | `v3.23.0` |
 | — | Veille des dates d'événements (`lib/events-watch.ts`) | — | `v0.7.0` |
 
 Plan détaillé : `C:\Users\alexa\.claude\plans\cheerful-toasting-rivest.md`.

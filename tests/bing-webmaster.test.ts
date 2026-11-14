@@ -128,9 +128,12 @@ describe("erreurs : jamais la clé", () => {
 
   it("propriété non autorisée (code 14) : nomme la propriété", async () => {
     const f = fakeFetch({ GetCrawlStats: { ErrorCode: 14, Message: "ERROR!!! NotAuthorized" } }, 400);
-    const err = await callBingWebmaster(KEY, "GetCrawlStats", SITE, f).catch((e) => e);
+    const other = "https://autre-site.fr/";
+    const err = await callBingWebmaster(KEY, "GetCrawlStats", other, f).catch((e) => e);
     expect(err.notAuthorized).toBe(true);
-    expect(bingWebmasterErrorResponse(err).error).toContain(SITE);
+    const msg = bingWebmasterErrorResponse(err).error;
+    expect(msg).toContain(other);
+    expect(msg).not.toContain("${");
   });
 
   it("Bing qui recopierait la clé dans son message : elle est masquée", async () => {
