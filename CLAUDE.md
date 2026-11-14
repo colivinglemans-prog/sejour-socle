@@ -179,6 +179,7 @@ deux validations.
 | — | Contrôles — `llms.policies` exige l'unité (« 30 jours », « J-30 », « 50 % », « 48 h ») : un nombre nu donnait de faux verts | `le-dahu` | `v3.10.2` |
 | — | Référencement — **Google Search Console dans le dashboard** (`google-auth`, `search-console`, `SearchConsoleDashboard`) | `le-douanier`, `le-dahu`, `chef-de-stand` | `v3.16.0` |
 | — | Blog / guide — **pastilles de filtre** `FilterChips` (purement visuelles ; modèle d'article, prédicat et carte restent dans chaque site) | `le-douanier`, `le-dahu`, `chef-de-stand` | `v3.17.0` |
+| — | Référencement — **Bing Webmaster dans le dashboard** (`bing-webmaster`, `BingWebmasterPanel`, prop `bingEndpoint`) | relecture du parent (agents non disponibles dans la session de travail) | `v3.23.0` |
 | — | Veille des dates d'événements (`lib/events-watch.ts`) | — | `v0.7.0` |
 
 Plan détaillé : `C:\Users\alexa\.claude\plans\cheerful-toasting-rivest.md`.
@@ -1540,3 +1541,27 @@ le moteur de prix reste dans le site.
   inclusives, en UTC (quota d'environ 100 crédits / 5 min partagé par tout le compte).
 - **Une réponse acceptée ne prouve pas l'écriture** : l'appelant relit (`get(..., { fresh: true })`).
 - Aucun appelant chez Albiez : il peut rester sur sa version. Tests : `tests/beds24-calendar-write.test.ts`.
+
+### v3.23.0 — Bing Webmaster dans la page Référencement (2026-11-14)
+
+ChatGPT Search et Copilot répondent à partir de l'index de Bing : les tests voyageur du 14/11 ont
+montré deux sites absents des recherches. La page Référencement affiche donc aussi ce que Bing en sait.
+
+- `lib/bing-webmaster.ts` : `getBingWebmasterReport({ apiKey, siteUrl })` — quatre appels GET
+  parallèles (`GetCrawlStats`, `GetRankAndTrafficStats`, `GetQueryStats`, `GetPageStats`). Aucune
+  variable d'environnement lue (règle 1) : la clé (`BING_WEBMASTER_API_KEY` chez les sites) et la
+  propriété arrivent du site. La propriété Bing est le **domaine nu** (`https://exemple.fr/`).
+- **La clé voyage dans l'URL** (exigence de Bing) : aucune URL d'appel n'entre dans une erreur ;
+  `BingWebmasterError` porte méthode, propriété, statut et code Bing (`3` = clé invalide, `14` =
+  propriété non autorisée), le texte de Bing est tronqué et la clé y est masquée. Une erreur réseau
+  ne reprend pas le message d'origine. `bingWebmasterErrorResponse(e)` donne le message de la route.
+- Dates `/Date(ms)/` lues en **UTC** (`parseBingDate`) ; requêtes et pages cumulées par clé (Bing
+  rend une ligne par semaine), position pondérée par les impressions comme Search Console.
+- `hasData` faux tant que Bing ne rend que des zéros : `BingWebmasterPanel` l'écrit en une phrase
+  au lieu de cartes à zéro ou d'un graphique plat. Erreur = bandeau, jamais des zéros.
+- `SearchConsoleDashboard` prend `bingEndpoint?` : la section Bing s'affiche sous Google, chargée
+  à part (une panne de l'un n'éteint pas l'autre). Sans la prop, rien ne change.
+- Tests : `tests/bing-webmaster.test.ts` (réponses à zéro enregistrées le 14/11, clé jamais citée).
+- Base : v3.22.0 (branche `pricing-transport`), pour que Barbusse ne régresse pas ; la v3.24.0 du
+  moteur de prix partira de ce tag. Albiez monte de v3.18.0 : 3.19–3.22 n'ont aucun appelant
+  obligatoire chez lui (couleurs de variation, chemins courts, alertes confirmées, écriture calendrier).

@@ -21,6 +21,7 @@ import type {
   SearchConsoleRow,
 } from "../lib/search-console";
 import { searchConsolePageLabel } from "../lib/search-console-pages";
+import BingWebmasterPanel from "./BingWebmasterPanel";
 import MetricCard from "./stats/MetricCard";
 import { longDate, shortDate } from "./stats/format";
 
@@ -196,6 +197,11 @@ export interface SearchConsoleDashboardProps {
   endpoint?: string;
   /** Liens vers les outils d'origine (Search Console, Vercel Analytics…), ouverts à part. */
   links?: { href: string; label: string }[];
+  /**
+   * Route admin du site qui renvoie le rapport Bing Webmaster (`lib/bing-webmaster.ts`). Absente :
+   * pas de section Bing. Indépendante de Search Console : une panne de l'un n'éteint pas l'autre.
+   */
+  bingEndpoint?: string;
 }
 
 export default function SearchConsoleDashboard({
@@ -204,6 +210,7 @@ export default function SearchConsoleDashboard({
   accent,
   endpoint = "/api/dashboard/seo",
   links = [],
+  bingEndpoint,
 }: SearchConsoleDashboardProps) {
   const [days, setDays] = useState<SearchConsolePeriod>(28);
   const [report, setReport] = useState<SearchConsoleReport | null>(null);
@@ -346,6 +353,12 @@ export default function SearchConsoleDashboard({
             />
             <Table title="Appareils" label="Appareil" rows={report.devices} render={(k) => DEVICES[k] ?? k} />
           </div>
+        </div>
+      )}
+
+      {bingEndpoint && (
+        <div className="mt-10 border-t border-slate-200 pt-8">
+          <BingWebmasterPanel endpoint={bingEndpoint} accent={accent} />
         </div>
       )}
 
