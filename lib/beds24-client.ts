@@ -154,6 +154,25 @@ export interface Beds24Client {
   /** Ajoute des `infoItems` à une réservation (ajout seul). La voie doit porter `write:bookings`. */
   addInfoItems(bookingId: number, items: readonly { code: string; text: string }[], route: string): Promise<void>;
   /**
+   * Écrit des valeurs de calendrier (`price1`, `minStay`) sur une room, par tranches `[from, to]`
+   * inclusives — `POST /inventory/rooms/calendar`. La voie doit porter `write:inventory`.
+   *
+   * **Seuls `price1` et `minStay` passent** : ni `numAvail`, ni `override`, ni `price2…`. Une
+   * fermeture de dates ou une règle d'arrivée (la rotation du samedi d'Albiez vit dans
+   * `override`) ne s'écrit jamais par ce chemin — condition du dahu, 2026-11-14. Les tranches
+   * sont validées **avant** l'appel ; une seule invalide et rien n'est envoyé.
+   *
+   * Tous les éléments de la réponse sont lus, pas seulement le premier comme `postQuiet` : un
+   * élément `success: false` lève une `Beds24Error` qui nomme les champs en cause, et les
+   * `warnings` (valeur ignorée, plage tronquée…) sont rendus à l'appelant, qui doit les
+   * traiter comme un écart. Une réponse acceptée ne prouve pas l'écriture : relire ensuite.
+   */
+  updateCalendar(
+    roomId: number,
+    spans: readonly Beds24CalendarWrite[],
+    route: string,
+  ): Promise<Beds24CalendarWriteResult>;
+  /**
    * Derniers crédits lus dans les en-têtes Beds24 (`x-five-min-limit-remaining`), ou `null`
    * avant tout appel. Le quota (~100 crédits / 5 min) est **partagé par tout le compte** : une
    * tâche planifiée qui l'épuise coupe aussi le dashboard et la vitrine.
@@ -161,6 +180,21 @@ export interface Beds24Client {
   quota(): Beds24Quota | null;
   /** Oublie l'access token d'une voie, pour que l'appel suivant en redemande un. */
   invalidate(route: string): void;
+}
+
+/** Une tranche de calendrier à écrire : `from` et `to` inclus, au format `YYYY-MM-DD`. */
+export interface Beds24CalendarWrite {
+  from: string;
+  to: string;
+  /** Prix de base de la nuit (palier d'occupation 1 en mode « Occupancy Prices »). */
+  price1?: number;
+  /** Séjour minimum, entier de 1 à 365 (bornes de la spec Beds24). */
+  minStay?: number;
+}
+
+export interface Beds24CalendarWriteResult {
+  /** Avertissements renvoyés par Beds24 (`champ: message`). Vide si tout a été pris tel quel. */
+  warnings: string[];
 }
 
 export interface Beds24Quota {
@@ -382,6 +416,32 @@ export function createBeds24Client(config: Beds24ClientConfig): Beds24Client {
     return postQuiet("/bookings", [{ id: bookingId, infoItems: items.map(({ code, text }) => ({ code, text })) }], name);
   }
 
+  async function updateCalendar(
+    roomId: number,
+    spans: readonly Beds24CalendarWrite[],
+    name: string,
+  ): Promise<Beds24CalendarWriteResult> {
+    const calendar = validateCalendarSpans(spans);
+    if (calendar.length === 0) return { warnings: [] };
+    const { name: actual } = resolve(name);
+    const t = await token(name);
+    const res = await fetch(`${baseUrl}/inventory/rooms/calendar`, {
+      method: "POST",
+      headers: { token: t, "Content-Type": "application/json" },
+      body: JSON.stringify([{ roomId, calendar }]),
+      cache: "no-store",
+      signal: AbortSignal.timeout(20_000),
+    });
+    noteQuota(res);
+    const body = await res.text();
+    if (!res.ok) {
+      if (res.status === 401) invalidate(actual);
+      // Le calendrier n'a rien de personnel : les 200 premiers caractères aident à diagnostiquer.
+      throw new Beds24Error(res.status, "/inventory/rooms/calendar (POST)", body);
+    }
+    return parseCalendarWriteResponse(body);
+  }
+
   /*
    * Passe par `postQuiet` (2026-11-08, cerbere) : l'ancienne version recopiait dans l'erreur le
    * corps de la réponse, qui contient la note écrite.
@@ -399,6 +459,7 @@ export function createBeds24Client(config: Beds24ClientConfig): Beds24Client {
     getMessages,
     sendMessage,
     addInfoItems,
+    updateCalendar,
     quota: () => lastQuota,
     invalidate,
   };
@@ -446,4 +507,101 @@ export function eachDay(from: string, to: string): string[] {
     day = d.toISOString().slice(0, 10);
   }
   return days;
+}
+
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Lendemain d'un jour « YYYY-MM-DD », en UTC (même arithmétique qu'`eachDay`). */
+function nextDay(day: string): string {
+  const d = new Date(`${day}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * L'inverse d'`expandSpans` : des valeurs jour par jour vers les tranches `[from, to]` inclusives
+ * qu'attend `POST /inventory/rooms/calendar`. Deux jours consécutifs se fondent dans la même
+ * tranche s'ils portent exactement les mêmes champs. Un jour manquant coupe la tranche.
+ *
+ * Le regroupement compte pour le quota (~100 crédits / 5 min, partagé par tout le compte) : un
+ * calendrier de 365 jours tient d'ordinaire en quelques dizaines de tranches, en un seul appel.
+ */
+export function compressSpans(
+  days: Readonly<Record<string, Omit<Beds24CalendarWrite, "from" | "to">>>,
+): Beds24CalendarWrite[] {
+  const spans: Beds24CalendarWrite[] = [];
+  for (const day of Object.keys(days).sort()) {
+    const value = days[day];
+    const last = spans.at(-1);
+    if (
+      last &&
+      nextDay(last.to) === day &&
+      last.price1 === value.price1 &&
+      last.minStay === value.minStay
+    ) {
+      last.to = day;
+    } else {
+      spans.push({ from: day, to: day, ...pickCalendarFields(value) });
+    }
+  }
+  return spans;
+}
+
+function pickCalendarFields(v: Omit<Beds24CalendarWrite, "from" | "to">): Omit<Beds24CalendarWrite, "from" | "to"> {
+  const out: Omit<Beds24CalendarWrite, "from" | "to"> = {};
+  if (v.price1 !== undefined) out.price1 = v.price1;
+  if (v.minStay !== undefined) out.minStay = v.minStay;
+  return out;
+}
+
+/**
+ * Valide les tranches avant tout envoi et les réduit aux seuls champs autorisés. **Lève** au
+ * premier défaut : une écriture de prix à moitié valide ne part pas à moitié.
+ */
+export function validateCalendarSpans(spans: readonly Beds24CalendarWrite[]): Beds24CalendarWrite[] {
+  return spans.map((s, i) => {
+    const where = `tranche ${i} (${s.from} → ${s.to})`;
+    if (!ISO_DAY.test(s.from) || !ISO_DAY.test(s.to)) throw new Error(`${where} : date invalide`);
+    if (s.to < s.from) throw new Error(`${where} : fin avant le début`);
+    const extra = Object.keys(s).filter((k) => !["from", "to", "price1", "minStay"].includes(k));
+    if (extra.length) throw new Error(`${where} : champ interdit (${extra.join(", ")})`);
+    if (s.price1 === undefined && s.minStay === undefined) throw new Error(`${where} : rien à écrire`);
+    if (s.price1 !== undefined && !(Number.isFinite(s.price1) && s.price1 > 0)) {
+      throw new Error(`${where} : price1 invalide (${s.price1})`);
+    }
+    if (s.minStay !== undefined && !(Number.isInteger(s.minStay) && s.minStay >= 1 && s.minStay <= 365)) {
+      throw new Error(`${where} : minStay invalide (${s.minStay})`);
+    }
+    return { from: s.from, to: s.to, ...pickCalendarFields(s) };
+  });
+}
+
+interface Beds24PostItem {
+  success?: boolean;
+  errors?: { action?: string; field?: string; message?: string }[];
+  warnings?: { action?: string; field?: string; message?: string }[];
+}
+
+/**
+ * Lit **tous** les éléments d'une réponse `multiplePostResponse`. Un seul `success: false` lève
+ * (avec les champs et messages en cause) ; les `warnings` de tous les éléments sont rendus.
+ * Un corps illisible sur un statut 2xx lève aussi : pour des prix, « on ne sait pas » n'est
+ * pas un succès.
+ */
+export function parseCalendarWriteResponse(body: string): Beds24CalendarWriteResult {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    throw new Beds24Error(200, "/inventory/rooms/calendar (POST : réponse illisible)", body);
+  }
+  const items: Beds24PostItem[] = Array.isArray(parsed) ? parsed : [parsed as Beds24PostItem];
+  const describe = (e: { action?: string; field?: string; message?: string }) =>
+    [e.field ?? e.action ?? "?", e.message].filter(Boolean).join(": ");
+  const refused = items.filter((it) => it.success === false);
+  if (refused.length) {
+    const why = refused.flatMap((it) => (it.errors ?? []).map(describe)).join(" ; ") || "sans motif";
+    throw new Beds24Error(200, `/inventory/rooms/calendar (POST refusé : ${why})`, "");
+  }
+  return { warnings: items.flatMap((it) => (it.warnings ?? []).map(describe)) };
 }

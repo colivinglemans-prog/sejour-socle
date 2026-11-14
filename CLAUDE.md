@@ -260,7 +260,7 @@ Mesure sur `/api/dashboard/bookings?arrivalFrom=2025-01-01&arrivalTo=2026-06-30`
 |---|---|---|
 | `lib/booking.ts` | `Booking`, `BookingSource`, `nightsBetween`. **Le type canonique du domaine.** | Albiez (`Sejour`), renommé en anglais technique |
 | `lib/beds24-types.ts` | `Beds24Booking`, `Beds24InfoItem`, `Beds24InvoiceItem`, `Beds24Property`, `Beds24CalendarSpan`, `Beds24CalendarRoom`, `Beds24AvailabilityRoom`. Le **format de transport**. | Barbusse (déclaration en production), + `commission` et `apiReference` d'Albiez |
-| `lib/beds24-client.ts` | `createBeds24Client` — jetons par voie, cache d'access tokens, replis, `keepAlive`, `updateNotes`, `expandSpans`, `eachDay`. | les deux, écrits deux fois |
+| `lib/beds24-client.ts` | `createBeds24Client` — jetons par voie, cache d'access tokens, replis, `keepAlive`, `updateNotes`, `updateCalendar`, `compressSpans`, `expandSpans`, `eachDay`. | les deux, écrits deux fois |
 | `lib/archive.ts` | `createArchive<T>` — filtrage répliquant celui de l'API, dédoublonnage où le live gagne, `origin` exposé. | Albiez pour la forme, les deux pour le mécanisme |
 
 **Deux types, et ce n'est pas une contradiction.** `Booking` est le modèle du domaine ;
@@ -1524,3 +1524,19 @@ dossier situé **hors** de la racine du projet, et Turbopack refuse de résoudre
 cette racine : `tsc --noEmit` passe, `next build` échoue en `Module not found`. Le
 contournement local, jamais commité, est `turbopack: { root: "<parent commun>" }` dans
 `next.config.ts` — ou plus simplement travailler sur le paquet installé depuis son tag.
+
+### v3.22.0 — écriture du calendrier Beds24 (2026-11-14)
+
+Premier pas de la sortie de Beyond Pricing (plan Barbusse du 2026-11-14) : **transport seulement**,
+le moteur de prix reste dans le site.
+
+- `updateCalendar(roomId, spans, route)` : `POST /inventory/rooms/calendar` en un seul appel, la voie
+  doit porter `write:inventory`. **Seuls `price1` et `minStay` passent** ; `numAvail`, `override` et
+  les `priceN` liés sont refusés avant l'envoi (`validateCalendarSpans`) — condition du dahu : la
+  rotation du samedi d'Albiez vit dans `override`, et une fermeture de dates ne s'écrit jamais par ce
+  chemin. Tous les éléments de la réponse `multiplePostResponse` sont lus (`parseCalendarWriteResponse`) :
+  un `success: false` lève avec les champs en cause, les `warnings` sont rendus à l'appelant.
+- `compressSpans(days)` : l'inverse d'`expandSpans`, jours consécutifs identiques fondus en tranches
+  inclusives, en UTC (quota d'environ 100 crédits / 5 min partagé par tout le compte).
+- **Une réponse acceptée ne prouve pas l'écriture** : l'appelant relit (`get(..., { fresh: true })`).
+- Aucun appelant chez Albiez : il peut rester sur sa version. Tests : `tests/beds24-calendar-write.test.ts`.
