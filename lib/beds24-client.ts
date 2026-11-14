@@ -583,7 +583,7 @@ interface Beds24PostItem {
 }
 
 /**
- * Lit **tous** les éléments d'une réponse `multiplePostResponse`. Un seul `success: false` lève
+ * Lit **tous** les éléments d'une réponse `multiplePostResponse`. Un seul élément sans `success: true` lève
  * (avec les champs et messages en cause) ; les `warnings` de tous les éléments sont rendus.
  * Un corps illisible sur un statut 2xx lève aussi : pour des prix, « on ne sait pas » n'est
  * pas un succès.
@@ -598,7 +598,11 @@ export function parseCalendarWriteResponse(body: string): Beds24CalendarWriteRes
   const items: Beds24PostItem[] = Array.isArray(parsed) ? parsed : [parsed as Beds24PostItem];
   const describe = (e: { action?: string; field?: string; message?: string }) =>
     [e.field ?? e.action ?? "?", e.message].filter(Boolean).join(": ");
-  const refused = items.filter((it) => it.success === false);
+  // Une réponse vide ou sans `success: true` explicite n'est pas un succès (relecture Fable).
+  if (items.length === 0) {
+    throw new Beds24Error(200, "/inventory/rooms/calendar (POST : réponse vide)", body);
+  }
+  const refused = items.filter((it) => it.success !== true);
   if (refused.length) {
     const why = refused.flatMap((it) => (it.errors ?? []).map(describe)).join(" ; ") || "sans motif";
     throw new Beds24Error(200, `/inventory/rooms/calendar (POST refusé : ${why})`, "");

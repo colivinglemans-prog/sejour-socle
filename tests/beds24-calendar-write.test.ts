@@ -71,6 +71,11 @@ describe("parseCalendarWriteResponse", () => {
     const body = JSON.stringify([{ success: true }, { success: false, errors: [{ field: "roomId", message: "inconnu" }] }]);
     expect(() => parseCalendarWriteResponse(body)).toThrow(/roomId: inconnu/);
   });
+  it("lève sur une réponse vide ou sans success explicite", () => {
+    expect(() => parseCalendarWriteResponse("[]")).toThrow(/vide/);
+    expect(() => parseCalendarWriteResponse("{}")).toThrow(/refusé/);
+    expect(() => parseCalendarWriteResponse(JSON.stringify([{ success: true }, {}]))).toThrow(/refusé/);
+  });
   it("lève sur un corps illisible", () => {
     expect(() => parseCalendarWriteResponse("<html>")).toThrow(Beds24Error);
   });
