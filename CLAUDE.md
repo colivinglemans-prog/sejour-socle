@@ -180,6 +180,7 @@ deux validations.
 | — | Référencement — **Google Search Console dans le dashboard** (`google-auth`, `search-console`, `SearchConsoleDashboard`) | `le-douanier`, `le-dahu`, `chef-de-stand` | `v3.16.0` |
 | — | Blog / guide — **pastilles de filtre** `FilterChips` (purement visuelles ; modèle d'article, prédicat et carte restent dans chaque site) | `le-douanier`, `le-dahu`, `chef-de-stand` | `v3.17.0` |
 | — | Référencement — **Bing Webmaster dans le dashboard** (`bing-webmaster`, `BingWebmasterPanel`, prop `bingEndpoint`) | `le-douanier`, `cerbere`, `chef-de-stand`, `le-dahu` | `v3.23.0` |
+| — | Référencement — **indexation automatique quotidienne** (`indexing`, `getBingUrlQuota`, `submitBingUrls`) ; Pricing décalé en v3.25.0 | à relire : `le-douanier`, `cerbere`, `le-dahu`, `chef-de-stand` | `v3.24.0` |
 | — | Veille des dates d'événements (`lib/events-watch.ts`) | — | `v0.7.0` |
 
 Plan détaillé : `C:\Users\alexa\.claude\plans\cheerful-toasting-rivest.md`.
@@ -1562,6 +1563,39 @@ montré deux sites absents des recherches. La page Référencement affiche donc 
 - `SearchConsoleDashboard` prend `bingEndpoint?` : la section Bing s'affiche sous Google, chargée
   à part (une panne de l'un n'éteint pas l'autre). Sans la prop, rien ne change.
 - Tests : `tests/bing-webmaster.test.ts` (réponses à zéro enregistrées le 14/11, clé jamais citée).
-- Base : v3.22.0 (branche `pricing-transport`), pour que Barbusse ne régresse pas ; la v3.24.0 du
+- Base : v3.22.0 (branche `pricing-transport`), pour que Barbusse ne régresse pas ; la v3.24.0 (devenue v3.25.0 le 15/11) du
   moteur de prix partira de ce tag. Albiez monte de v3.18.0 : 3.19–3.22 n'ont aucun appelant
   obligatoire chez lui (couleurs de variation, chemins courts, alertes confirmées, écriture calendrier).
+
+### v3.24.0 — Indexation automatique quotidienne (2026-11-15)
+
+Chaque jour, signaler aux moteurs les pages **nouvelles ou modifiées**, et seulement elles. Remplace
+le `npm run indexnow` manuel après chaque déploiement de contenu (le script reste pour l'usage
+manuel). La v3.24.0 réservée par la session Pricing (moteur de prix pur, non commencé) passe en
+**v3.25.0**.
+
+- `lib/indexing.ts` :
+  - `planIndexing` (**pur**) : sitemap (`lastmod`) + état + quota Bing → lot IndexNow (tout ce qui
+    a changé, sans quota) et lot Bing (`SubmitUrlBatch`) : le modifié d'abord, puis le **reliquat
+    jamais soumis** dans l'ordre `byIndexingPriority` (accueils → pages de la langue principale →
+    autres pages → articles de la langue principale → autres articles), plafonné au quota du jour
+    moins `BING_QUOTA_MARGIN` (2, pour une demande manuelle). **Jamais une page inchangée.**
+  - Pages hors sitemap (`extraPaths`, ex. `/llms.txt`) suivies par **empreinte de contenu**
+    (`contentFingerprint`, SHA-256 tronqué).
+  - `applyIndexing` : l'état n'avance **que pour ce qui a été accepté** (un IndexNow refusé repart
+    le lendemain) ; les URL sorties du sitemap sont oubliées.
+  - `bootstrapIndexingState` : magasin vide ⇒ tout le sitemap réputé connu d'IndexNow, et les
+    `bingAlreadySubmitted` premières URL (hors sitemap d'abord, puis l'ordre de priorité) réputées
+    soumises à Bing — c'est la soumission manuelle du 14/11 (98 Albiez, 96 Barbusse).
+  - `runIndexing(cfg, deps)` : fait les appels, enregistre l'état dans le **magasin injecté**
+    (`HeartbeatStore` : Upstash chez Barbusse), tient l'alerte sous `<stateKey>:alert` avec
+    `nextAlertState` et `confirmAfter: 2` (règle des deux relevés : jamais répétée, rétablissement
+    en priorité 1 ; un envoi raté remet l'état d'alerte). Constats : `sitemap`, `indexnow` (refus
+    autre que 429), `bing-key`, `bing`, `bing-quota` (quota épuisé avec du reliquat). `dry` :
+    rend le plan sans rien envoyer ni écrire (seule la lecture du quota Bing, gratuite, est faite).
+- `lib/bing-webmaster.ts` : `requestBingWebmaster` (GET ou POST, champ `d` brut),
+  `getBingUrlQuota` (`GetUrlSubmissionQuota`), `submitBingUrls` (`SubmitUrlBatch`, 500 URL au plus,
+  refuse une liste vide). Même règle : la clé ne sort jamais de l'URL d'appel.
+- Google : rien — il relit le sitemap seul et n'a pas d'API d'indexation pour ces pages.
+- Tests : `tests/indexing.test.ts` (jamais d'inchangé, ordre, plafond, amorçage, état sur refus,
+  alerte confirmée, clé jamais dans le rapport ni le magasin).

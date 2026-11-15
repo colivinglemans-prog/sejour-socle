@@ -18,8 +18,18 @@
 
 const API = "https://ssl.bing.com/webmaster/api.svc/json";
 
-/** Les méthodes lues — toutes en GET, toutes en lecture. */
-export type BingMethod = "GetCrawlStats" | "GetRankAndTrafficStats" | "GetQueryStats" | "GetPageStats";
+/**
+ * Les méthodes appelées. Les quatre premières lisent les statistiques (GET) ; les deux dernières
+ * servent à la soumission d'URL (v3.24.0, `lib/indexing.ts`) : lire le quota du jour (GET) et
+ * soumettre un lot (`SubmitUrlBatch`, le seul POST).
+ */
+export type BingMethod =
+  | "GetCrawlStats"
+  | "GetRankAndTrafficStats"
+  | "GetQueryStats"
+  | "GetPageStats"
+  | "GetUrlSubmissionQuota"
+  | "SubmitUrlBatch";
 
 /**
  * Une erreur de Bing, **sans la clé** : la méthode, le statut HTTP et le code d'erreur de Bing
@@ -72,10 +82,32 @@ export async function callBingWebmaster(
   siteUrl: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<Record<string, unknown>[]> {
-  const url = `${API}/${method}?siteUrl=${encodeURIComponent(siteUrl)}&apikey=${encodeURIComponent(apiKey)}`;
+  const d = await requestBingWebmaster(apiKey, method, siteUrl, undefined, fetchImpl);
+  if (!Array.isArray(d)) throw new BingWebmasterError(method, siteUrl, 200, null, "réponse sans liste « d ».");
+  return d as Record<string, unknown>[];
+}
+
+/**
+ * Le champ `d` brut de la réponse (liste, objet ou `null` selon la méthode). Avec `body`, un POST
+ * JSON (la propriété voyage alors dans le corps, comme l'attend `SubmitUrlBatch`) ; sinon un GET
+ * avec `siteUrl` dans l'URL. Dans les deux cas la clé reste dans l'URL et n'en sort jamais.
+ */
+export async function requestBingWebmaster(
+  apiKey: string,
+  method: BingMethod,
+  siteUrl: string,
+  body: Record<string, unknown> | undefined,
+  fetchImpl: typeof fetch = fetch,
+): Promise<unknown> {
+  const url = body
+    ? `${API}/${method}?apikey=${encodeURIComponent(apiKey)}`
+    : `${API}/${method}?siteUrl=${encodeURIComponent(siteUrl)}&apikey=${encodeURIComponent(apiKey)}`;
+  const init: RequestInit = body
+    ? { method: "POST", headers: { "Content-Type": "application/json; charset=utf-8" }, body: JSON.stringify(body), cache: "no-store" }
+    : { cache: "no-store" };
   let res: Response;
   try {
-    res = await fetchImpl(url, { cache: "no-store" });
+    res = await fetchImpl(url, init);
   } catch {
     // Le message d'une erreur réseau peut citer l'URL, donc la clé : on ne le reprend pas.
     throw new BingWebmasterError(method, siteUrl, 0, null, "Bing injoignable (erreur réseau).");
@@ -86,14 +118,14 @@ export async function callBingWebmaster(
   } catch {
     throw new BingWebmasterError(method, siteUrl, res.status, null, "Réponse de Bing interrompue.");
   }
-  let body: unknown = null;
+  let parsed: unknown = null;
   try {
-    body = JSON.parse(text);
+    parsed = JSON.parse(text);
   } catch {
     /* corps non JSON : traité plus bas */
   }
   if (!res.ok) {
-    const b = body as { ErrorCode?: unknown; Message?: unknown } | null;
+    const b = parsed as { ErrorCode?: unknown; Message?: unknown } | null;
     const code = typeof b?.ErrorCode === "number" ? b.ErrorCode : null;
     // Le texte vient de Bing : par précaution, la clé y est masquée si jamais il la recopiait.
     const message =
@@ -104,9 +136,55 @@ export async function callBingWebmaster(
         : "réponse illisible";
     throw new BingWebmasterError(method, siteUrl, res.status, code, message);
   }
-  const d = (body as { d?: unknown } | null)?.d;
-  if (!Array.isArray(d)) throw new BingWebmasterError(method, siteUrl, res.status, null, "réponse sans liste « d ».");
-  return d as Record<string, unknown>[];
+  if (parsed === null || typeof parsed !== "object" || !("d" in parsed)) {
+    throw new BingWebmasterError(method, siteUrl, res.status, null, "réponse sans champ « d ».");
+  }
+  return (parsed as { d: unknown }).d;
+}
+
+/** Le quota de soumission d'URL restant pour la propriété : aujourd'hui et ce mois-ci. */
+export interface BingUrlQuota {
+  daily: number;
+  monthly: number;
+}
+
+/** `GetUrlSubmissionQuota` — lecture seule, ne consomme rien. */
+export async function getBingUrlQuota(
+  apiKey: string,
+  siteUrl: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<BingUrlQuota> {
+  const d = (await requestBingWebmaster(apiKey, "GetUrlSubmissionQuota", siteUrl, undefined, fetchImpl)) as
+    | { DailyQuota?: unknown; MonthlyQuota?: unknown }
+    | null;
+  if (!d || typeof d !== "object") {
+    throw new BingWebmasterError("GetUrlSubmissionQuota", siteUrl, 200, null, "quota illisible.");
+  }
+  return { daily: num(d.DailyQuota), monthly: num(d.MonthlyQuota) };
+}
+
+/** Bing refuse un lot de plus de 500 URL ; le quota quotidien (100 environ) borne bien avant. */
+export const BING_SUBMIT_MAX_URLS = 500;
+
+/**
+ * `SubmitUrlBatch` : demande à Bing d'explorer ces URL, **dans le quota du jour**. Chaque URL
+ * soumise consomme une unité, même si Bing la connaissait déjà : ne jamais y renvoyer une page
+ * inchangée (c'est le rôle de `lib/indexing.ts`). Refuse une liste vide ou trop longue plutôt
+ * que de la tronquer.
+ */
+export async function submitBingUrls(
+  apiKey: string,
+  siteUrl: string,
+  urls: readonly string[],
+  fetchImpl: typeof fetch = fetch,
+): Promise<number> {
+  const urlList = [...new Set(urls)];
+  if (urlList.length === 0) throw new Error("Bing : aucune URL à soumettre.");
+  if (urlList.length > BING_SUBMIT_MAX_URLS) {
+    throw new Error(`Bing : ${urlList.length} URL, ${BING_SUBMIT_MAX_URLS} au plus par lot — rien n'est envoyé.`);
+  }
+  await requestBingWebmaster(apiKey, "SubmitUrlBatch", siteUrl, { siteUrl, urlList }, fetchImpl);
+  return urlList.length;
 }
 
 /** Un relevé quotidien d'exploration. */
