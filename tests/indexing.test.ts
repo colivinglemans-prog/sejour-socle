@@ -247,6 +247,69 @@ describe("runIndexing", () => {
     expect(sent[1].priority).toBe(1);
   });
 
+  it("llms.txt illisible un jour n'est pas renvoyé le lendemain s'il n'a pas changé", async () => {
+    const store = memoryStore();
+    const day = async (llmsStatus: number) => {
+      const { f, calls } = fakeNet({ xml: XML });
+      const g = (async (input: RequestInfo | URL, init?: RequestInit) =>
+        String(input) === `${SITE}/llms.txt` && llmsStatus !== 200
+          ? new Response("", { status: llmsStatus })
+          : f(input, init)) as typeof fetch;
+      const r = await runIndexing(CFG, { store, bingApiKey: KEY, fetchImpl: g, now: NOW });
+      return { r, posts: calls.filter((c) => c.method === "POST") };
+    };
+    await day(200); // amorçage + reliquat
+    const d2 = await day(503);
+    expect(d2.r.plan).toEqual({ indexNow: [], bing: [] });
+    const d3 = await day(200);
+    expect(d3.r.plan).toEqual({ indexNow: [], bing: [] });
+    expect(d3.posts).toEqual([]);
+  });
+
+  it("IndexNow injoignable : constat indexnow, l'état n'avance pas", async () => {
+    const store = memoryStore({ [CFG.stateKey]: JSON.stringify(state()) });
+    const { f } = fakeNet({ xml: XML });
+    const broken = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === "https://api.indexnow.org/indexnow") throw new TypeError("fetch failed");
+      return f(input, init);
+    }) as typeof fetch;
+    const r = await runIndexing(CFG, { store, bingApiKey: KEY, fetchImpl: broken, now: NOW });
+    expect(r.issues).toContain("indexnow");
+    expect((JSON.parse(store.data[CFG.stateKey]) as IndexingState).indexNow).toEqual({});
+  });
+
+  it("quota : le plus petit du jour et du mois", async () => {
+    const store = memoryStore({ [CFG.stateKey]: JSON.stringify(state()) });
+    const { f } = fakeNet({ xml: XML });
+    const monthly = (async (input: RequestInfo | URL, init?: RequestInit) =>
+      String(input).includes("GetUrlSubmissionQuota")
+        ? new Response(JSON.stringify({ d: { DailyQuota: 100, MonthlyQuota: 4 } }))
+        : f(input, init)) as typeof fetch;
+    const r = await runIndexing(CFG, { store, bingApiKey: KEY, fetchImpl: monthly, now: NOW, dry: true });
+    expect(r.bing.quota).toBe(4);
+    expect(r.plan.bing).toHaveLength(2);
+  });
+
+  it("ntfy en panne : le passage réussit avec alertError, l'alerte repart au passage suivant", async () => {
+    const store = memoryStore({ [CFG.stateKey]: JSON.stringify(state()) });
+    const bad = () => fakeNet({ xml: null }).f;
+    const failing = async () => {
+      throw new Error("ntfy 503");
+    };
+    await runIndexing(CFG, { store, bingApiKey: KEY, fetchImpl: bad(), now: NOW, notify: failing });
+    const r = await runIndexing(CFG, { store, bingApiKey: KEY, fetchImpl: bad(), now: NOW, notify: failing });
+    expect(r.alertError).toMatch(/ntfy/);
+    const sent: IndexingNotification[] = [];
+    const r3 = await runIndexing(CFG, {
+      store, bingApiKey: KEY, fetchImpl: bad(), now: NOW,
+      notify: async (n) => {
+        sent.push(n);
+      },
+    });
+    expect(r3.alert).toBe("open");
+    expect(sent).toHaveLength(1);
+  });
+
   it("clé Bing refusée : IndexNow continue, constat bing-key, et la clé n'apparaît nulle part", async () => {
     const store = memoryStore({ [CFG.stateKey]: JSON.stringify(state()) });
     const { f } = fakeNet({ xml: XML, bingStatus: 400, bingBody: { ErrorCode: 3, Message: `ERROR!!! InvalidApiKey ${KEY}` } });

@@ -134,17 +134,24 @@ export function planIndexing({
   return { indexNow, bing, bingBacklog: candidates.length - bing.length };
 }
 
-/** Enregistre la version des URL acceptées ; oublie celles qui ont quitté le sitemap. */
+/**
+ * Enregistre la version des URL acceptées ; oublie celles qui ont quitté le sitemap. `keepUrls` :
+ * URL à garder même absentes de `entries` — les pages hors sitemap (`extraPaths`) qu'on n'a pas pu
+ * lire ce jour-là. Sans cela, un `/llms.txt` en 503 un matin serait oublié et renvoyé le
+ * lendemain alors qu'il n'a pas changé.
+ */
 export function applyIndexing(
   state: IndexingState,
   entries: readonly SitemapEntry[],
   accepted: { indexNow: readonly string[]; bing: readonly string[] },
   now: Date,
+  keepUrls: readonly string[] = [],
 ): IndexingState {
   const versions = new Map(entries.map((e) => [e.url, versionOf(e)]));
+  const kept = new Set(keepUrls);
   const keep = (rec: Record<string, string>, done: readonly string[]) => {
     const next: Record<string, string> = {};
-    for (const [url, v] of Object.entries(rec)) if (versions.has(url)) next[url] = v;
+    for (const [url, v] of Object.entries(rec)) if (versions.has(url) || kept.has(url)) next[url] = v;
     for (const url of done) {
       const v = versions.get(url);
       if (v !== undefined) next[url] = v;
@@ -217,8 +224,8 @@ export interface IndexingDeps {
   /** Calcule et rend le plan sans rien envoyer ni écrire. */
   dry?: boolean;
   /**
-   * Envoi d'une alerte (ntfy). Un échec d'envoi remet l'état d'alerte précédent : le passage
-   * suivant la renverra.
+   * Envoi d'une alerte (ntfy). Un échec d'envoi remet l'état d'alerte précédent (le passage
+   * suivant la renverra) et n'échoue pas le passage : le rapport porte `alertError`.
    */
   notify?: (n: IndexingNotification) => Promise<void>;
 }
@@ -241,6 +248,8 @@ export interface IndexingReport {
   bing: { quota: number | null; planned: number; sent: number; backlog: number; error?: string };
   issues: IndexingIssue[];
   alert: AlertAction | "skipped";
+  /** Envoi de l'alerte raté (ntfy) : le passage a bien eu lieu, l'alerte sera retentée. */
+  alertError?: string;
   /** Les lots, pour vérification (`?dry=1`) : URL publiques, rien de secret. */
   plan: { indexNow: string[]; bing: string[] };
 }
@@ -320,7 +329,9 @@ export async function runIndexing(cfg: IndexingConfig, deps: IndexingDeps): Prom
     bingError = "clé absente";
   } else if (all.length > 0) {
     try {
-      bingQuota = (await getBingUrlQuota(deps.bingApiKey, cfg.bingSiteUrl, fetchImpl)).daily;
+      // Le plus petit des deux : en fin de mois, le reste mensuel peut passer sous le quotidien.
+      const q = await getBingUrlQuota(deps.bingApiKey, cfg.bingSiteUrl, fetchImpl);
+      bingQuota = Math.min(q.daily, q.monthly);
     } catch (e) {
       issues.push(e instanceof BingWebmasterError && e.invalidKey ? "bing-key" : "bing");
       bingError = e instanceof BingWebmasterError ? e.message : "Bing injoignable.";
@@ -360,7 +371,9 @@ export async function runIndexing(cfg: IndexingConfig, deps: IndexingDeps): Prom
         if (r.status !== 429) issues.push("indexnow");
       }
     } catch {
+      // Une panne durable doit finir par alerter, comme un refus.
       report.indexNow.reason = "IndexNow injoignable";
+      issues.push("indexnow");
     }
   }
   if (plan.bing.length > 0 && deps.bingApiKey) {
@@ -375,11 +388,19 @@ export async function runIndexing(cfg: IndexingConfig, deps: IndexingDeps): Prom
     }
   }
   if (all.length > 0) {
-    await deps.store.set(cfg.stateKey, JSON.stringify(applyIndexing(state, all, accepted, now)));
+    // Les pages hors sitemap illisibles aujourd'hui gardent leur version : rien n'a changé pour elles.
+    const extraUrls = (cfg.extraPaths ?? []).map((p) => `${site}${p}`);
+    await deps.store.set(cfg.stateKey, JSON.stringify(applyIndexing(state, all, accepted, now, extraUrls)));
   }
 
-  // 5. L'alerte.
-  report.alert = await advanceAlert(cfg, deps, issues, now);
+  // 5. L'alerte. Les envois et l'état sont déjà écrits : un échec de `notify` (ntfy en panne) ne
+  // doit pas faire croire à un passage raté. Le rapport reste un succès avec `alertError`, et
+  // l'état d'alerte est remis tel qu'avant : l'alerte repartira au passage suivant.
+  try {
+    report.alert = await advanceAlert(cfg, deps, issues, now);
+  } catch (e) {
+    report.alertError = e instanceof Error ? e.message : String(e);
+  }
   return report;
 }
 

@@ -180,7 +180,7 @@ deux validations.
 | — | Référencement — **Google Search Console dans le dashboard** (`google-auth`, `search-console`, `SearchConsoleDashboard`) | `le-douanier`, `le-dahu`, `chef-de-stand` | `v3.16.0` |
 | — | Blog / guide — **pastilles de filtre** `FilterChips` (purement visuelles ; modèle d'article, prédicat et carte restent dans chaque site) | `le-douanier`, `le-dahu`, `chef-de-stand` | `v3.17.0` |
 | — | Référencement — **Bing Webmaster dans le dashboard** (`bing-webmaster`, `BingWebmasterPanel`, prop `bingEndpoint`) | `le-douanier`, `cerbere`, `chef-de-stand`, `le-dahu` | `v3.23.0` |
-| — | Référencement — **indexation automatique quotidienne** (`indexing`, `getBingUrlQuota`, `submitBingUrls`) ; Pricing décalé en v3.25.0 | à relire : `le-douanier`, `cerbere`, `le-dahu`, `chef-de-stand` | `v3.24.0` |
+| — | Référencement — **indexation automatique quotidienne** (`indexing`, `getBingUrlQuota`, `submitBingUrls`) ; Pricing décalé en v3.25.0 | `le-douanier`, `cerbere`, `le-dahu`, `chef-de-stand` | `v3.24.0` |
 | — | Veille des dates d'événements (`lib/events-watch.ts`) | — | `v0.7.0` |
 
 Plan détaillé : `C:\Users\alexa\.claude\plans\cheerful-toasting-rivest.md`.
@@ -1596,6 +1596,17 @@ manuel). La v3.24.0 réservée par la session Pricing (moteur de prix pur, non c
 - `lib/bing-webmaster.ts` : `requestBingWebmaster` (GET ou POST, champ `d` brut),
   `getBingUrlQuota` (`GetUrlSubmissionQuota`), `submitBingUrls` (`SubmitUrlBatch`, 500 URL au plus,
   refuse une liste vide). Même règle : la clé ne sort jamais de l'URL d'appel.
+- **Limite du `lastmod`** : « modifié » ne se voit que si le sitemap le dit. Une page **sans
+  `lastmod`** n'est soumise qu'une fois, puis jamais re-signalée même si elle change ; seuls les
+  articles (date de publication) et les pages hors sitemap comme `llms.txt` (empreinte de contenu)
+  sont vraiment suivis. **Ne jamais mettre `lastModified: new Date()` dans un sitemap** : toutes les
+  pages changeraient à chaque déploiement et tout serait re-soumis. Pour une page modifiée sans
+  `lastmod`, le script manuel `npm run indexnow` reste disponible.
+- Robustesse : une page hors sitemap illisible un jour garde sa version (`applyIndexing(…, keepUrls)`),
+  sans quoi elle repartirait le lendemain sans avoir changé ; quota Bing = `min(quotidien, mensuel)` ;
+  IndexNow injoignable compte comme un refus (constat `indexnow`) ; un envoi d'alerte raté ne fait
+  pas échouer le passage (envois et état déjà écrits) : le rapport porte `alertError` et l'alerte
+  repart au passage suivant.
 - Google : rien — il relit le sitemap seul et n'a pas d'API d'indexation pour ces pages.
 - Tests : `tests/indexing.test.ts` (jamais d'inchangé, ordre, plafond, amorçage, état sur refus,
   alerte confirmée, clé jamais dans le rapport ni le magasin).
