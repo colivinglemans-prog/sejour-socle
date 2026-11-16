@@ -52,6 +52,13 @@ export interface ReadinessBooking {
   bookedAt?: string | null;
   /** `id` Nuki du code du séjour, s'il est connu. */
   authId?: string | null;
+  /**
+   * Heures du code convenues pour ce séjour (v3.26.0), comme `AccessStay.validFromHour` /
+   * `validUntilHour` : la sonde serrure compare le code à la plage **convenue**, et la sonde de
+   * présence compte les entrées dès l'ouverture convenue. Absentes ou invalides : la politique.
+   */
+  validFromHour?: number | null;
+  validUntilHour?: number | null;
   /** Absent vaut `confirmed`. Seuls les séjours confirmés sont préparés. */
   status?: "confirmed" | "provisional" | "cancelled";
 }
