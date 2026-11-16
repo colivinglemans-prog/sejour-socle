@@ -1,6 +1,6 @@
 {
   "name": "@sejour/socle",
-  "version": "3.24.0",
+  "version": "3.26.0",
   "description": "Socle partagé des sites de location saisonnière (Albiez, Coliving Barbusse).",
   "license": "UNLICENSED",
   "repository": {
@@ -8,6 +8,7 @@
     "url": "git+https://github.com/colivinglemans-prog/sejour-socle.git"
   },
   "//exports": "Pas de build : chaque sous-chemin pointe droit sur le fichier TypeScript. Sans cette carte, Turbopack refuse d'ajouter l'extension `.ts` aux imports venus de node_modules — tsc, lui, la trouvait seul, d'où une erreur qui n'apparaissait qu'au build.",
+  "//verifier": "tsc ne copie pas les .mjs : `lib/indexnow.mjs` (importé par verifier-agent depuis v3.24.0) est recopié dans `.verif/lib/` avant l'exécution, sinon `require` échoue (constaté le 2026-11-16 sur v3.24.0).",
   "//exports-tsx": "Un module de `lib/` ecrit en TSX ne peut pas passer par le motif `./lib/*` : il pointe sur `.ts`. Chaque .tsx de lib/ prend donc une entree exacte, qui l'emporte sur le motif.",
   "exports": {
     "./lib/invoice-pdf": "./lib/invoice-pdf.tsx",
@@ -22,7 +23,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "lint": "eslint",
-    "verifier": "tsc -p tsconfig.check.json && node .verif/scripts/verifier-indicateurs.js && node .verif/scripts/verifier-agent.js",
+    "verifier": "tsc -p tsconfig.check.json && node -e \"require('fs').cpSync('lib/indexnow.mjs', '.verif/lib/indexnow.mjs')\" && node .verif/scripts/verifier-indicateurs.js && node .verif/scripts/verifier-agent.js",
     "protocole": "node scripts/protocole/run.mjs",
     "verifier:codes": "tsc -p tsconfig.check-codes.json && node .verif/scripts/verifier-codes-acces.js",
     "test": "vitest run"

@@ -181,6 +181,7 @@ deux validations.
 | — | Blog / guide — **pastilles de filtre** `FilterChips` (purement visuelles ; modèle d'article, prédicat et carte restent dans chaque site) | `le-douanier`, `le-dahu`, `chef-de-stand` | `v3.17.0` |
 | — | Référencement — **Bing Webmaster dans le dashboard** (`bing-webmaster`, `BingWebmasterPanel`, prop `bingEndpoint`) | `le-douanier`, `cerbere`, `chef-de-stand`, `le-dahu` | `v3.23.0` |
 | — | Référencement — **indexation automatique quotidienne** (`indexing`, `getBingUrlQuota`, `submitBingUrls`) ; Pricing décalé en v3.25.0 | `le-douanier`, `cerbere`, `le-dahu`, `chef-de-stand` | `v3.24.0` |
+| — | Serrure — **horaires convenus par séjour** (`AccessStay.validFromHour` / `validUntilHour`, `stayAccessHours`, `agreedHour`) et **arrivée anticipée** dans la préparation d'arrivée (`ReadinessSchedule.earliestCheckIn`) ; v3.25.0 reste réservée au Pricing | `le-douanier`, `chef-de-stand`, `le-dahu` | `v3.26.0` |
 | — | Veille des dates d'événements (`lib/events-watch.ts`) | — | `v0.7.0` |
 
 Plan détaillé : `C:\Users\alexa\.claude\plans\cheerful-toasting-rivest.md`.
@@ -1610,3 +1611,51 @@ manuel). La v3.24.0 réservée par la session Pricing (moteur de prix pur, non c
 - Google : rien — il relit le sitemap seul et n'a pas d'API d'indexation pour ces pages.
 - Tests : `tests/indexing.test.ts` (jamais d'inchangé, ordre, plafond, amorçage, état sur refus,
   alerte confirmée, clé jamais dans le rapport ni le magasin).
+
+### v3.26.0 — horaires convenus par séjour : arrivée anticipée, départ tardif (2026-11-16)
+
+Barbusse accorde des départs tardifs (premier cas : séjour du 04 au 06/12/2026, départ à 16 h) ;
+le code cessait d'ouvrir à `validUntilHour` (14 h) le jour du départ, et un voyageur sorti après
+14 h ne pouvait plus rentrer. Plan : `C:\Users\alexa\.claude\plans\nested-purring-acorn.md`.
+
+> **Numérotation.** La **v3.25.0 reste réservée au chantier Pricing** (moteur de prix pur) et
+> n'est attribuée à rien d'autre. Ce lot, urgent, prend donc **v3.26.0**, parti de `v3.24.0`.
+> Tranché : le Pricing, s'il sort après ce tag, **part de v3.26.0** (sinon Barbusse perdrait les
+> horaires convenus en montant) et prend **le prochain numéro libre** (v3.27.0 ou suivant) ; on ne
+> pose jamais `v3.25.0` après `v3.26.0` — un tag inférieur qui contient plus de code tromperait
+> l'épinglage des sites. Le numéro v3.25.0 restera alors un trou assumé.
+
+- `lib/access-codes.ts` :
+  - `AccessStay.validFromHour?` / `validUntilHour?` (heure de Paris, entier 0-23, `null` accepté) :
+    **priment sur la politique pour ce séjour**. Une valeur hors 0-23, non entière ou non numérique
+    est **ignorée** (repli sur la politique), jamais levée : un passage de synchro qui plante prive
+    de code tous les autres séjours.
+  - `agreedHour(value, fallback)` et `stayAccessHours(stay, policy)` exposent ce repli ;
+    `accessWindow` les lit. Sans les champs, la plage est **identique** à v3.24.0.
+  - Rien d'autre à faire dans le planificateur : une heure qui change d'un passage à l'autre
+    produit un `update` motif `window` sur le code existant, **sans nouveau PIN** ; la suppression
+    `ended` attend l'heure de fin convenue.
+- `lib/arrival-readiness/` :
+  - `ReadinessBooking.validFromHour?` / `validUntilHour?` : la sonde serrure compare le code à la
+    plage **convenue** (sans ça, un départ tardif ferait sonner « plage à recaler », bloquant, en
+    priorité 5 au passage `final`) ; la sonde de présence compte les entrées dès l'ouverture
+    convenue.
+  - **Arrivée anticipée** : jusqu'ici une `arrivalTime` antérieure à `checkIn` était ramenée à
+    `checkIn` (seule l'arrivée tardive était traitée). Nouveau `ReadinessSchedule.earliestCheckIn?`
+    (« HH:MM ») : une arrivée annoncée avant `checkIn` mais à partir de cette heure **avance
+    d'autant les passages `noon`, `preheat`, `final`** (jamais avant minuit) ; `eve` et `noShow`
+    ne bougent pas, le rattrapage de dernière minute s'arrête à l'heure annoncée. Plus tôt que
+    `earliestCheckIn` (« 01:00 ») : saisie douteuse, horaire standard. **Absent : aucune avance**
+    (comportement v3.24.0) — un site ne le pose que si son chauffage avance aussi, sinon le
+    passage `preheat` avancé constaterait un préchauffage pas encore commencé. C'est une donnée
+    (une heure), pas un drapeau (règle 2).
+- `package.json` : `npm run verifier` recopie `lib/indexnow.mjs` dans `.verif/lib/` (tsc ne copie
+  pas les `.mjs`) ; la vérification échouait depuis v3.24.0 sur `Cannot find module`.
+- Tests : `tests/access-codes-hours.test.ts` (fenêtre standard inchangée, départ à 17 h, arrivée à
+  12 h, bornes invalides, changements d'heure, `update` motif `window` sans PIN, suppression à
+  l'heure convenue) ; `tests/arrival-readiness/schedule.test.ts` (arrivée anticipée) ;
+  `tests/arrival-readiness/nuki-probe.test.ts` (plage convenue, entrée dès l'ouverture convenue).
+- **Albiez : montée sans effet.** Il n'importe ni `access-codes` ni `arrival-readiness` (boîte à
+  clés) ; tous les champs ajoutés sont facultatifs. Il peut rester sur son tag.
+- **Barbusse** : passe les heures convenues dans `AccessStay` (`lib/access-sync.ts`) et dans
+  `ReadinessBooking` ; pose `earliestCheckIn` seulement quand le chauffage suit l'arrivée anticipée.
