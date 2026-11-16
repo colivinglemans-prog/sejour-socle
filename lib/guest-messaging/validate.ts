@@ -25,7 +25,7 @@
 import type { Channel } from "../channels";
 import { LOCALES, type Locale } from "../locales";
 import { DEFAULT_CHANNEL_RULES } from "./channel-rules";
-import { ledgerCode, normalizeForMatch } from "./ledger";
+import { LEDGER_CODE_MAX, ledgerCode, normalizeForMatch, readableCodes, testLedgerCode } from "./ledger";
 import { renderTemplate, tokenize, usedVariables } from "./render";
 import type { ChannelMessagingRule, LocalizedText, MessageTemplate } from "./types";
 
@@ -65,10 +65,19 @@ export function validateTemplates(templates: readonly MessageTemplate[], options
     if (t.conditions?.quietHours !== undefined && t.trigger.anchor === "booked") {
       push({ level: "error", field: "id", code: "quiet-booked", detail: "quietHours sur un message envoyé à la réservation : la création tombe toujours dans la fenêtre, il ne partirait jamais" });
     }
-    if (/-(pending|test)$/.test(t.id)) push({ level: "error", field: "id", code: "id-reserved", detail: "un identifiant ne finit ni par -pending ni par -test (collision dans le registre)" });
-    const code = ledgerCode(t.id, "sent");
-    if (seen.has(code)) push({ level: "error", field: "id", code: "id-duplicate", detail: `« ${t.id} » donne le même code de registre qu'un autre modèle` });
-    seen.add(code);
+    if (/-(pending|test|p|t)$/.test(t.id)) push({ level: "error", field: "id", code: "id-reserved", detail: "un identifiant ne finit ni par -p, -t, -pending ni -test (collision dans le registre)" });
+    let code: string | null = null;
+    try {
+      code = ledgerCode(t.id, "sent");
+      ledgerCode(t.id, "pending");
+      testLedgerCode(t.id);
+    } catch {
+      push({ level: "error", field: "id", code: "id-too-long", detail: `« ${t.id} » : un code de registre dépasserait ${LEDGER_CODE_MAX} caractères (Beds24 tronque)` });
+    }
+    if (code !== null) {
+      if (seen.has(code)) push({ level: "error", field: "id", code: "id-duplicate", detail: `« ${t.id} » donne le même code de registre qu'un autre modèle` });
+      seen.add(code);
+    }
 
     // Heures du déclencheur et de la politique de retard.
     const times = [t.trigger.anchor === "booked" ? null : t.trigger.at, t.late.mode === "send" ? t.late.until.at : null];
@@ -160,6 +169,34 @@ export function validateTemplates(templates: readonly MessageTemplate[], options
         }
       }
     }
+  }
+
+  // Registre : chaque code relu (écrit ou hérité, réel ou de test) ne désigne qu'un couple
+  // (modèle, état). Les deux registres sont lus dans les mêmes infoItems : une trace de test d'un
+  // modèle ne doit pas se lire comme l'envoi d'un autre.
+  // Les identifiants mal formés ou trop longs ont déjà leur erreur ci-dessus.
+  const ids = templates
+    .map((t) => t.id)
+    .filter((id) => {
+      if (!ID.test(id)) return false;
+      try {
+        ledgerCode(id, "pending");
+        testLedgerCode(id);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+  try {
+    const real = readableCodes(ids, false);
+    for (const [code, k] of readableCodes(ids, true)) {
+      const other = real.get(code);
+      if (other) {
+        findings.push({ level: "error", templateId: k.templateId, field: "id", code: "ledger-collision", detail: `le code « ${code} » désigne la copie de test de « ${k.templateId} » et l'état ${other.state} de « ${other.templateId} »` });
+      }
+    }
+  } catch (e) {
+    findings.push({ level: "error", templateId: ids[0] ?? "", field: "id", code: "ledger-collision", detail: e instanceof Error ? e.message : String(e) });
   }
 
   // Empreintes : assez longues, et qui ne reconnaissent pas un autre modèle.

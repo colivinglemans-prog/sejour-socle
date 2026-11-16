@@ -182,6 +182,7 @@ deux validations.
 | — | Référencement — **Bing Webmaster dans le dashboard** (`bing-webmaster`, `BingWebmasterPanel`, prop `bingEndpoint`) | `le-douanier`, `cerbere`, `chef-de-stand`, `le-dahu` | `v3.23.0` |
 | — | Référencement — **indexation automatique quotidienne** (`indexing`, `getBingUrlQuota`, `submitBingUrls`) ; Pricing décalé en v3.25.0 | `le-douanier`, `cerbere`, `le-dahu`, `chef-de-stand` | `v3.24.0` |
 | — | Serrure — **horaires convenus par séjour** (`AccessStay.validFromHour` / `validUntilHour`, `stayAccessHours`, `agreedHour`) et **arrivée anticipée** dans la préparation d'arrivée (`ReadinessSchedule.earliestCheckIn`) ; v3.25.0 reste réservée au Pricing | `le-douanier`, `chef-de-stand`, `le-dahu` | `v3.26.0` |
+| — | Messages — **Beds24 tronque les codes d'`infoItem` à 20 caractères** : suffixes `_P` / `_T`, lecture des anciennes formes, toute trace relue avant l'envoi | `le-douanier`, `chef-de-stand`, `le-dahu` | `v3.26.1` |
 | — | Veille des dates d'événements (`lib/events-watch.ts`) | — | `v0.7.0` |
 
 Plan détaillé : `C:\Users\alexa\.claude\plans\cheerful-toasting-rivest.md`.
@@ -1370,7 +1371,7 @@ dépôt de chaque site, et le socle décide quand et par où chacun part. Deux c
   variable, chiffres/e-mails écrits en dur, rendu à blanc, liens vers un canal qui les filtre,
   longueur, empreintes trop courtes ou qui reconnaissent un autre modèle. Chaque site l'appelle
   dans un test qui bloque le build.
-- `ledger.ts` — registre dans les `infoItems` : `MSG_<ID>_PENDING` avant l'envoi, `MSG_<ID>`
+- `ledger.ts` — registre dans les `infoItems` : `MSG_<ID>_P` avant l'envoi (`_PENDING` jusqu'à v3.26.0, voir v3.26.1), `MSG_<ID>`
   après ; texte = métadonnées seules (`at`, `v`, `anchor`). `ledgerFromThread` reconnaît les
   messages de l'hôte par leurs empreintes (auto-actions Beds24 encore actives, envois manuels).
 - `dispatch.ts` — `sendPlanned` (cron, plafond par passage : au-delà **rien** ne part) et
@@ -1426,7 +1427,7 @@ dépôt de chaque site, et le socle décide quand et par où chacun part. Deux c
 **Mode `test`** (demandé par l'hôte le 2026-11-08, avant de remplacer les auto-actions) : quatre
 modes par modèle, `off` / `shadow` / `test` / `live`. En `test`, au moment où le message
 partirait, il part **à l'hôte** par e-mail (`deps.test.to`), précédé d'un bandeau « COPIE DE
-TEST », et la copie est notée dans `MSG_<ID>_TEST` (registre de test, `testLedgerFromInfoItems`),
+TEST », et la copie est notée dans `MSG_<ID>_T` (`_TEST` jusqu'à v3.26.0 ; registre de test, `testLedgerFromInfoItems`),
 jamais lu comme un envoi au voyageur. Le cron calcule son plan avec `planByMode` ; un modèle en
 `test` n'est dû que dans les 2 h qui suivent son échéance (`testFreshHours`) — sans quoi
 l'activation rattraperait tout ce que Beds24 a déjà envoyé. Plafond à part, sans arrêt du
@@ -1620,7 +1621,7 @@ le code cessait d'ouvrir à `validUntilHour` (14 h) le jour du départ, et un vo
 
 > **Numérotation.** La **v3.25.0 reste réservée au chantier Pricing** (moteur de prix pur) et
 > n'est attribuée à rien d'autre. Ce lot, urgent, prend donc **v3.26.0**, parti de `v3.24.0`.
-> Tranché : le Pricing, s'il sort après ce tag, **part de v3.26.0** (sinon Barbusse perdrait les
+> Tranché : le Pricing, s'il sort après ce tag, **part de v3.26.1** (sinon Barbusse perdrait les
 > horaires convenus en montant) et prend **le prochain numéro libre** (v3.27.0 ou suivant) ; on ne
 > pose jamais `v3.25.0` après `v3.26.0` — un tag inférieur qui contient plus de code tromperait
 > l'épinglage des sites. Le numéro v3.25.0 restera alors un trou assumé.
@@ -1659,3 +1660,36 @@ le code cessait d'ouvrir à `validUntilHour` (14 h) le jour du départ, et un vo
   clés) ; tous les champs ajoutés sont facultatifs. Il peut rester sur son tag.
 - **Barbusse** : passe les heures convenues dans `AccessStay` (`lib/access-sync.ts`) et dans
   `ReadinessBooking` ; pose `earliestCheckIn` seulement quand le chauffage suit l'arrivée anticipée.
+
+### v3.26.1 — registre des messages : Beds24 tronque les codes à 20 caractères (2026-11-16)
+
+Constaté en production chez Barbusse le 2026-11-16 : sur une réservation de dernière minute, les
+copies de test `confirmation` et `arrivee-code` sont parties **16 fois chacune**, toutes les
+10 minutes et à chaque rappel du webhook. **Beds24 tronque sans erreur le code d'un `infoItem` à
+20 caractères** : `MSG_CONFIRMATION_TEST` (21) était relu `MSG_CONFIRMATION_TES`, jamais reconnu,
+et la copie restait due jusqu'à la fin de `testFreshHours`. Le texte (64 caractères, aléa `n=`
+compris) n'est pas tronqué, vérifié sur les mêmes traces. Touchés : les `_TEST` et `_PENDING` de
+tout identifiant de plus de 10 / 7 caractères — chez Albiez comme chez Barbusse. En `live`, les
+`_PENDING` illisibles auraient rendu le départage aveugle (aucun modèle n'y était encore).
+
+- `ledger.ts` :
+  - suffixes écrits `_P` (en cours) et `_T` (copie de test) ; le code « envoyé » `MSG_<ID>` ne
+    change pas ;
+  - `ledgerCode` / `testLedgerCode` **lèvent** au-delà de `LEDGER_CODE_MAX` (20) : un échec franc à
+    l'exécution, qui ne dépend pas de la CI (un push sur `main` déploie sans l'attendre) ;
+  - la lecture reconnaît aussi les formes écrites jusqu'à v3.26.0, `_PENDING` / `_TEST` complets
+    et tronqués à 20 caractères ; une table de codes ambiguë lève au lieu d'écraser en silence
+    (`readableCodes`, `@internal`).
+- `dispatch.ts` — **toute trace doit se relire avant l'envoi** :
+  - envoi réel : après `reserve`, la relecture doit contenir **notre** trace (`nonce`), sinon
+    `failed` / `ledger-unreadable`, rien ne part ;
+  - copie de test : la trace est désormais posée **avant** l'e-mail puis relue ; illisible ⇒
+    `blocked` / `ledger-unreadable`, écriture ratée ⇒ `failed` / `record`. Au pire une copie
+    manquée, jamais une boucle. (Avant : copie puis trace, et `tested` même si la trace échouait.)
+- `validate.ts` : identifiants en `-p` / `-t` réservés (comme `-pending` / `-test`), `id-too-long`
+  si un code dépasserait 20 caractères, `ledger-collision` si un code relu (écrit ou hérité, réel ou
+  de test) désignerait deux couples (modèle, état).
+- **Ne jamais redescendre sous v3.26.1** une fois monté : un socle antérieur ne relit pas `_P` /
+  `_T`, la boucle des copies de test reviendrait et le départage redeviendrait aveugle.
+- Correctif : aucune signature publique ne change. Les deux sites montent sans modification de code
+  (ils n'écrivent aucun code `MSG_` en dur) ; leur `validateTemplates` couvre leurs identifiants.

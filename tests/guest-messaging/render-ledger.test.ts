@@ -1,10 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { RenderError, renderTemplate, sanitizeVar } from "../../lib/guest-messaging/render";
 import { ledgerCode, ledgerFromInfoItems, ledgerFromThread, ledgerText } from "../../lib/guest-messaging/ledger";
 import { messagingChannel, realGuestEmail } from "../../lib/guest-messaging/channel-rules";
 import { pickGuestLocale } from "../../lib/guest-messaging/language";
 import { buildPreview } from "../../lib/guest-messaging/overview";
-import { access, departure } from "./fixtures";
+import { access, booking, departure } from "./fixtures";
 
 describe("rendu", () => {
   it("prénom présent ou absent, jamais « Bonjour , »", () => {
@@ -29,10 +29,10 @@ describe("rendu", () => {
 
 describe("registre dans les infoItems", () => {
   it("aller-retour", () => {
-    expect(ledgerCode("arrivee-code", "pending")).toBe("MSG_ARRIVEE_CODE_PENDING");
+    expect(ledgerCode("arrivee-code", "pending")).toBe("MSG_ARRIVEE_CODE_P");
     const items = [
       { code: "MSG_ARRIVEE", text: ledgerText({ at: "2026-12-05T15:00:00.000Z", version: 3, anchorDay: "2026-12-10" }) },
-      { code: "MSG_DEPART_PENDING", text: "", createTime: "2026-12-12T16:00:00Z" },
+      { code: "MSG_DEPART_P", text: "", createTime: "2026-12-12T16:00:00Z" },
       { code: "NUKI_PIN", text: "000000" },
       { code: "MSG_INCONNU", text: "at=2026-01-01T00:00:00Z" },
     ];
@@ -40,6 +40,33 @@ describe("registre dans les infoItems", () => {
       { templateId: "arrivee", state: "sent", at: "2026-12-05T15:00:00.000Z", anchorDay: "2026-12-10", version: 3, source: "ledger" },
       { templateId: "depart", state: "pending", at: "2026-12-12T16:00:00.000Z", anchorDay: undefined, version: undefined, source: "ledger" },
     ]);
+  });
+  it("traces « en cours » écrites avant v3.26.1 : complètes ou tronquées à 20 caractères par Beds24", () => {
+    const items = [
+      { code: "MSG_DEPART_PENDING", text: "at=2026-12-12T16:00:00.000Z" },
+      // `MSG_ARRIVEE_CODE_PENDING` (24) relu tel que Beds24 l'a gardé.
+      { code: "MSG_ARRIVEE_CODE_PEN", text: "at=2026-12-05T15:00:00.000Z" },
+    ];
+    expect(ledgerFromInfoItems(items, ["arrivee-code", "depart"]).map((e) => `${e.templateId}:${e.state}`)).toEqual([
+      "depart:pending",
+      "arrivee-code:pending",
+    ]);
+  });
+  it("un envoi réel dont la trace « en cours » ne se relit pas est arrêté avant l'envoi", async () => {
+    const { sendNow } = await import("../../lib/guest-messaging/dispatch");
+    const platform = vi.fn(async () => {});
+    const b = booking();
+    const r = await sendNow(1001, access, {
+      reload: async () => b, // la trace posée n'apparaît jamais
+      variables: async () => ({ code: "0000", guide: "https://exemple.fr/g", prenom: "Test" }),
+      reserve: async () => {},
+      confirm: async () => {},
+      platform,
+      email: null,
+      log: () => {},
+    }, { now: new Date("2026-12-05T15:30:00Z"), modes: { arrivee: "live" } });
+    expect(r).toMatchObject({ outcome: "failed", reason: "ledger-unreadable" });
+    expect(platform).not.toHaveBeenCalled();
   });
   it("le fil : messages de l'hôte seulement, sans accents ni casse", () => {
     const thread = [

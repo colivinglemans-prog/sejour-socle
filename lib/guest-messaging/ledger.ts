@@ -4,8 +4,17 @@
  *
  * Pourquoi Beds24 et pas une base : c'est le seul stockage commun aux deux sites (Albiez n'en a
  * aucun, par choix), il est visible de l'hôte dans l'écran de la réservation, et il suit la
- * réservation si elle change de dates. Un envoi coûte deux écritures : `MSG_<ID>_PENDING` avant,
+ * réservation si elle change de dates. Un envoi coûte deux écritures : `MSG_<ID>_P` avant,
  * `MSG_<ID>` après. Rien n'est jamais effacé : `sent` l'emporte sur `pending`.
+ *
+ * ⚠️ **Beds24 tronque le code d'un `infoItem` à 20 caractères** (constaté le 2026-11-16 : un
+ * `MSG_CONFIRMATION_TEST` relu `MSG_CONFIRMATION_TES`). Jusqu'à v3.26.0, les suffixes `_PENDING`
+ * et `_TEST` dépassaient pour les identifiants longs : la trace écrite n'était jamais relue, et la
+ * copie de test repartait à chaque passage. Depuis v3.26.1 :
+ * - les suffixes écrits sont `_P` et `_T`, et `ledgerCode` **lève** si un code dépasse 20
+ *   caractères (`LEDGER_CODE_MAX`) — un échec franc plutôt qu'une troncature silencieuse ;
+ * - la lecture reconnaît aussi les formes écrites avant, complètes et tronquées à 20 caractères.
+ * Un socle antérieur ne relit pas `_P` / `_T` : redescendre sous v3.26.1 rouvre la boucle.
  *
  * Pourquoi aussi le fil : pendant la cohabitation avec les auto-actions Beds24, et pour reprendre
  * l'historique, un message parti par Beds24 ou à la main doit compter comme envoyé. Le fil ne
@@ -17,26 +26,78 @@
 import type { LedgerEntry, MessageTemplate } from "./types";
 
 const PREFIX = "MSG_";
-const PENDING = "_PENDING";
-const TEST = "_TEST";
+const PENDING = "_P";
+const TEST = "_T";
+/** Suffixes écrits jusqu'à v3.26.0 : seulement relus. */
+const LEGACY_PENDING = "_PENDING";
+const LEGACY_TEST = "_TEST";
 
-/**
- * Code d'`infoItem` d'un modèle : `arrivee-code` → `MSG_ARRIVEE_CODE`. Un identifiant qui finit
- * par `-pending` est refusé par la validation : son code « envoyé » serait le code « en cours »
- * d'un autre.
- */
-export function ledgerCode(templateId: string, state: LedgerEntry["state"]): string {
-  const base = PREFIX + templateId.toUpperCase().replace(/[^A-Z0-9]/g, "_");
-  return state === "pending" ? base + PENDING : base;
+/** Longueur maximale d'un code d'`infoItem` chez Beds24 (au-delà, il est tronqué sans erreur). */
+export const LEDGER_CODE_MAX = 20;
+
+function base(templateId: string): string {
+  return PREFIX + templateId.toUpperCase().replace(/[^A-Z0-9]/g, "_");
+}
+
+function checked(code: string, templateId: string): string {
+  if (code.length > LEDGER_CODE_MAX) {
+    throw new Error(`Identifiant de modèle « ${templateId} » trop long : code de registre ${code.length} caractères, ${LEDGER_CODE_MAX} au plus (Beds24 tronque)`);
+  }
+  return code;
 }
 
 /**
- * Code d'`infoItem` d'une copie de test envoyée à l'hôte : `MSG_ARRIVEE_CODE_TEST`. Jamais lu
+ * Code d'`infoItem` d'un modèle : `arrivee-code` → `MSG_ARRIVEE_CODE`, `MSG_ARRIVEE_CODE_P` en
+ * cours. Lève au-delà de 20 caractères. Un identifiant qui finit par `-p` (ou `-pending`) est
+ * refusé par la validation : son code « envoyé » serait le code « en cours » d'un autre.
+ */
+export function ledgerCode(templateId: string, state: LedgerEntry["state"]): string {
+  return checked(state === "pending" ? base(templateId) + PENDING : base(templateId), templateId);
+}
+
+/**
+ * Code d'`infoItem` d'une copie de test envoyée à l'hôte : `MSG_ARRIVEE_CODE_T`. Jamais lu
  * comme un envoi au voyageur (`ledgerFromInfoItems` l'ignore). Un identifiant qui finit par
- * `-test` est refusé par la validation, pour la même raison que `-pending`.
+ * `-t` (ou `-test`) est refusé par la validation, pour la même raison que `-p`.
  */
 export function testLedgerCode(templateId: string): string {
-  return ledgerCode(templateId, "sent") + TEST;
+  return checked(base(templateId) + TEST, templateId);
+}
+
+/** Les formes d'un code écrites jusqu'à v3.26.0 : complète, et telle que Beds24 l'a tronquée. */
+function legacyForms(code: string): string[] {
+  return code.length > LEDGER_CODE_MAX ? [code, code.slice(0, LEDGER_CODE_MAX)] : [code];
+}
+
+type Known = { templateId: string; state: LedgerEntry["state"] };
+
+/**
+ * Tous les codes relus pour ces modèles, écrits ou hérités, avec ce qu'ils désignent.
+ * `test` : registre de test. Lève si un même code désignerait deux choses différentes.
+ * @internal — utilisé par `validate.ts` et les lectures ci-dessous.
+ */
+export function readableCodes(templateIds: readonly string[], test: boolean): Map<string, Known> {
+  const map = new Map<string, Known>();
+  const add = (code: string, k: Known) => {
+    const prev = map.get(code);
+    if (prev && (prev.templateId !== k.templateId || prev.state !== k.state)) {
+      throw new Error(`Code de registre ambigu « ${code} » : ${prev.templateId}/${prev.state} et ${k.templateId}/${k.state}`);
+    }
+    map.set(code, k);
+  };
+  for (const id of templateIds) {
+    if (test) {
+      const k = { templateId: id, state: "sent" as const };
+      add(testLedgerCode(id), k);
+      for (const c of legacyForms(base(id) + LEGACY_TEST)) add(c, k);
+    } else {
+      add(ledgerCode(id, "sent"), { templateId: id, state: "sent" });
+      const p = { templateId: id, state: "pending" as const };
+      add(ledgerCode(id, "pending"), p);
+      for (const c of legacyForms(base(id) + LEGACY_PENDING)) add(c, p);
+    }
+  }
+  return map;
 }
 
 /** Texte d'un `infoItem` du registre. */
@@ -56,20 +117,15 @@ export function ledgerFromInfoItems(
   items: readonly { code: string; text?: string; createTime?: string }[] | undefined,
   templateIds: readonly string[],
 ): LedgerEntry[] {
-  const byCode = new Map<string, { templateId: string; state: LedgerEntry["state"] }>();
-  for (const id of templateIds) {
-    byCode.set(ledgerCode(id, "sent"), { templateId: id, state: "sent" });
-    byCode.set(ledgerCode(id, "pending"), { templateId: id, state: "pending" });
-  }
-  return parseItems(items, byCode);
+  return parseItems(items, readableCodes(templateIds, false));
 }
 
-/** Relit le registre de test (`MSG_<ID>_TEST`) : les copies déjà envoyées à l'hôte. */
+/** Relit le registre de test (`MSG_<ID>_T`, et les anciens `_TEST`) : les copies déjà envoyées à l'hôte. */
 export function testLedgerFromInfoItems(
   items: readonly { code: string; text?: string; createTime?: string }[] | undefined,
   templateIds: readonly string[],
 ): LedgerEntry[] {
-  return parseItems(items, new Map(templateIds.map((id) => [testLedgerCode(id), { templateId: id, state: "sent" as const }])));
+  return parseItems(items, readableCodes(templateIds, true));
 }
 
 function parseItems(

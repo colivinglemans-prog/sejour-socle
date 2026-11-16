@@ -156,7 +156,7 @@ export interface MessagingBooking {
   /** Registre : ce que le moteur a déjà posé, plus ce qu'on a reconnu dans le fil. */
   ledger: readonly LedgerEntry[];
   /**
-   * Registre du mode `test` (`MSG_<ID>_TEST`) : les copies envoyées à l'hôte. Tenu à part, il
+   * Registre du mode `test` (`MSG_<ID>_T`, anciennement `_TEST`) : les copies envoyées à l'hôte. Tenu à part, il
    * ne compte jamais comme un envoi au voyageur.
    */
   testLedger?: readonly LedgerEntry[];
