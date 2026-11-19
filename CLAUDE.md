@@ -1708,7 +1708,7 @@ au Pricing.
 - `lib/price-grid.ts` :
   - `buildPriceGrid(cfg, deps, { sources, parties, enabled, priceLang, mergeEqualColumns,
     maxFailureRatio, now })` → `PriceGrid { columns, rows, generatedAt, pricesShown }`.
-    **Une seule lecture de disponibilité** ; règles rejouées en mémoire (`checkStayRules`,
+    **Une lecture de disponibilité par période** (`readSpans` : fenêtres à plus d’un mois d’écart lues séparément, l’une après l’autre — pas les mois creux entre l’hiver et l’été) ; règles rejouées en mémoire (`checkStayRules`,
     `shortestStay`) ; **une ligne prise ne coûte aucun appel de prix** ; prix **séquentiels**,
     langue fixe (`priceLang`, `fr` : une entrée de cache par séjour, et le `warn` « réservation
     minimum 3 Nuits » reconnu) ; dépendances utilisées **sans `onAnomaly`** (la grille se régénère

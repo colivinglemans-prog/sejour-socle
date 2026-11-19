@@ -10,8 +10,8 @@
  *
  * Trois règles tiennent la facture Beds24 :
  *
- * - **une seule lecture de disponibilité** pour toute la grille, comme `findStays` ; les règles
- *   du calendrier sont rejouées en mémoire sur chaque séjour ;
+ * - **une lecture de disponibilité par période** (une seule pour des week-ends suivis), comme
+ *   `findStays` ; les règles du calendrier sont rejouées en mémoire sur chaque séjour ;
  * - **un séjour pris ne coûte aucun appel de prix** ;
  * - **les prix sont demandés un par un**, jamais en rafale, et dans une **langue fixe**
  *   (`priceLang`) : une seule entrée de cache par séjour, quelle que soit la langue de la page.
@@ -270,6 +270,25 @@ export function resolveWindow(ctx: SelectionContext, w: StayWindow): StayWindow 
   return best;
 }
 
+/**
+ * Les plages de disponibilité à lire : les fenêtres regroupées tant qu'un mois au plus les
+ * sépare ; dès la veille (décalage des `minStay` Beds24) et une semaine au-delà (séjour allongé
+ * jusqu'au départ ouvert).
+ */
+export function readSpans(windows: StayWindow[], today: string): [string, string][] {
+  const sorted = [...windows].sort((a, b) => a.checkIn.localeCompare(b.checkIn));
+  const spans: [string, string][] = [];
+  for (const w of sorted) {
+    const from = addDays(w.checkIn < today ? today : w.checkIn, -1);
+    const to = addDays(w.checkOut, 7);
+    const lastSpan = spans[spans.length - 1];
+    if (lastSpan && daysBetween(lastSpan[1], from) <= 31) {
+      if (to > lastSpan[1]) lastSpan[1] = to;
+    } else spans.push([from, to]);
+  }
+  return spans;
+}
+
 // ── Construction ──────────────────────────────────────────────────────────────────────
 
 const FAILURE = "on-request" as const;
@@ -306,11 +325,17 @@ export async function buildPriceGrid(
   if (!sketch.length) {
     return { columns: parties.map((p) => ({ parties: [p] })), rows: [], generatedAt: now.toISOString(), pricesShown: enabled };
   }
-  const first = sketch.reduce((m, w) => (w.checkIn < m ? w.checkIn : m), sketch[0].checkIn);
-  const last = sketch.reduce((m, w) => (w.checkOut > m ? w.checkOut : m), sketch[0].checkOut);
-  const readFrom = addDays(first < deps.today ? deps.today : first, -1);
-  // Marge après la dernière fenêtre : un séjour allongé jusqu'au départ ouvert peut la dépasser.
-  const avail: AvailabilityResponse = await deps.availability(readFrom, addDays(last, 7));
+  // Une lecture par **période** (fenêtres séparées de plus d'un mois : l'hiver et l'été d'Albiez),
+  // l'une après l'autre : lire d'un bloc les mois creux entre deux saisons coûterait des appels
+  // Beds24 pour rien, et le quota de l'API v2 est partagé par tout le compte.
+  const avail: AvailabilityResponse = { dates: {}, minStay: {}, sansArrivee: [], sansDepart: [] };
+  for (const [from, to] of readSpans(sketch, deps.today)) {
+    const part = await deps.availability(from, to);
+    Object.assign(avail.dates, part.dates);
+    Object.assign(avail.minStay!, part.minStay ?? {});
+    avail.sansArrivee!.push(...(part.sansArrivee ?? []));
+    avail.sansDepart!.push(...(part.sansDepart ?? []));
+  }
   const ctx = selectionContext(avail, deps.today, cfg.defaultMinStay);
 
   // Les séjours vendables, dédoublonnés (un événement et un week-end aux mêmes dates : l'intitulé

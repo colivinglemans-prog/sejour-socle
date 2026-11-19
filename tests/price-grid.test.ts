@@ -119,6 +119,20 @@ describe("buildPriceGrid", () => {
     expect(grid.rows.every((r) => r.nights === 7)).toBe(true);
   });
 
+  it("lit l'hiver et l'été séparément, sans les mois creux entre les deux", async () => {
+    const { d, reads } = deps({});
+    await buildPriceGrid(CFG, d, {
+      sources: [
+        chainedStays({ from: "2027-01-16", to: "2027-03-06" }, { minNights: 7 }),
+        chainedStays({ from: "2027-07-01", to: "2027-08-25" }, { minNights: 7 }),
+      ],
+      parties: [{ adults: 4, children: 0 }],
+    });
+    expect(reads).toHaveLength(2);
+    expect(reads[0][1] < "2027-04-01").toBe(true);
+    expect(reads[1][0] > "2027-06-25").toBe(true);
+  });
+
   it("n'envoie jamais d'alerte, même quand Beds24 rend une forme inattendue", async () => {
     const bad = {
       fn: async (): Promise<RoomPrice> => {
