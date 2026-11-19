@@ -1707,15 +1707,19 @@ statique »). Ils ne lisent que du HTML sans JavaScript : ni le calendrier, ni `
 
 **Architecture (côté sites, relecture de cerbere)** : le calcul ne passe **jamais** par une page
 visitée. Une route de cron par site (`/api/cron/price-grid`, cron-job.org toutes les heures)
-appelle `buildPriceGrid` et range `{ grid, generatedAt, composition }` dans Upstash. La page
+appelle `buildPriceGrid` (`maxDuration = 60`, `timeBudgetMs` d'environ 45 s) et range `{ grid, generatedAt, composition }` dans Upstash. La page
 `/xx/tarifs` ne fait que lire Upstash. Si le calcul échoue, la grille précédente reste en place.
 
 - `lib/price-grid.ts` :
   - **Signature** : `buildPriceGrid(cfg, deps, { sources, parties, enabled?, priceLang?,
-    maxFailureRatio?, pauseMs?, sleep?, now? })` renvoie
+    maxFailureRatio?, pauseMs?, sleep?, timeBudgetMs?, clock?, now? })` renvoie
     `PriceGrid { columns, rows, generatedAt, pricesShown }`.
     - Les colonnes au même prix sont **toujours** réunies (`mergeColumns`).
-    - `sleep` et `now` sont injectés pour les tests.
+    - `sleep`, `clock` et `now` sont injectés pour les tests.
+    - `timeBudgetMs` : temps accordé (le cron a 60 s sur le plan Hobby de Vercel). Une fois
+      dépassé, `IncompleteGridError` est levée : rien d'anormal, les prix déjà demandés restent
+      dans le cache de données et le passage suivant va plus loin. Le job rend `incomplete`,
+      garde la grille précédente, sans marque d'échec ni alerte.
   - **Disponibilité** :
     - une lecture **par période** (`readSpans` : fenêtres à plus d'un mois d'écart lues
       séparément, l'une après l'autre, sans les mois creux entre l'hiver et l'été) ;

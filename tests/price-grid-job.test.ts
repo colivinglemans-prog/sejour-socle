@@ -1,6 +1,6 @@
 /** `lib/price-grid-job.ts` : le cron qui range la grille, et la lecture par la page. */
 import { describe, expect, it } from "vitest";
-import { DegradedGridError, type PriceGrid } from "../lib/price-grid";
+import { DegradedGridError, IncompleteGridError, type PriceGrid } from "../lib/price-grid";
 import { readPriceGrid, runPriceGridJob, type PriceGridNotification } from "../lib/price-grid-job";
 
 function memory() {
@@ -65,6 +65,24 @@ describe("runPriceGridJob", () => {
 
     expect((await runPriceGridJob(CFG, { store: m.store, build: async () => GRID(at(120).toISOString()), now: at(120), notify })).outcome).toBe("stored");
     expect(sent.map((n) => n.priority)).toEqual([4, 1]);
+  });
+});
+
+describe("runPriceGridJob : temps épuisé", () => {
+  it("garde la grille précédente, sans marque d'échec ni alerte", async () => {
+    const m = memory();
+    await runPriceGridJob(CFG, { store: m.store, build: async () => GRID(T0.toISOString()), now: T0 });
+    const before = m.data.get(CFG.key);
+    const r = await runPriceGridJob(CFG, {
+      store: m.store,
+      build: async () => {
+        throw new IncompleteGridError(20, 60);
+      },
+      now: at(60),
+    });
+    expect(r.outcome).toBe("incomplete");
+    expect(m.data.get(CFG.key)).toBe(before);
+    expect(JSON.parse(m.data.get(`${CFG.key}:job`)!).lastFailureAt).toBeUndefined();
   });
 });
 

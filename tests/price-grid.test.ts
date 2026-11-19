@@ -11,6 +11,7 @@ import {
   chainedStays,
   DegradedGridError,
   eventStays,
+  IncompleteGridError,
   fixedStays,
   jsonLdText,
   lowestTotal,
@@ -176,6 +177,22 @@ describe("buildPriceGrid", () => {
     });
     const ids = grid.rows.map((r) => `${r.checkIn}>${r.checkOut}${r.label ? " " + r.label : ""}`);
     expect(ids).toEqual(["2026-12-18>2026-12-20", "2026-12-23>2026-12-27 Noël 2026"]);
+  });
+
+  it("temps épuisé : IncompleteGridError, après les prix déjà demandés", async () => {
+    const p = priceOf();
+    const { d } = deps({}, p);
+    let tick = 0;
+    await expect(
+      buildPriceGrid(CFG, d, {
+        sources: [weekendStays({ from: "2027-01-01", to: "2027-01-31" })],
+        parties: [{ adults: 10, children: 0 }],
+        timeBudgetMs: 25,
+        clock: () => (tick += 10), // chaque lecture d'horloge avance de 10 ms
+      }),
+    ).rejects.toBeInstanceOf(IncompleteGridError);
+    expect(p.calls.length).toBeGreaterThan(0);
+    expect(p.calls.length).toBeLessThan(5);
   });
 
   it("interrupteur coupé : aucun appel de prix, la disponibilité reste affichée", async () => {

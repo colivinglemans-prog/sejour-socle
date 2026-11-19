@@ -131,8 +131,28 @@ export interface BuildPriceGridOptions {
   pauseMs?: number;
   /** Attente injectée (tests). */
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * Temps de calcul accordé, en millisecondes (le cron dispose de 60 s sur le plan Hobby de Vercel).
+   * Dépassé, le calcul lève `IncompleteGridError` : les prix déjà demandés restent dans le cache de
+   * données, le passage suivant ira plus loin. Sans limite par défaut.
+   */
+  timeBudgetMs?: number;
+  /** Horloge injectée (tests). */
+  clock?: () => number;
   /** Instant du calcul, injecté pour les tests. */
   now?: Date;
+}
+
+/**
+ * Levée quand le temps accordé est épuisé avant la fin : rien d'anormal (premier calcul, cache vide),
+ * le site garde la grille précédente sans alerter, et le passage suivant reprend avec les prix déjà
+ * mis en cache.
+ */
+export class IncompleteGridError extends Error {
+  constructor(done: number, total: number) {
+    super(`Grille de prix incomplète : ${done} prix sur ${total} dans le temps accordé.`);
+    this.name = "IncompleteGridError";
+  }
 }
 
 /** Levée quand trop de prix sont en panne : la grille précédente doit rester en place. */
@@ -334,6 +354,8 @@ export async function buildPriceGrid(
     maxFailureRatio = 0.2,
     pauseMs = 0,
     sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+    timeBudgetMs,
+    clock = Date.now,
     now = new Date(),
   }: BuildPriceGridOptions,
 ): Promise<PriceGrid> {
@@ -395,7 +417,9 @@ export async function buildPriceGrid(
   const planned = enabled ? rows.filter((r) => !r.cells.length).length * parties.length : 0;
   const maxFailed = Math.floor(maxFailureRatio * planned);
   let failed = 0;
+  let done = 0;
   let lastCallMs = 0;
+  const deadline = timeBudgetMs ? clock() + timeBudgetMs : Infinity;
   for (const row of rows) {
     if (row.cells.length) continue; // ligne « complet », déjà remplie
     for (const party of parties) {
@@ -417,9 +441,11 @@ export async function buildPriceGrid(
       }
       // La pause ne vaut que derrière un vrai appel réseau (voir `CACHE_HIT_MS`).
       if (pauseMs && lastCallMs > CACHE_HIT_MS) await sleep(pauseMs);
-      const started = Date.now();
+      if (clock() > deadline) throw new IncompleteGridError(done, planned);
+      const started = clock();
       const q = await priceStay(cfg, quiet, req);
-      lastCallMs = Date.now() - started;
+      lastCallMs = clock() - started;
+      done++;
       if (q.ok) {
         row.cells.push({ status: "available", total: q.stayTotal, lines: q.stayLines, perPersonPerNight: q.perPersonPerNight });
       } else if (q.reason === "service-unavailable") {

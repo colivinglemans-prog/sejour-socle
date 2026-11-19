@@ -18,7 +18,7 @@
  */
 import { nextAlertState, type AlertAction, type AlertState } from "./alert-state";
 import type { HeartbeatStore } from "./heartbeat";
-import { DegradedGridError, type PriceGrid } from "./price-grid";
+import { DegradedGridError, IncompleteGridError, type PriceGrid } from "./price-grid";
 
 export interface StoredPriceGrid {
   grid: PriceGrid;
@@ -39,7 +39,7 @@ export interface PriceGridJobConfig {
 export interface PriceGridNotification {
   title: string;
   body: string;
-  priority: number;
+  priority: 1 | 2 | 3 | 4 | 5;
 }
 
 export interface PriceGridJobDeps {
@@ -53,7 +53,8 @@ export interface PriceGridJobDeps {
 }
 
 export interface PriceGridJobReport {
-  outcome: "stored" | "dry" | "failed" | "skipped";
+  /** `incomplete` : temps épuisé, rien d'anormal — grille précédente gardée, sans marque d'échec ni alerte. */
+  outcome: "stored" | "dry" | "failed" | "skipped" | "incomplete";
   /** Présent pour `stored` et `dry`. */
   grid?: PriceGrid;
   /** Raison d'un échec ou d'une suspension, sans détail technique sensible. */
@@ -91,6 +92,7 @@ export async function runPriceGridJob(cfg: PriceGridJobConfig, deps: PriceGridJo
   try {
     grid = await deps.build();
   } catch (e) {
+    if (e instanceof IncompleteGridError) return { outcome: "incomplete", reason: e.message };
     const reason = e instanceof DegradedGridError ? e.message : "Calcul de la grille impossible (Beds24 indisponible ?).";
     if (deps.dry) return { outcome: "failed", reason };
     await deps.store.set(jobKey, JSON.stringify({ ...job, lastFailureAt: now.toISOString() }));
