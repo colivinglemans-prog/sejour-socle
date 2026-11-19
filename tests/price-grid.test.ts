@@ -200,6 +200,47 @@ describe("buildPriceGrid", () => {
     });
     expect(grid.rows[0]).toMatchObject({ checkIn: "2027-01-11", checkOut: "2027-01-16", nights: 5 });
   });
+
+  it("préfère une semaine exacte à un séjour allongé quand la première arrivée l'impose", async () => {
+    // Départs ouverts le samedi seulement ; le 2027-01-07 (jeudi) imposerait 9 nuits.
+    const noOut: string[] = [];
+    for (let d = "2027-01-01"; d <= "2027-03-01"; d = addDays(d, 1)) {
+      if (new Date(`${d}T12:00:00`).getDay() !== 6) noOut.push(d);
+    }
+    const { d } = deps({ noOut });
+    const grid = await buildPriceGrid(CFG, d, {
+      sources: [chainedStays({ from: "2027-01-07", to: "2027-01-20" }, { minNights: 7 })],
+      parties: [{ adults: 4, children: 0 }],
+    });
+    expect(grid.rows.map((r) => `${r.checkIn}>${r.checkOut}`)).toEqual(["2027-01-09>2027-01-16", "2027-01-16>2027-01-23"]);
+  });
+
+  it("espace les demandes de prix et réessaie une fois une panne isolée", async () => {
+    const pauses: number[] = [];
+    let n = 0;
+    const flaky = {
+      calls: [] as RoomPriceRequest[],
+      fn: async (req: RoomPriceRequest): Promise<RoomPrice> => {
+        n++;
+        await new Promise((r) => setTimeout(r, 60)); // un vrai appel réseau, pas le cache
+        if (n === 2) throw new Error("403");
+        const nightly: Record<string, number> = {};
+        for (let x = req.checkIn; x < req.checkOut; x = addDays(x, 1)) nightly[x] = 100;
+        return { total: 300, nightly, warn: "" };
+      },
+    };
+    const { d } = deps({}, flaky as unknown as ReturnType<typeof priceOf>);
+    const grid = await buildPriceGrid(CFG, d, {
+      sources: [weekendStays({ from: "2027-01-01", to: "2027-01-10" })],
+      parties: [{ adults: 10, children: 0 }],
+      pauseMs: 700,
+      sleep: async (ms) => {
+        pauses.push(ms);
+      },
+    });
+    expect(grid.rows.every((r) => r.cells[0].status === "available")).toBe(true);
+    expect(pauses).toEqual([700, 2100]);
+  });
 });
 
 describe("priceStay sur le message Beds24 de la langue fixe", () => {

@@ -1716,6 +1716,12 @@ au Pricing.
   - Cellules : `available` (total Beds24 au centime, `lines`), `taken`, `on-request`
     (`disabled`, `service-unavailable`, `price-blocked`, `no-price`, `capacity`, `rule`). Un
     refus `unavailable` de Beds24 vaut `taken` (il a le dernier mot).
+  - `pauseMs` : pause entre deux appels de prix **réels** (pas derrière un prix servi par le cache
+    de données). `getroomprice.php` répond **403** à une suite d'appels rapprochés (mesuré le
+    19/11/2026 : ~20 appels enchaînés puis 403 en alternance ; aucun avec 700 ms) ; une panne
+    isolée est retentée une fois après `3 × pauseMs`. Les sites passent 700 ms.
+  - `chainedStays` préfère, dans les six jours, une arrivée donnant exactement `minNights` à un
+    séjour allongé (arrivée un lundi après une semaine prise → la semaine du samedi suivant).
   - `DegradedGridError` au-delà de `maxFailureRatio` (20 %) de prix en panne : le cache ou l'ISR
     gardent la grille précédente plutôt qu'une page de « sur demande ». Trois pannes de suite :
     plus aucun appel pour ce passage.

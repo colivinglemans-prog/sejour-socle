@@ -124,6 +124,14 @@ export interface BuildPriceGridOptions {
    * ou le cache gardent alors la version précédente plutôt qu'une page pleine de « sur demande ».
    */
   maxFailureRatio?: number;
+  /**
+   * Pause entre deux demandes de prix, en millisecondes. `getroomprice.php` répond 403 à une
+   * suite d'appels trop rapprochés (mesuré le 19/11/2026 : une vingtaine d'appels enchaînés,
+   * puis 403 en alternance ; aucun avec 700 ms d'écart). 0 par défaut (tests).
+   */
+  pauseMs?: number;
+  /** Attente injectée (tests). */
+  sleep?: (ms: number) => Promise<void>;
   /** Instant du calcul, injecté pour les tests. */
   now?: Date;
 }
@@ -145,8 +153,10 @@ export class DegradedGridError extends Error {
  * minimum du jour, jour de départ ouvert). Si la rotation de la saison est le samedi, la grille
  * suit le samedi ; si elle était le mardi, elle suivrait le mardi.
  *
- * Une arrivée impossible (nuit prise, arrivée fermée) fait avancer d'un jour : une semaine en
- * partie prise donne le plus long séjour libre qui suit, pas une ligne « complet » inventée.
+ * Une arrivée impossible (nuit prise, arrivée fermée) fait avancer d'un jour. Quand la première
+ * arrivée possible imposerait plus de `minNights` (arrivée un jeudi, départ ouvert le samedi
+ * suivant : 9 nuits), une arrivée dans les six jours qui suivent donnant exactement `minNights`
+ * est préférée : la grille montre des semaines, pas des séjours allongés.
  */
 export function chainedStays(
   span: ArrivalSpan,
@@ -162,8 +172,18 @@ export function chainedStays(
         d = addDays(d, 1);
         continue;
       }
-      out.push({ checkIn: d, checkOut: addDays(d, n) });
-      d = addDays(d, n);
+      let start = d;
+      let nights = n;
+      for (let k = 1; nights > minNights && k <= 6; k++) {
+        const later = addDays(d, k);
+        if (later > span.to) break;
+        if (shortestStay(ctx, later, minNights, maxExtraNights) === minNights) {
+          start = later;
+          nights = minNights;
+        }
+      }
+      out.push({ checkIn: start, checkOut: addDays(start, nights) });
+      d = addDays(start, nights);
     }
     return out;
   };
@@ -253,6 +273,8 @@ export function resolveWindow(ctx: SelectionContext, w: StayWindow): StayWindow 
 // ── Construction ──────────────────────────────────────────────────────────────────────
 
 const FAILURE = "on-request" as const;
+/** En dessous, un prix vient du cache de données et non de Beds24. */
+const CACHE_HIT_MS = 50;
 
 /**
  * La grille : une lecture de disponibilité, les règles rejouées, puis les prix un par un.
@@ -268,6 +290,8 @@ export async function buildPriceGrid(
     priceLang = "fr",
     mergeEqualColumns = false,
     maxFailureRatio = 0.2,
+    pauseMs = 0,
+    sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
     now = new Date(),
   }: BuildPriceGridOptions,
 ): Promise<PriceGrid> {
@@ -316,6 +340,7 @@ export async function buildPriceGrid(
   let asked = 0;
   let failed = 0;
   let consecutiveDown = 0;
+  let lastCallMs = 0;
   for (const row of rows) {
     if (row.cells.length) continue; // ligne « complet », déjà remplie
     for (const party of parties) {
@@ -343,7 +368,17 @@ export async function buildPriceGrid(
         continue;
       }
       asked++;
-      const q = await priceStay(cfg, quiet, req);
+      // La pause ne vaut que derrière un vrai appel réseau : un prix servi par le cache de
+      // données (quelques ms) ne compte pas pour la limitation de Beds24.
+      if (pauseMs && lastCallMs > CACHE_HIT_MS) await sleep(pauseMs);
+      const started = Date.now();
+      let q = await priceStay(cfg, quiet, req);
+      lastCallMs = Date.now() - started;
+      // Une panne isolée (403 de limitation) se rattrape souvent après une pause plus longue.
+      if (!q.ok && q.reason === "service-unavailable") {
+        await sleep(pauseMs * 3);
+        q = await priceStay(cfg, quiet, req);
+      }
       if (q.ok) {
         consecutiveDown = 0;
         row.cells.push({ status: "available", total: q.stayTotal, lines: q.stayLines, perPersonPerNight: q.perPersonPerNight });
