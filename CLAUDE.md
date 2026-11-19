@@ -1766,6 +1766,18 @@ appelle `buildPriceGrid` et range `{ grid, generatedAt, composition }` dans Upst
     - `lowestTotal` : base d'un « à partir de » ;
     - `priceGridOffer` : un `AggregateOffer` seul, sans résultat enrichi Google attendu ;
     - `jsonLdText` : sérialisation avec `<` échappé.
+- `lib/price-grid-job.ts` (le cron et la page) :
+  - `runPriceGridJob({ key, composition, retryAfterMinutes? }, { store, build, notify?, dry?, now? })` :
+    calcule la grille et range `{ grid, generatedAt, composition }` sous `key`. En cas d’**échec**
+    (`DegradedGridError` ou autre), **la grille précédente reste intacte** et `lastFailureAt`
+    (sous `…:job`) suspend les essais pendant 15 min. L’alerte (sous `…:alert`) utilise
+    `nextAlertState` avec `confirmAfter: 2` : priorité 4 au 2e échec, jamais répétée, priorité 1 au
+    retour. `dry` calcule et rend la grille sans rien écrire.
+  - `readPriceGrid(store, key, composition, { today, now?, staleHours? })` (page) : la grille ou
+    `null` (magasin vide ou illisible, **composition différente**, jamais une erreur). Les lignes
+    déjà commencées sont retirées ; plus de 24 h : `stale` (la page n’émet plus de JSON-LD).
+  - Le magasin est injecté (`HeartbeatStore`) : Upstash reste un choix de site.
+  - Tests : `tests/price-grid-job.test.ts`.
 - `components/PriceGrid.tsx` :
   - composant serveur, `<table>` sémantique (`caption`, `scope`), `PriceGridLabels`, sans
     aucune chaîne en dur ;
