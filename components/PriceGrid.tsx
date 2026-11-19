@@ -111,7 +111,12 @@ export default function PriceGrid({ grid, locale, labels, linkFor, className }: 
             {grid.rows.map((row) => (
               <tr key={`${row.checkIn}/${row.checkOut}`} className="border-b border-border/60 align-top">
                 <th scope="row" className="px-3 py-2 font-normal">
-                  {row.label && <span className="block font-semibold">{row.label}</span>}
+                  {/* Espace après l’intitulé : sans CSS (lecture par une IA), il ne se colle pas à la date. */}
+                  {row.label && (
+                    <>
+                      <span className="block font-semibold">{row.label}</span>{" "}
+                    </>
+                  )}
                   <span>{f.range(row.checkIn, row.checkOut)}</span>
                   <span className="text-secondary"> · {labels.nights(row.nights)}</span>
                 </th>

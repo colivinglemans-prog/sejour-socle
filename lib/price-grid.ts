@@ -52,6 +52,8 @@ export interface StayWindow {
   key?: string;
   /** Intitulé à afficher tel quel (« 24 Heures du Mans 2027 »). Nom propre, non traduit ici. */
   label?: string;
+  /** Début de la disponibilité à lire, quand il précède `checkIn` (fenêtre complète d’un événement). */
+  readFrom?: string;
 }
 
 /** Ce qui produit des séjours, une fois la disponibilité connue. */
@@ -115,19 +117,16 @@ export interface BuildPriceGridOptions {
   /** Langue des appels de prix : une seule entrée de cache par séjour. `fr` par défaut. */
   priceLang?: string;
   /**
-   * Réunir les colonnes dont tous les prix sont identiques : Albiez facture le même prix de 1 à
-   * 4 personnes, une colonne par effectif répéterait le même chiffre.
-   */
-  mergeEqualColumns?: boolean;
-  /**
-   * Part de cellules en panne au-delà de laquelle la grille est refusée (erreur levée) : l'ISR
-   * ou le cache gardent alors la version précédente plutôt qu'une page pleine de « sur demande ».
+   * Part de cellules en panne (rapportée aux cellules **prévues**) au-delà de laquelle le calcul
+   * s'arrête et lève `DegradedGridError` : le site garde alors la grille précédente plutôt qu'une
+   * page pleine de « sur demande ». Pas de nouvel essai : une panne constatée arrête Beds24.
    */
   maxFailureRatio?: number;
   /**
    * Pause entre deux demandes de prix, en millisecondes. `getroomprice.php` répond 403 à une
    * suite d'appels trop rapprochés (mesuré le 19/11/2026 : une vingtaine d'appels enchaînés,
-   * puis 403 en alternance ; aucun avec 700 ms d'écart). 0 par défaut (tests).
+   * puis 403 en alternance ; aucun avec 700 ms d'écart). 0 par défaut (tests). Ne s'applique
+   * qu'après un appel qui a pris plus de `CACHE_HIT_MS` (voir là).
    */
   pauseMs?: number;
   /** Attente injectée (tests). */
@@ -208,9 +207,11 @@ export function weekendStays(
 }
 
 /**
- * Le séjour autour de chaque événement **confirmé** : arrivée `before` jours avant le premier
- * jour (nuits d'approche comprises), départ `after` jours après le dernier. Une projection de
- * dates n'est jamais chiffrée.
+ * Le séjour d'un événement **confirmé** (une projection de dates n'est jamais chiffrée) : le
+ * **séjour minimum que Beds24 accepte** et qui se termine `after` jours après le dernier jour
+ * (le lendemain de la course) — 24 Heures Moto : 3 nuits du 9 au 12 avril, pas 5. Si aucune durée
+ * n'est réservable sur la fenêtre complète (arrivée `before` jours avant le premier jour, nuits
+ * d'approche comprises), c'est cette fenêtre qui est rendue, et la résolution dira « complet ».
  */
 export function eventStays(
   events: LocalEvent[],
@@ -230,7 +231,17 @@ export function eventStays(
       .map((e) => {
         const b = typeof before === "function" ? before(e) : before;
         const a = typeof after === "function" ? after(e) : after;
-        return { checkIn: addDays(e.start, -b), checkOut: addDays(e.end, a), key: e.key, label: label(e) };
+        const checkOut = addDays(e.end, a);
+        const widest = daysBetween(addDays(e.start, -b), checkOut);
+        let checkIn = addDays(e.start, -b);
+        for (let n = 1; n <= widest; n++) {
+          const from = addDays(checkOut, -n);
+          if (from >= ctx.today && !checkStayRules(ctx, from, checkOut)) {
+            checkIn = from;
+            break;
+          }
+        }
+        return { checkIn, checkOut, key: e.key, label: label(e), readFrom: addDays(e.start, -b) };
       });
 }
 
@@ -270,17 +281,22 @@ export function resolveWindow(ctx: SelectionContext, w: StayWindow): StayWindow 
   return best;
 }
 
+/** Marge lue au-delà d'une fenêtre : un séjour allongé jusqu'au départ ouvert peut la dépasser. */
+const READ_MARGIN_DAYS = 14;
+
 /**
  * Les plages de disponibilité à lire : les fenêtres regroupées tant qu'un mois au plus les
- * sépare ; dès la veille (décalage des `minStay` Beds24) et une semaine au-delà (séjour allongé
- * jusqu'au départ ouvert).
+ * sépare ; dès la veille (décalage des `minStay` Beds24) et `READ_MARGIN_DAYS` au-delà.
+ * Chaque plage est lue **en un seul appel** au lecteur du site : à lui de ne pas la découper en
+ * rafale (pas de `monthlyAvailability`, qui lirait chaque mois en parallèle).
  */
 export function readSpans(windows: StayWindow[], today: string): [string, string][] {
   const sorted = [...windows].sort((a, b) => a.checkIn.localeCompare(b.checkIn));
   const spans: [string, string][] = [];
   for (const w of sorted) {
-    const from = addDays(w.checkIn < today ? today : w.checkIn, -1);
-    const to = addDays(w.checkOut, 7);
+    const start = w.readFrom && w.readFrom < w.checkIn ? w.readFrom : w.checkIn;
+    const from = addDays(start < today ? today : start, -1);
+    const to = addDays(w.checkOut, READ_MARGIN_DAYS);
     const lastSpan = spans[spans.length - 1];
     if (lastSpan && daysBetween(lastSpan[1], from) <= 31) {
       if (to > lastSpan[1]) lastSpan[1] = to;
@@ -292,12 +308,20 @@ export function readSpans(windows: StayWindow[], today: string): [string, string
 // ── Construction ──────────────────────────────────────────────────────────────────────
 
 const FAILURE = "on-request" as const;
-/** En dessous, un prix vient du cache de données et non de Beds24. */
+/**
+ * **Heuristique** : un appel de prix plus court que ce seuil est supposé servi par le cache de
+ * données de Next (quelques millisecondes) et non par Beds24 ; il ne compte pas pour la
+ * limitation, la pause n'est pas appliquée derrière lui. Un vrai appel réseau prend 100 ms et plus.
+ */
 const CACHE_HIT_MS = 50;
 
+const byDates = (a: GridRow, b: GridRow) =>
+  a.checkIn === b.checkIn ? a.checkOut.localeCompare(b.checkOut) : a.checkIn.localeCompare(b.checkIn);
+
 /**
- * La grille : une lecture de disponibilité, les règles rejouées, puis les prix un par un.
- * Lève `DegradedGridError` quand plus de `maxFailureRatio` des prix demandés sont en panne.
+ * La grille : une lecture de disponibilité par période, les règles rejouées, puis les prix un
+ * par un. Lève `DegradedGridError` dès que les prix en panne dépassent `maxFailureRatio` des
+ * cellules prévues. Les colonnes au même prix sont toujours réunies (« Jusqu'à 4 personnes »).
  */
 export async function buildPriceGrid(
   cfg: StayQuoteConfig,
@@ -307,7 +331,6 @@ export async function buildPriceGrid(
     parties,
     enabled = true,
     priceLang = "fr",
-    mergeEqualColumns = false,
     maxFailureRatio = 0.2,
     pauseMs = 0,
     sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
@@ -316,12 +339,14 @@ export async function buildPriceGrid(
 ): Promise<PriceGrid> {
   // Sans `onAnomaly` : voir l'en-tête. Le reste des dépendances est celui du devis.
   const quiet: StayQuoteDeps = { today: deps.today, availability: deps.availability, price: deps.price };
+  const inHorizon = (w: StayWindow) =>
+    w.checkOut > deps.today && daysBetween(deps.today, w.checkIn) <= cfg.maxHorizonDays;
 
   // Une première passe sur un contexte vide donne l'étendue à lire ; les générateurs qui
-  // dépendent de la disponibilité (`chainedStays`) sont rejoués ensuite sur la vraie.
+  // dépendent de la disponibilité (`chainedStays`, `eventStays`) sont rejoués sur la vraie.
   const probe = selectionContext({ dates: {} }, deps.today, cfg.defaultMinStay);
   const permissive: SelectionContext = { ...probe, isFree: () => true };
-  const sketch = sources.flatMap((s) => s(permissive));
+  const sketch = sources.flatMap((s) => s(permissive)).filter(inHorizon);
   if (!sketch.length) {
     return { columns: parties.map((p) => ({ parties: [p] })), rows: [], generatedAt: now.toISOString(), pricesShown: enabled };
   }
@@ -338,33 +363,38 @@ export async function buildPriceGrid(
   }
   const ctx = selectionContext(avail, deps.today, cfg.defaultMinStay);
 
-  // Les séjours vendables, dédoublonnés (un événement et un week-end aux mêmes dates : l'intitulé
-  // de l'événement l'emporte), triés par date d'arrivée.
+  // Les séjours, dédoublonnés par dates — vendables comme pris (Noël du 23 au 27 et le week-end
+  // du 25 au 27 ne font qu'une ligne par dates ; l'intitulé l'emporte) —, triés par arrivée.
   const byKey = new Map<string, GridRow>();
-  const taken: GridRow[] = [];
+  const keep = (withHint: GridRow & { readFrom?: string }) => {
+    const { readFrom: _hint, ...row } = withHint; // l’indication de lecture ne sert plus
+    void _hint;
+    const id = `${row.checkIn}/${row.checkOut}`;
+    const prev = byKey.get(id);
+    if (!prev) byKey.set(id, row);
+    else if (!prev.label && row.label) byKey.set(id, { ...prev, key: row.key, label: row.label });
+  };
   for (const w of sources.flatMap((s) => s(ctx))) {
-    if (w.checkIn < deps.today || daysBetween(deps.today, w.checkIn) > cfg.maxHorizonDays) continue;
+    if (w.checkIn < deps.today || !inHorizon(w)) continue;
     if (daysBetween(w.checkIn, w.checkOut) > MAX_STAY_NIGHTS) continue;
     const stay = resolveWindow(ctx, w);
-    if (!stay) {
-      taken.push({ ...w, nights: daysBetween(w.checkIn, w.checkOut), cells: parties.map(() => ({ status: "taken" })) });
-      continue;
-    }
-    const id = `${stay.checkIn}/${stay.checkOut}`;
-    const prev = byKey.get(id);
-    if (!prev || (!prev.label && stay.label)) {
-      byKey.set(id, { ...stay, nights: daysBetween(stay.checkIn, stay.checkOut), cells: [] });
-    }
+    if (stay) keep({ ...stay, nights: daysBetween(stay.checkIn, stay.checkOut), cells: [] });
+    else keep({ ...w, nights: daysBetween(w.checkIn, w.checkOut), cells: parties.map(() => ({ status: "taken" })) });
   }
-  const sellable = [...byKey.values()];
-  const takenKept = taken.filter((t) => !sellable.some((s) => s.checkIn === t.checkIn && s.checkOut === t.checkOut));
-  const rows = [...sellable, ...takenKept].sort((a, b) =>
-    a.checkIn === b.checkIn ? a.checkOut.localeCompare(b.checkOut) : a.checkIn.localeCompare(b.checkIn),
-  );
+  // Une ligne « complet » sans intitulé entièrement couverte par une ligne « complet » intitulée
+  // (le week-end du 25 au 27 dans « Noël », du 23 au 27) n'apprend rien : elle disparaît.
+  const all = [...byKey.values()];
+  const takenLabeled = all.filter((r) => r.label && r.cells.length);
+  const rows = all
+    .filter(
+      (r) =>
+        !(!r.label && r.cells.length && takenLabeled.some((l) => l.checkIn <= r.checkIn && r.checkOut <= l.checkOut)),
+    )
+    .sort(byDates);
 
-  let asked = 0;
+  const planned = enabled ? rows.filter((r) => !r.cells.length).length * parties.length : 0;
+  const maxFailed = Math.floor(maxFailureRatio * planned);
   let failed = 0;
-  let consecutiveDown = 0;
   let lastCallMs = 0;
   for (const row of rows) {
     if (row.cells.length) continue; // ligne « complet », déjà remplie
@@ -385,33 +415,18 @@ export async function buildPriceGrid(
         row.cells.push({ status: FAILURE, reason: invalid.reason === "capacity" ? "capacity" : "rule" });
         continue;
       }
-      // Panne franche (trois réponses de suite) : inutile de continuer à interroger Beds24.
-      if (consecutiveDown >= 3) {
-        row.cells.push({ status: FAILURE, reason: "service-unavailable" });
-        asked++;
-        failed++;
-        continue;
-      }
-      asked++;
-      // La pause ne vaut que derrière un vrai appel réseau : un prix servi par le cache de
-      // données (quelques ms) ne compte pas pour la limitation de Beds24.
+      // La pause ne vaut que derrière un vrai appel réseau (voir `CACHE_HIT_MS`).
       if (pauseMs && lastCallMs > CACHE_HIT_MS) await sleep(pauseMs);
       const started = Date.now();
-      let q = await priceStay(cfg, quiet, req);
+      const q = await priceStay(cfg, quiet, req);
       lastCallMs = Date.now() - started;
-      // Une panne isolée (403 de limitation) se rattrape souvent après une pause plus longue.
-      if (!q.ok && q.reason === "service-unavailable") {
-        await sleep(pauseMs * 3);
-        q = await priceStay(cfg, quiet, req);
-      }
       if (q.ok) {
-        consecutiveDown = 0;
         row.cells.push({ status: "available", total: q.stayTotal, lines: q.stayLines, perPersonPerNight: q.perPersonPerNight });
-        continue;
-      }
-      if (q.reason === "service-unavailable") {
-        consecutiveDown++;
+      } else if (q.reason === "service-unavailable") {
         failed++;
+        // Arrêt dès que la part de pannes dépasse le seuil, sans nouvel essai : des 403 en
+        // alternance ne font jamais trois échecs de suite, et insister aggrave la limitation.
+        if (failed > maxFailed) throw new DegradedGridError(failed, planned);
         row.cells.push({ status: FAILURE, reason: "service-unavailable" });
       } else if (q.reason === "unavailable") {
         // Beds24 refuse alors que nos règles acceptaient : il a le dernier mot.
@@ -423,15 +438,13 @@ export async function buildPriceGrid(
       }
     }
   }
-  if (asked > 0 && failed / asked > maxFailureRatio) throw new DegradedGridError(failed, asked);
 
-  const grid: PriceGrid = {
+  return mergeColumns({
     columns: parties.map((p) => ({ parties: [p] })),
     rows,
     generatedAt: now.toISOString(),
     pricesShown: enabled,
-  };
-  return mergeEqualColumns ? mergeColumns(grid) : grid;
+  });
 }
 
 const sameCell = (a: GridCell, b: GridCell) =>

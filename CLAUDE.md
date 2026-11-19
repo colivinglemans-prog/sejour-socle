@@ -183,7 +183,7 @@ deux validations.
 | — | Référencement — **indexation automatique quotidienne** (`indexing`, `getBingUrlQuota`, `submitBingUrls`) ; Pricing décalé en v3.25.0 | `le-douanier`, `cerbere`, `le-dahu`, `chef-de-stand` | `v3.24.0` |
 | — | Serrure — **horaires convenus par séjour** (`AccessStay.validFromHour` / `validUntilHour`, `stayAccessHours`, `agreedHour`) et **arrivée anticipée** dans la préparation d'arrivée (`ReadinessSchedule.earliestCheckIn`) ; v3.25.0 reste réservée au Pricing | `le-douanier`, `chef-de-stand`, `le-dahu` | `v3.26.0` |
 | — | Messages — **Beds24 tronque les codes d'`infoItem` à 20 caractères** : suffixes `_P` / `_T`, lecture des anciennes formes, toute trace relue avant l'envoi | `le-douanier`, `chef-de-stand`, `le-dahu` | `v3.26.1` |
-| — | Référencement — **grille de prix publiée en HTML** (`price-grid` : `buildPriceGrid`, générateurs, `priceGridOffer` ; composant `PriceGrid`) pour les pages « Tarifs » | à relire : `le-douanier`, `cerbere`, `poisson-babel`, `le-dahu`, `chef-de-stand` | `v3.27.0` |
+| — | Référencement — **grille de prix publiée en HTML** (`price-grid` : `buildPriceGrid`, générateurs, `priceGridOffer` ; composant `PriceGrid`) pour les pages « Tarifs » | relu : `le-douanier`, `cerbere`, `poisson-babel`, `le-dahu`, `chef-de-stand` (corrections intégrées) | `v3.27.0` |
 | — | Veille des dates d'événements (`lib/events-watch.ts`) | — | `v0.7.0` |
 
 Plan détaillé : `C:\Users\alexa\.claude\plans\cheerful-toasting-rivest.md`.
@@ -1697,56 +1697,87 @@ tout identifiant de plus de 10 / 7 caractères — chez Albiez comme chez Barbus
 
 ### v3.27.0 — Grille de prix publiée en HTML : la page « Tarifs » (2026-11-19)
 
-Tests réels des 18-19/11/2026 dans ChatGPT, Gemini, Copilot et Perplexity : tous trouvent (au
-mieux) le logement, aucun ne donne de prix — « tarif non publié », « calendrier limité au rendu
-statique ». Ils ne lisent que du HTML sans JavaScript : ni le calendrier, ni `llms.txt`, ni
-`/api/agent/quote`. Les concurrents cités avec un prix publient une **grille en texte** (« Décembre :
-à partir de 1750 € pour 2 nuits »). Plan : `C:Usersalexa.claudeplanscurried-mapping-stallman.md`
-(lot 1). Base : `release-v3.26.1` (`main` est resté en v3.19.0) ; v3.25.0 reste un trou réservé
-au Pricing.
+Tests réels des 18-19/11/2026 dans ChatGPT, Gemini, Copilot et Perplexity : au mieux, ils trouvent
+le logement, mais aucun ne donne de prix (« tarif non publié », « calendrier limité au rendu
+statique »). Ils ne lisent que du HTML sans JavaScript : ni le calendrier, ni `llms.txt`, ni
+`/api/agent/quote`. Les concurrents cités avec un prix publient une **grille en texte**
+(« Décembre : à partir de 1750 € pour 2 nuits »). Plan :
+`C:\Users\alexa\.claude\plans\curried-mapping-stallman.md` (lot 1). Base : `release-v3.26.1`
+(`main` est resté en v3.19.0) ; v3.25.0 reste un trou réservé au Pricing.
+
+**Architecture (côté sites, relecture de cerbere)** : le calcul ne passe **jamais** par une page
+visitée. Une route de cron par site (`/api/cron/price-grid`, cron-job.org toutes les heures)
+appelle `buildPriceGrid` et range `{ grid, generatedAt, composition }` dans Upstash. La page
+`/xx/tarifs` ne fait que lire Upstash. Si le calcul échoue, la grille précédente reste en place.
 
 - `lib/price-grid.ts` :
-  - `buildPriceGrid(cfg, deps, { sources, parties, enabled, priceLang, mergeEqualColumns,
-    maxFailureRatio, now })` → `PriceGrid { columns, rows, generatedAt, pricesShown }`.
-    **Une lecture de disponibilité par période** (`readSpans` : fenêtres à plus d’un mois d’écart lues séparément, l’une après l’autre — pas les mois creux entre l’hiver et l’été) ; règles rejouées en mémoire (`checkStayRules`,
-    `shortestStay`) ; **une ligne prise ne coûte aucun appel de prix** ; prix **séquentiels**,
-    langue fixe (`priceLang`, `fr` : une entrée de cache par séjour, et le `warn` « réservation
-    minimum 3 Nuits » reconnu) ; dépendances utilisées **sans `onAnomaly`** (la grille se régénère
-    toutes les heures, l'alerte serait répétée — règle des alertes ntfy).
-  - Cellules : `available` (total Beds24 au centime, `lines`), `taken`, `on-request`
-    (`disabled`, `service-unavailable`, `price-blocked`, `no-price`, `capacity`, `rule`). Un
-    refus `unavailable` de Beds24 vaut `taken` (il a le dernier mot).
-  - `pauseMs` : pause entre deux appels de prix **réels** (pas derrière un prix servi par le cache
-    de données). `getroomprice.php` répond **403** à une suite d'appels rapprochés (mesuré le
-    19/11/2026 : ~20 appels enchaînés puis 403 en alternance ; aucun avec 700 ms) ; une panne
-    isolée est retentée une fois après `3 × pauseMs`. Les sites passent 700 ms.
-  - `chainedStays` préfère, dans les six jours, une arrivée donnant exactement `minNights` à un
-    séjour allongé (arrivée un lundi après une semaine prise → la semaine du samedi suivant).
-  - `DegradedGridError` au-delà de `maxFailureRatio` (20 %) de prix en panne : le cache ou l'ISR
-    gardent la grille précédente plutôt qu'une page de « sur demande ». Trois pannes de suite :
-    plus aucun appel pour ce passage.
-  - `enabled: false` (interrupteur `PRIX_PUBLICS=off` du site) : aucun appel de prix, la
-    disponibilité reste affichée — pour le jour où Beds24 bloquerait `getroomprice.php` (point
-    d'accès AJAX public, hors quota v2 : `client.quota()` ne le voit pas).
-  - Générateurs (`WindowSource = (ctx) => StayWindow[]`, rejoués sur la disponibilité lue) :
-    `chainedStays(span, { minNights })` — séjours enchaînés depuis la première arrivée autorisée,
-    durée = le plus court accepté d'au moins `minNights` : **suit la rotation de Beds24, quelle
-    qu'elle soit** (testé sur un mardi) ; aucun jour de semaine n'est écrit ici ;
-    `weekendStays(span, { startWeekday, nights })` ; `eventStays(LocalEvent[], { before, after,
-    label })` — **événements `confirmed` seulement**, `before` peut dépendre de l'événement (nuits
-    d'approche) ; `fixedStays(periods)`.
-  - `resolveWindow` : fenêtre telle quelle, allongée si seule la durée bloque, sinon le plus long
-    séjour libre qu'elle contient, sinon ligne « complet ».
-  - `mergeColumns` (colonnes au même prix réunies : « 1 à 4 personnes »), `lowestTotal` (base
-    d'un « à partir de »), `priceGridOffer` (`AggregateOffer` seul — aucun résultat enrichi
-    Google à attendre), `jsonLdText` (sérialisation, `<` échappé).
-- `components/PriceGrid.tsx` : composant serveur, `<table>` sémantique (`caption`, `scope`),
-  `PriceGridLabels` (aucune chaîne en dur), montants `Intl.NumberFormat` au centime, séjours en
-  `formatRange` UTC, heure de mise à jour à Paris ; **pas de lien** sur une ligne prise ou sur
-  demande ; liens `rel="nofollow"` (calendrier pré-rempli). Jamais de lien de devis signé.
-- Le cache est l'affaire du site (une grille par site, **sans langue**, `unstable_cache` 1 h ;
-  aucun calcul au `next build`).
-- Tests : `tests/price-grid.test.ts` (une lecture comptée, zéro appel sur ligne prise, rotation
-  du mardi, aucune alerte, grille dégradée, interrupteur, fusion de colonnes, événements
-  confirmés, semaine en partie prise, `warn` français, JSON-LD).
-- Additif : rien ne change pour un site qui ne l'importe pas.
+  - **Signature** : `buildPriceGrid(cfg, deps, { sources, parties, enabled?, priceLang?,
+    maxFailureRatio?, pauseMs?, sleep?, now? })` renvoie
+    `PriceGrid { columns, rows, generatedAt, pricesShown }`.
+    - Les colonnes au même prix sont **toujours** réunies (`mergeColumns`).
+    - `sleep` et `now` sont injectés pour les tests.
+  - **Disponibilité** :
+    - une lecture **par période** (`readSpans` : fenêtres à plus d'un mois d'écart lues
+      séparément, l'une après l'autre, sans les mois creux entre l'hiver et l'été) ;
+    - marge de 14 jours après chaque fenêtre ; esquisse filtrée par `maxHorizonDays` **avant** la
+      lecture ;
+    - chaque plage passe **en un seul appel** au lecteur du site : le site fournit un lecteur sur
+      une seule plage, **pas** `monthlyAvailability`, qui lirait chaque mois en parallèle (environ
+      22 appels v2 d'un coup chez Barbusse).
+  - **Prix** :
+    - une ligne prise ne coûte **aucun** appel de prix ;
+    - les prix sont demandés **un par un**, dans une langue fixe (`priceLang`, `fr`) : une seule
+      entrée de cache par séjour, et le `warn` « réservation minimum 3 Nuits » est reconnu ;
+    - les dépendances sont passées **sans `onAnomaly`**, pour ne pas répéter l'alerte à chaque
+      passage du cron ;
+    - `pauseMs` : pause après chaque appel de prix **réel**. `getroomprice.php` répond 403 à une
+      suite d'appels rapprochés (mesuré le 19/11/2026 : environ 20 appels enchaînés, puis 403 en
+      alternance ; aucun avec 700 ms d'écart). `CACHE_HIT_MS` (50 ms) est une **heuristique** :
+      un appel plus court est supposé venir du cache de données de Next.
+  - **Pannes** :
+    - `DegradedGridError` est levée **dès que** les pannes dépassent `maxFailureRatio` (20 %) des
+      cellules prévues ;
+    - pas de nouvel essai : des 403 en alternance ne font jamais trois échecs de suite, et
+      insister aggrave la limitation ;
+    - `fetchRoomPrice` abandonne au bout de 8 s (`AbortSignal.timeout`).
+  - **Cellules** : `available` (total Beds24 au centime, `lines`), `taken`, `on-request`
+    (`disabled`, `service-unavailable`, `price-blocked`, `no-price`, `capacity`, `rule`). Un refus
+    `unavailable` de Beds24 vaut `taken` : il a le dernier mot.
+  - **Lignes** :
+    - dédoublonnées par dates, qu'elles soient prises ou à vendre (l'intitulé l'emporte) ;
+    - une ligne « complet » sans intitulé, couverte par une ligne « complet » intitulée,
+      disparaît (le week-end du 25 au 27 dans « Noël », du 23 au 27).
+  - **Interrupteur** : `enabled: false` correspond à `PRIX_PUBLICS=off/0/false` côté site. Aucun
+    appel de prix n'est fait, la disponibilité reste affichée.
+  - **Générateurs** (`WindowSource = (ctx) => StayWindow[]`, rejoués sur la disponibilité lue) :
+    - `chainedStays(span, { minNights })` enchaîne des séjours à partir de la première arrivée
+      autorisée, chacun du plus court séjour accepté d'au moins `minNights` nuits. Il préfère,
+      dans les six jours, une arrivée donnant exactement `minNights`. Il **suit la rotation de
+      Beds24, quelle qu'elle soit** (testé sur un mardi) ;
+    - `weekendStays(span, { startWeekday, nights })` ;
+    - `eventStays(LocalEvent[], { before, after, label })` : **événements `confirmed`
+      seulement**. La ligne porte le **séjour minimum accepté par Beds24 qui se termine `after`
+      jours après le dernier jour** : 24 Heures Moto, 3 nuits du 9 au 12 avril, et non 5 nuits.
+      `readFrom` fait lire la fenêtre complète (nuits d'approche `before`) ;
+    - `fixedStays(periods)`.
+  - **Autres fonctions** :
+    - `resolveWindow` : la fenêtre telle quelle, ou allongée si seule la durée bloque, ou le plus
+      long séjour libre qu'elle contient ; sinon, ligne « complet » ;
+    - `lowestTotal` : base d'un « à partir de » ;
+    - `priceGridOffer` : un `AggregateOffer` seul, sans résultat enrichi Google attendu ;
+    - `jsonLdText` : sérialisation avec `<` échappé.
+- `components/PriceGrid.tsx` :
+  - composant serveur, `<table>` sémantique (`caption`, `scope`), `PriceGridLabels`, sans
+    aucune chaîne en dur ;
+  - montants au centime ; séjours en `formatRange` UTC ; heure de mise à jour en heure de Paris ;
+  - un espace après l'intitulé, pour une lecture sans CSS ;
+  - **pas de lien** sur une ligne prise ou « sur demande » ; les autres liens sont en
+    `rel="nofollow"`. Jamais de lien de devis signé.
+- Tests : `tests/price-grid.test.ts` (15 tests) :
+  - lecture comptée, aucun appel sur une ligne prise, rotation du mardi, lecture par saison ;
+  - aucune alerte, arrêt anticipé, pause sans nouvel essai, interrupteur ;
+  - fusion, dédoublonnage des lignes « complet » ;
+  - événement au séjour minimum finissant le lendemain, semaine en partie prise, `warn` français,
+    JSON-LD.
+- Additif : rien ne change pour un site qui ne l'importe pas, hormis le délai de 8 s de
+  `fetchRoomPrice`.

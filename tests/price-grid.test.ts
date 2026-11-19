@@ -11,6 +11,7 @@ import {
   chainedStays,
   DegradedGridError,
   eventStays,
+  fixedStays,
   jsonLdText,
   lowestTotal,
   priceGridOffer,
@@ -149,14 +150,32 @@ describe("buildPriceGrid", () => {
     expect(anomalies).toHaveLength(0);
   });
 
-  it("refuse une grille dégradée : la version précédente doit rester en place", async () => {
-    const { d } = deps({}, priceOf({ down: true }));
+  it("refuse une grille dégradée et s'arrête dès que le seuil est dépassé", async () => {
+    const p = priceOf({ down: true });
+    const { d } = deps({}, p);
     await expect(
       buildPriceGrid(CFG, d, {
         sources: [weekendStays({ from: "2027-01-01", to: "2027-01-31" })],
         parties: [{ adults: 10, children: 0 }],
       }),
     ).rejects.toBeInstanceOf(DegradedGridError);
+    // 5 week-ends prévus, seuil 20 % = 1 panne tolérée : arrêt à la 2e, pas d'appel de plus.
+    expect(p.calls).toHaveLength(2);
+  });
+
+  it("une ligne « complet » ne s'affiche qu'une fois par dates, et pas sous une fête complète", async () => {
+    const taken = ["2026-12-23", "2026-12-24", "2026-12-25", "2026-12-26"];
+    const { d } = deps({ taken });
+    const grid = await buildPriceGrid(CFG, { ...d, today: "2026-12-01" }, {
+      sources: [
+        weekendStays({ from: "2026-12-18", to: "2026-12-26" }),
+        weekendStays({ from: "2026-12-18", to: "2026-12-26" }),
+        fixedStays([{ checkIn: "2026-12-23", checkOut: "2026-12-27", key: "noel", label: "Noël 2026" }]),
+      ],
+      parties: [{ adults: 10, children: 0 }],
+    });
+    const ids = grid.rows.map((r) => `${r.checkIn}>${r.checkOut}${r.label ? " " + r.label : ""}`);
+    expect(ids).toEqual(["2026-12-18>2026-12-20", "2026-12-23>2026-12-27 Noël 2026"]);
   });
 
   it("interrupteur coupé : aucun appel de prix, la disponibilité reste affichée", async () => {
@@ -185,23 +204,25 @@ describe("buildPriceGrid", () => {
     const grid = await buildPriceGrid(CFG, d, {
       sources: [weekendStays({ from: "2027-01-01", to: "2027-01-03" })],
       parties: [1, 2, 3, 4, 5, 6].map((n) => ({ adults: n, children: 0 })),
-      mergeEqualColumns: true,
     });
     expect(grid.columns.map((c) => c.parties.map((p) => p.adults))).toEqual([[1, 2, 3, 4], [5, 6]]);
   });
 
-  it("chiffre un événement confirmé avec ses nuits d'approche, ignore une projection", async () => {
+  it("chiffre un événement confirmé au séjour minimum finissant le lendemain, ignore une projection", async () => {
     const events: LocalEvent[] = [
       { key: "24h", name: "24 Heures", start: "2027-06-10", end: "2027-06-13", confirmed: true },
       { key: "test", name: "Journée test", start: "2027-05-31", end: "2027-06-06", confirmed: false },
     ];
-    const { d } = deps({});
+    // Séjour minimum de 4 nuits pendant la course : 4 nuits du 10 au 14, pas 6 du 8 au 14.
+    const minStay: Record<string, number> = {};
+    for (let x = "2027-06-07"; x <= "2027-06-14"; x = addDays(x, 1)) minStay[x] = 4;
+    const { d } = deps({ minStay });
     const grid = await buildPriceGrid(CFG, d, {
       sources: [eventStays(events, { before: (e) => (e.key === "24h" ? 2 : 1) })],
       parties: [{ adults: 10, children: 0 }],
     });
     expect(grid.rows).toHaveLength(1);
-    expect(grid.rows[0]).toMatchObject({ checkIn: "2027-06-08", checkOut: "2027-06-14", label: "24 Heures" });
+    expect(grid.rows[0]).toMatchObject({ checkIn: "2027-06-10", checkOut: "2027-06-14", nights: 4, label: "24 Heures" });
   });
 
   it("une semaine en partie prise donne le plus long séjour libre qu'elle contient", async () => {
@@ -229,7 +250,7 @@ describe("buildPriceGrid", () => {
     expect(grid.rows.map((r) => `${r.checkIn}>${r.checkOut}`)).toEqual(["2027-01-09>2027-01-16", "2027-01-16>2027-01-23"]);
   });
 
-  it("espace les demandes de prix et réessaie une fois une panne isolée", async () => {
+  it("espace les demandes de prix ; une panne isolée reste « sur demande », sans nouvel essai", async () => {
     const pauses: number[] = [];
     let n = 0;
     const flaky = {
@@ -247,13 +268,15 @@ describe("buildPriceGrid", () => {
     const grid = await buildPriceGrid(CFG, d, {
       sources: [weekendStays({ from: "2027-01-01", to: "2027-01-10" })],
       parties: [{ adults: 10, children: 0 }],
+      maxFailureRatio: 0.5,
       pauseMs: 700,
       sleep: async (ms) => {
         pauses.push(ms);
       },
     });
-    expect(grid.rows.every((r) => r.cells[0].status === "available")).toBe(true);
-    expect(pauses).toEqual([700, 2100]);
+    expect(grid.rows.map((r) => r.cells[0].status)).toEqual(["available", "on-request"]);
+    expect(pauses).toEqual([700]);
+    expect(n).toBe(2);
   });
 });
 
