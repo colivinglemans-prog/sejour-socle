@@ -1209,6 +1209,7 @@ amène à la page de paiement Beds24. **Rien n'est réservé ni payé par le soc
 | `lib/stay-agent.ts` | Les quatre outils (`propertyInfo`, `availability`, `quote`, `find`) sur des paramètres en chaînes : validation unique, politiques lues dans `CancellationPolicy` / `PaymentPolicy` (les constantes que contrôle `llms.policies`), liens `bookUrl` / `calendarUrl` / `quoteUrl`. Secret de devis absent ⇒ devis chiffré sans lien. |
 | `lib/stay-agent-http.ts` | `createAgentRoute(cfg, depsFactory)` pour `app/api/agent/[tool]/route.ts` : GET seulement (une IA qui navigue ne sait pas faire de POST), CORS ouvert, `s-maxage` court, **jamais de cache sur un 5xx**. `runTool` sera repris tel quel par le serveur MCP. `openApi(cfg)`. |
 | `lib/quote-page.ts`, `components/QuoteSummary.tsx`, `lib/quote-labels.ts` | `loadQuotePage` revérifie à chaque affichage : `valid`, `price-changed` (nouveau prix affiché), `unavailable` (+ alternatives), `expired`, `invalid` (autre site ou falsifié), `unchecked` (panne : on montre le devis signé). Textes en 5 langues sauf `included`, propre au site. |
+| `lib/calendar-quote.ts` (+ prop `quote` de `ReservationCalendar`) | Bloc prix du calendrier (v3.29.0) : `interpretQuote` range la réponse de `/api/agent/quote` en `priced` / `refused` (refus **confirmés** seulement : unavailable, min-stay, no-check-in, no-check-out, capacity) / `fallback` (tout le reste : « prix sur la page de paiement », Réserver reste actif). Libellés 5 langues ; `formatEuro` (source unique, aussi pour `QuoteSummary`) ; texte du séjour minimum = `minStayText`. `included` et l'URL restent au site. |
 | `components/ReservationCalendar.tsx` | Pré-remplissage par `?arrivee=&depart=&adultes=&enfants=` : voyageurs tout de suite, dates **seulement** si le moteur de sélection les accepte une fois le mois chargé. |
 
 **Route publique, donc protections** (relecture cerbère) : `monthlyAvailability(read)`
@@ -1694,6 +1695,34 @@ tout identifiant de plus de 10 / 7 caractères — chez Albiez comme chez Barbus
   `_T`, la boucle des copies de test reviendrait et le départage redeviendrait aveugle.
 - Correctif : aucune signature publique ne change. Les deux sites montent sans modification de code
   (ils n'écrivent aucun code `MSG_` en dur) ; leur `validateTemplates` couvre leurs identifiants.
+
+### v3.29.0 — Calendrier : « Disponible » et le prix avant la page de paiement (2026-11-20)
+
+Lot 2a du plan `curried-mapping-stallman` : demande de l'hôte du 19/11 (le voyageur ne voyait un
+prix qu'une fois la modale Beds24 ouverte). Base : `release-v3.28.0`.
+
+- `ReservationCalendar` reçoit une prop **facultative** `quote: { url, labels, included? }`. Sans
+  elle, rien ne change (mineure). Le site passe l'URL de sa route de devis (`/api/agent/quote?…
+  &src=calendrier`) : même calcul, mêmes garde-fous, même cache CDN de 5 min que pour les IA.
+- Appel **seulement** quand la sélection est complète, après 600 ms sans changement ; réponses
+  rangées par séjour **et par langue** (le rendu lit celle de la sélection : jamais un ancien prix
+  affiché sous un nouveau compteur) ; requête en vol abandonnée au changement, délai de 8 s ; une
+  panne n'est jamais tenue pour fraîche. Après un **429** du pare-feu (`/api/agent`, 20/min/IP),
+  une minute sans interroger.
+- Rendu `aria-live` : « Disponible », total au centime, « soit X € par personne et par nuit »
+  (facultatif dans les libellés), `included` du site, détail dans `<details>` (lignes du séjour
+  **puis suppléments** : la somme retombe sur le total affiché), avertissements de dernière minute.
+- Refus confirmé : message traduit (jamais le `detail` de l'API) et jusqu'à 3 séjours de
+  remplacement en boutons ; un remplacement est posé même si les règles locales hésitent (Beds24
+  l'a chiffré, il fait foi). Un refus « unavailable » recharge la disponibilité affichée.
+- Pré-remplissage corrigé au passage : compteur de requêtes en vol (`pending`) au lieu d'un
+  booléen `loading` partagé ; un séjour dont la dernière nuit tombe dans le mois suivant attend son
+  chargement au lieu d'être abandonné ; un clic, un changement de mois ou « Effacer » annulent un
+  pré-remplissage en attente.
+- `QuoteSummary` formate ses montants par `formatEuro` (`useGrouping: "always"` : « 1.119,42 € »
+  en espagnol et en italien, là où CLDR écrivait « 1119,42 € »).
+- Relecture : `le-douanier`, `monsieur-loyal`, `poisson-babel` (corrections appliquées) ; sites :
+  `le-dahu`, `chef-de-stand`.
 
 ### v3.28.0 — Grille : semaines réservées visibles, durées de cache étalées (2026-11-20)
 

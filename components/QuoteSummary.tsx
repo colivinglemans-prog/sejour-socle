@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { withSrc, type QuotePageState } from "../lib/quote-page";
 import type { PricedStay } from "../lib/stay-search";
+import { formatEuro } from "../lib/calendar-quote";
 
 /**
  * L'affichage d'un devis partagé — composant serveur, sans état. Le site fournit les textes
@@ -62,10 +63,9 @@ const LOCALE_TAG: Record<string, string> = { fr: "fr-FR", en: "en-GB", de: "de-D
 function fmt(lang: string) {
   const tag = LOCALE_TAG[lang] ?? "fr-FR";
   return {
-    money: (n: number) => new Intl.NumberFormat(tag, { style: "currency", currency: "EUR" }).format(n),
+    money: (n: number) => formatEuro(n, lang),
     /** Un repère arrondi à l'euro ne s'affiche pas avec des centimes : ce serait une fausse précision. */
-    euros: (n: number) =>
-      new Intl.NumberFormat(tag, { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n),
+    euros: (n: number) => formatEuro(n, lang, false),
     day: (d: string) =>
       new Intl.DateTimeFormat(tag, { weekday: "short", day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }).format(
         new Date(`${d}T00:00:00Z`),
