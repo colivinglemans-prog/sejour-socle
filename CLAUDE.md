@@ -187,6 +187,7 @@ deux validations.
 | — | Robustesse — **jeton Beds24 partagé** (`tokenStore`, fin des 429 sur `/authentication/token`), `check_availability` borné à `maxHorizonDays`, contrôles de déploiement sur préversion (`indexing.home` / `indexing.sitemapUrls` sautés, pas d'issue ni de priorité 5), portes `DELETE` | `le-douanier`, `le-dahu`, `chef-de-stand` | `v3.31.0` |
 | — | Sécurité — **garde-fou avant commit** des dépôts publics (`scripts/garde-commit.mjs` : fichiers exclus, valeurs de secrets du poste, exports de réservations) | `le-douanier`, `cerbere`, `le-dahu`, `chef-de-stand` | `v3.32.0` |
 | — | Sécurité — **limite de connexion durcie** : seul un succès admin remet le compteur à zéro (`resetOnRoles`), tentative comptée avant le mot de passe en un appel atomique (`hit`/`unhit`, `attempt`), alerte au passage de la limite | `cerbere` | `v3.33.0` |
+| — | Disponibilités — **un jour absent est non réservable** (`longestFreeRange`, `readNights`, état « inconnu » d'`EventBookingCTA`) ; agent IA — **cache des prix 5 min et limite par IP** (`stay-agent-guard`, 3e argument de `createAgentRoute` / `createMcpRoute`) | `le-douanier` | `v3.34.0` |
 | — | Veille des dates d'événements (`lib/events-watch.ts`) | — | `v0.7.0` |
 
 Plan détaillé : `C:\Users\alexa\.claude\plans\cheerful-toasting-rivest.md`.
@@ -1701,6 +1702,92 @@ tout identifiant de plus de 10 / 7 caractères — chez Albiez comme chez Barbus
   `_T`, la boucle des copies de test reviendrait et le départage redeviendrait aveugle.
 - Correctif : aucune signature publique ne change. Les deux sites montent sans modification de code
   (ils n'écrivent aucun code `MSG_` en dur) ; leur `validateTemplates` couvre leurs identifiants.
+
+### v3.34.0 — Jour absent non réservable ; cache et limite des prix de l'agent IA (2026-11-20)
+
+Base : `v3.33.0`. **Aucune rupture de signature**, tout ce qui est nouveau est facultatif. Un
+seul changement de **comportement**, voulu : `longestFreeRange` (voir ci-dessous).
+
+**1. Un jour absent de la carte des disponibilités est non réservable.**
+
+- `longestFreeRange(dates, checkIn, checkOut)` ne compte plus que les nuits lues `true`. Avant,
+  une clé absente valait « libre » : au-delà de l'horizon de `/api/availability` (aujourd'hui +
+  400 j) ou sur une réponse Beds24 vide, l'encart d'un article annonçait « Disponible » des nuits
+  que personne n'avait lues. Aligné sur `knownNights` de Barbusse (`lib/bookable-nights.ts`), qui
+  faisait ce tri en amont et devient redondant (inoffensif).
+- `readNights(dates, checkIn, checkOut) → { read, total }` (nouveau) : distingue « tout est pris »
+  de « rien lu », que `longestFreeRange` confond (`null` dans les deux cas).
+- `EventBookingCTA` gagne un état **`unknown`**, qui **masque** l'encart : aucune nuit de la
+  fenêtre lue, ou lecture partielle sans plage assez longue. Arbitrage : afficher « Complet » sur
+  des nuits non lues ferait fuir un lecteur pour rien, et retomber sur les dates conseillées
+  promettrait une disponibilité inconnue ; l'article garde son lien vers le calendrier. « Complet »
+  n'est affiché que si **chaque** nuit de la fenêtre a été lue. La panne de route (HTTP non 2xx)
+  garde son repli sur les dates conseillées (`error`), inchangé.
+- **À vérifier en montant** : un appelant qui passait `{}` pour dire « panne, tout libre » obtient
+  maintenant `null`. C'est le cas de `AvailabilityDates.tsx` chez Barbusse
+  (`longestFreeRange(read ? knownNights(…) : {}, …)`) : en cas de panne, construire la plage
+  `{ from: p.checkIn, to: end, nights: daysBetween(p.checkIn, end) }` sans appeler
+  `longestFreeRange`. Albiez n'appelle pas `longestFreeRange` directement.
+- Tests : `tests/availability-absent.test.ts`.
+
+**2. Prix de l'agent IA : cache de 5 min et limite par IP** (`lib/stay-agent-guard.ts`).
+
+Avant, chaque combinaison dates × voyageurs de `quote` / `find` coûtait un appel Beds24 sur le
+jeton public partagé avec le calendrier, et le cache CDN de `/api/agent/*` se contournait par un
+paramètre aléatoire.
+
+- **Cache** indexé sur la requête normalisée (`priceCacheKey`) : outil, paramètres **connus** de
+  l'outil (les autres sont ignorés), listes triées, langue sur deux lettres, `src` nettoyé, et
+  `today`. Seuls les 200 sont gardés (ni 206, ni 4xx, ni 5xx). Durée 5 min.
+- **Limite par IP** : 30 requêtes de prix par 10 min, puis **429 + `Retry-After`** (`no-store`,
+  jamais en cache CDN). Seules les requêtes qui manquent le cache comptent. Le compteur
+  **réutilise** `LoginAttemptStore` (`lib/login-attempts.ts`) — même fenêtre par IP, chemin
+  atomique `hit` si le magasin l'a. MCP : l'outil refusé rend un résultat `isError`
+  (`reason: "rate-limited"`) et la réponse HTTP passe en 429 avec `Retry-After`.
+- **Rien d'obligatoire** : sans option, cache et limite vivent en mémoire de l'instance. Un
+  magasin en panne ne bloque jamais (cache : servi sans lui ; compteur : repli en mémoire,
+  un avertissement).
+- `info`, `availability`, `openapi` ne passent pas par la garde.
+
+```ts
+createAgentRoute(cfg, deps, options?: AgentGuardOptions)
+createMcpRoute(cfg, deps, options?: AgentGuardOptions)
+
+interface AgentGuardOptions {
+  priceCache?: PriceCacheStore;         // createRedisPriceCacheStore(redis, prefix) | mémoire
+  priceCacheTtlMs?: number;             // 300 000
+  rateLimitStore?: LoginAttemptStore;   // createRedisLoginAttemptStore(redis, prefix) | mémoire
+  rateLimitMax?: number;                // 30
+  rateLimitWindowMs?: number;           // 600 000
+  now?: () => number;
+}
+```
+
+Branchement Redis (facultatif), une même `options` pour les deux routes afin que REST et MCP
+partagent cache et compteur :
+
+```ts
+// lib/agent.ts (site)
+import { createRedisLoginAttemptStore } from "@sejour/socle/lib/login-attempts";
+import { createRedisPriceCacheStore, type AgentGuardOptions } from "@sejour/socle/lib/stay-agent-guard";
+export const agentGuard: AgentGuardOptions = hasRedis()
+  ? {
+      priceCache: createRedisPriceCacheStore(getRedis(), redisKey("agent-price")),
+      rateLimitStore: createRedisLoginAttemptStore(getRedis(), redisKey("agent-rate")),
+    }
+  : {};
+// app/api/agent/[tool]/route.ts
+export const { GET, OPTIONS } = createAgentRoute(STAY_AGENT, stayAgentDeps, agentGuard);
+// app/api/mcp/route.ts
+export const { GET, POST, DELETE, OPTIONS } = createMcpRoute(STAY_AGENT, stayAgentDeps, agentGuard);
+```
+
+Le compteur Redis suit le chemin atomique de v3.33.0 : fenêtre **fixe** depuis la 1re requête
+(au pire 2 × la limite à cheval sur deux fenêtres). `buildMcpServer(cfg, deps, guarded?)` gagne
+un 3e argument facultatif (`McpGuardContext`) ; sans lui, comportement d'avant.
+
+- Tests : `tests/stay-agent-guard.test.ts`, `tests/stay-agent-routes-guard.test.ts` (outil `quote`
+  simulé, aucun appel Beds24).
 
 ### v3.33.0 — Connexion : limite durcie contre le mot de passe viewer et les rafales (2026-11-20)
 
