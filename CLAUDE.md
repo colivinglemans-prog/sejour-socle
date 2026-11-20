@@ -1196,7 +1196,7 @@ passent (le rapport s'écrit sur `process.stdout`).
 
 ### v3.11.0 — réservation par IA (devis, recherche, API des agents)
 
-Plan : `C:\Users\alexa\.claude\plans\curried-mapping-stallman.md`. Une IA vérifie une
+Plan : `curried-mapping-stallman` (plan de la session). Une IA vérifie une
 disponibilité, chiffre au centime, trouve des dates floues, produit un devis partageable et
 amène à la page de paiement Beds24. **Rien n'est réservé ni payé par le socle.**
 
@@ -1702,7 +1702,7 @@ le logement, mais aucun ne donne de prix (« tarif non publié », « calendrier
 statique »). Ils ne lisent que du HTML sans JavaScript : ni le calendrier, ni `llms.txt`, ni
 `/api/agent/quote`. Les concurrents cités avec un prix publient une **grille en texte**
 (« Décembre : à partir de 1750 € pour 2 nuits »). Plan :
-`C:\Users\alexa\.claude\plans\curried-mapping-stallman.md` (lot 1). Base : `release-v3.26.1`
+`curried-mapping-stallman` (plan de la session) (lot 1). Base : `release-v3.26.1`
 (`main` est resté en v3.19.0) ; v3.25.0 reste un trou réservé au Pricing.
 
 **Architecture (côté sites, relecture de cerbere)** : le calcul ne passe **jamais** par une page
