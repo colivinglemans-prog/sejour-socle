@@ -62,6 +62,16 @@ function sameOrigin(a: string, b: string): boolean {
   }
 }
 
+/**
+ * La cible est-elle la production ? Même origine que l'URL canonique du site, rien d'autre :
+ * une préversion Vercel, l'URL unique d'un déploiement ou `localhost` ne le sont pas. C'est la
+ * règle de `CheckContext.isProduction`, exposée (v3.31.0) pour que le rapport et le workflow
+ * n'alertent pas sur une préversion comme sur la production.
+ */
+export function isProductionTarget(baseUrl: string, canonicalUrl: string): boolean {
+  return sameOrigin(baseUrl, canonicalUrl);
+}
+
 export async function runChecks(site: DeploySite, options: RunOptions): Promise<CheckResult[]> {
   const baseUrl = (options.baseUrl ?? site.canonicalUrl).replace(/\/+$/, "");
   const http = createHttpClient({
@@ -76,7 +86,7 @@ export async function runChecks(site: DeploySite, options: RunOptions): Promise<
     site,
     baseUrl,
     level: options.level,
-    isProduction: sameOrigin(baseUrl, site.canonicalUrl),
+    isProduction: isProductionTarget(baseUrl, site.canonicalUrl),
     http,
     secrets: options.secrets ?? {},
     now: options.now ?? new Date(),

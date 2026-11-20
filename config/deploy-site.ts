@@ -121,7 +121,8 @@ export interface DeploySite {
      */
     doors: {
       path: string;
-      method?: "GET" | "POST";
+      /** `DELETE` depuis v3.31.0 : envoyé sans corps. Comme `POST`, à réserver aux portes fermées. */
+      method?: "GET" | "POST" | "DELETE";
       anonymous: number[];
       viewer?: number[];
     }[];

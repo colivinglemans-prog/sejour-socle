@@ -362,3 +362,31 @@ describe("report", () => {
     expect(out).toContain("[SAUTÉ] security.webhooks");
   });
 });
+
+describe("security — porte DELETE (v3.31.0)", () => {
+  it("part en DELETE, sans corps ni en-tête JSON, et passe si elle refuse comme déclaré", async () => {
+    const http = fakeHttp([
+      (path, opts) => (pathOf(path) === "/api/dashboard/codes/1" && opts.method === "DELETE" ? { status: 401 } : undefined),
+    ]);
+    const ctx: CheckContext = {
+      ...ctxWith([]),
+      site: { ...site, security: { ...site.security, doors: [{ path: "/api/dashboard/codes/1", method: "DELETE", anonymous: [401] }] } },
+      http,
+    };
+    const r = await run("security.anonymousDoors", ctx);
+    expect(r.status).toBe("pass");
+    const call = http.calls.find((c) => c.opts.method === "DELETE");
+    expect(call?.opts.body).toBeUndefined();
+    expect(call?.opts.headers).toBeUndefined();
+  });
+
+  it("échoue si la porte DELETE s'ouvre à un anonyme", async () => {
+    const http = fakeHttp([(path, opts) => (opts.method === "DELETE" ? { status: 200, body: { ok: true } } : undefined)]);
+    const ctx: CheckContext = {
+      ...ctxWith([]),
+      site: { ...site, security: { ...site.security, doors: [{ path: "/api/dashboard/codes/1", method: "DELETE", anonymous: [401] }] } },
+      http,
+    };
+    expect((await run("security.anonymousDoors", ctx)).status).toBe("fail");
+  });
+});

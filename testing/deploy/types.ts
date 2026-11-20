@@ -55,7 +55,7 @@ export interface HttpResponse {
 }
 
 export interface RequestOptions {
-  method?: "GET" | "POST" | "HEAD";
+  method?: "GET" | "POST" | "HEAD" | "DELETE";
   /** En-têtes non secrets. */
   headers?: Record<string, string>;
   /**
