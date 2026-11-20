@@ -1210,6 +1210,7 @@ amène à la page de paiement Beds24. **Rien n'est réservé ni payé par le soc
 | `lib/stay-agent-http.ts` | `createAgentRoute(cfg, depsFactory)` pour `app/api/agent/[tool]/route.ts` : GET seulement (une IA qui navigue ne sait pas faire de POST), CORS ouvert, `s-maxage` court, **jamais de cache sur un 5xx**. `runTool` sera repris tel quel par le serveur MCP. `openApi(cfg)`. |
 | `lib/quote-page.ts`, `components/QuoteSummary.tsx`, `lib/quote-labels.ts` | `loadQuotePage` revérifie à chaque affichage : `valid`, `price-changed` (nouveau prix affiché), `unavailable` (+ alternatives), `expired`, `invalid` (autre site ou falsifié), `unchecked` (panne : on montre le devis signé). Textes en 5 langues sauf `included`, propre au site. |
 | `lib/calendar-quote.ts` (+ prop `quote` de `ReservationCalendar`) | Bloc prix du calendrier (v3.29.0) : `interpretQuote` range la réponse de `/api/agent/quote` en `priced` / `refused` (refus **confirmés** seulement : unavailable, min-stay, no-check-in, no-check-out, capacity) / `fallback` (tout le reste : « prix sur la page de paiement », Réserver reste actif). Libellés 5 langues ; `formatEuro` (source unique, aussi pour `QuoteSummary`) ; texte du séjour minimum = `minStayText`. `included` et l'URL restent au site. |
+| `lib/go-to-anchor.ts` | `goToAnchor` (v3.30.1) : lien vers une ancre de la page affichée — défile au lieu du `<Link>` muet quand l'adresse porte déjà l'ancre ; garde la requête. |
 | `lib/stay-page.ts` | Page Séjour (v3.30.0) : `parseStayParams` (forme canonique unique `checkin, checkout, adults, children, src`, alias français acceptés puis 308 ; idempotent ; valeur illisible laissée à `validateRequest`), `loadStayPage` → `QuotePageState` (`invalid` avec motif traduit **sans appel Beds24**, `unavailable` traduit + remplacements, `live` avec ou sans `current`), `stayJsonLd` (`Offer` seulement pour un `live` chiffré, sérialisé par `jsonLdText`), `cleanSrc` (règle `src` unique, partagée avec l'API et le MCP), `stayQuery`. Rendu par `QuoteSummary`. |
 | `components/ReservationCalendar.tsx` | Pré-remplissage par `?arrivee=&depart=&adultes=&enfants=` : voyageurs tout de suite, dates **seulement** si le moteur de sélection les accepte une fois le mois chargé. |
 
@@ -1696,6 +1697,14 @@ tout identifiant de plus de 10 / 7 caractères — chez Albiez comme chez Barbus
   `_T`, la boucle des copies de test reviendrait et le départage redeviendrait aveugle.
 - Correctif : aucune signature publique ne change. Les deux sites montent sans modification de code
   (ils n'écrivent aucun code `MSG_` en dur) ; leur `validateTemplates` couvre leurs identifiants.
+
+### v3.30.1 — Liens « Réserver » vers une ancre déjà affichée (2026-11-20)
+
+- `lib/go-to-anchor.ts` (nouveau) : `goToAnchor(event, ancre)`, à brancher sur l'`onClick` des liens
+  « Réserver » vers le calendrier. Un `<Link>` de Next vers l'adresse déjà affichée, ancre comprise,
+  ne fait rien : dans l'appli mobile, après « Voir le calendrier », la barre du bas restait sans
+  effet (relevé par l'hôte). Si l'ancre est sur la page, on y défile en gardant la requête
+  (pré-remplissage) ; sinon `<Link>` navigue normalement. Correctif, aucune signature ne change.
 
 ### v3.30.0 — Page Séjour : le séjour chiffré en HTML, lisible sans JavaScript (2026-11-20)
 
