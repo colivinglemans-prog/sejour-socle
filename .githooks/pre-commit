@@ -1,0 +1,4 @@
+#!/bin/sh
+# Garde-fou avant commit : le depot est PUBLIC (scripts/garde-commit.mjs).
+# Active par : git config core.hooksPath .githooks
+exec node scripts/garde-commit.mjs

@@ -1,0 +1,2 @@
+# Hooks git : toujours en LF, sinon "#!/bin/sh\r" ne s execute pas.
+.githooks/* text eol=lf

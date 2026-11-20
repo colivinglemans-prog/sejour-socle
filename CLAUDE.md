@@ -185,6 +185,7 @@ deux validations.
 | — | Messages — **Beds24 tronque les codes d'`infoItem` à 20 caractères** : suffixes `_P` / `_T`, lecture des anciennes formes, toute trace relue avant l'envoi | `le-douanier`, `chef-de-stand`, `le-dahu` | `v3.26.1` |
 | — | Référencement — **grille de prix publiée en HTML** (`price-grid` : `buildPriceGrid`, générateurs, `priceGridOffer` ; composant `PriceGrid`) pour les pages « Tarifs » | relu : `le-douanier`, `cerbere`, `poisson-babel`, `le-dahu`, `chef-de-stand` (corrections intégrées) | `v3.27.0` |
 | — | Robustesse — **jeton Beds24 partagé** (`tokenStore`, fin des 429 sur `/authentication/token`), `check_availability` borné à `maxHorizonDays`, contrôles de déploiement sur préversion (`indexing.home` / `indexing.sitemapUrls` sautés, pas d'issue ni de priorité 5), portes `DELETE` | `le-douanier`, `le-dahu`, `chef-de-stand` | `v3.31.0` |
+| — | Sécurité — **garde-fou avant commit** des dépôts publics (`scripts/garde-commit.mjs` : fichiers exclus, valeurs de secrets du poste, exports de réservations) | `le-douanier`, `cerbere`, `le-dahu`, `chef-de-stand` | `v3.32.0` |
 | — | Veille des dates d'événements (`lib/events-watch.ts`) | — | `v0.7.0` |
 
 Plan détaillé : `C:\Users\alexa\.claude\plans\cheerful-toasting-rivest.md`.
@@ -1276,6 +1277,7 @@ Retours des tests voyageur du 2026-11-08.
 | `lib/stay-agent.ts` | `check_availability` rend `minStayByArrival` = séjour minimum **effectif** de chaque jour d'arrivée possible (6 nuits Beds24 + départ le samedi ⇒ 7) ; un jour absent n'accepte pas d'arrivée. Plus de `defaultMinStayNights` : `info.booking.minStay` dit que le minimum varie et renvoie à `check_availability` (`fallbackNights` n'est qu'un repli). |
 | `components/QuoteSummary.tsx`, `lib/quote-page.ts` | Détail ligne par ligne (`stayLines`, puis suppléments) ; `notes` (rappels du site, ex. accueil des jeunes enfants) ; `included` peut être une fonction des suppléments retenus ; `withSrc` garde l'origine (`src`) sur les liens du calendrier. |
 | `lib/indexnow.mjs`, `scripts/indexnow.mjs` | IndexNow (Bing, donc ChatGPT Search ; Yandex…) : `submitIndexNow`, `indexNowBody`, `sitemapUrls`, en JavaScript (Node n'enlève pas les types dans `node_modules`) ; le script n'est qu'un appelant. Clé publique par construction, une par site. |
+| `scripts/garde-commit.mjs` | Garde-fou avant commit des trois dépôts publics : fichier ignoré ajouté de force, valeur d'un secret du poste, export de réservations, secret de format connu. Appelé par le `.githooks/pre-commit` de chaque dépôt ; détail en v3.32.0. |
 
 **Note de version** (mineure, mais à lire avant de monter) :
 - `defaultMinStayNights` disparaît des réponses `info` et `availability` : `info.booking.minStay`
@@ -1698,6 +1700,65 @@ tout identifiant de plus de 10 / 7 caractères — chez Albiez comme chez Barbus
   `_T`, la boucle des copies de test reviendrait et le départage redeviendrait aveugle.
 - Correctif : aucune signature publique ne change. Les deux sites montent sans modification de code
   (ils n'écrivent aucun code `MSG_` en dur) ; leur `validateTemplates` couvre leurs identifiants.
+
+### v3.32.0 — Garde-fou avant commit des dépôts publics (2026-11-20)
+
+Base : `v3.31.0`. Un script ajouté, rien de modifié : un site monte sans rien changer, et le
+garde ne s'exécute que là où un dépôt l'appelle depuis son propre hook. Relu par `le-douanier`
+et `cerbere` (corrections intégrées).
+
+- **`scripts/garde-commit.mjs`** (audit de sécurité du 2026-11-20). Les trois dépôts sont
+  **publics**, et la violation du 24/07/2026 (deux sauvegardes Beds24 commitées faute de
+  `.gitignore`) montre qu'un `.gitignore` seul ne suffit pas. Il contrôle le **contenu indexé**
+  (`git cat-file blob :fichier`, filtre `ACMRT` : `commit -a` et `commit <chemin>` compris) et
+  refuse :
+  1. un fichier que le `.gitignore` exclut (`git add -f`), ou un `.env` / `.env.<x>` (hors
+     `.example`, `.sample`, `.template`). **Le `.gitignore` reste la seule source de vérité** :
+     pour versionner un fichier de `data/`, on l'ajoute à la liste blanche du `.gitignore` du
+     site, jamais au script ;
+  2. la **valeur** d'un secret du poste. Fichiers lus : `.env.local`, `.env.protocole`, `.env`
+     à la racine du worktree courant **et du worktree principal** (un worktree n'a pas de
+     `.env.local` : 31 sur 36 le 2026-11-20), plus `git config --get-all garde-commit.envFile`
+     (le clone du socle y liste les `.env.local` des deux sites). Grammaire de `dotenv` (celle
+     de Next) : guillemets, `\n`, multi-lignes, `#` qui coupe une valeur nue — la ligne entière
+     est alors aussi cherchée. Retenues : les variables au nom de secret (`SECRET`, `TOKEN`,
+     `PASSWORD`, `_PASS`, `_KEY`, `TOPIC`, `CODE`, `IBAN`…) d'au moins 8 caractères, ni booléen,
+     ni nombre, ni URL publique, ni adresse e-mail ; une URL à identifiants toujours ; un topic
+     ntfy et son dernier segment seul. **Codes courts** (`CODE`/`PIN`, 4 chiffres ou plus : boîte
+     à clés) cherchés bornés, dans les fichiers de données seulement. Faux positif sur une valeur
+     publique (une clé IndexNow, par exemple) : `git config garde-commit.ignorer <NOM>`, **décision
+     de l'hôte seulement** — réglage local et permanent, donc rappelé en avertissement à chaque
+     commit ; le message de refus ne le propose pas ;
+  3. un **export de réservations** dans un fichier de données (tout sauf code et Markdown, quelle
+     que soit l'extension, `.json.bak` compris ; UTF-16 à BOM décodé) : ≥ 5 clés personnelles JSON
+     (Beds24 v1 et v2), ou un en-tête CSV/TSV à ≥ 2 colonnes personnelles suivi de ≥ 5 lignes ;
+     et partout, un infoItem de serrure `NUKI_PIN` suivi de sa valeur chiffrée ;
+  4. un **secret de format connu**, absent du poste : clé privée PEM, clé de compte de service
+     Google, clé Stripe live, vidage d'environnement (≥ 3 lignes `…SECRET|TOKEN|PASSWORD…=`).
+- Le refus nomme le fichier et la variable, **jamais la valeur**. Tout échec de git refuse le
+  commit ; un fichier de plus de 20 Mo est refusé (rien ne dépasse 1 Mo dans les dépôts) ; sans
+  aucun fichier d'environnement, un avertissement dit que le contrôle 2 est inactif.
+- Point d'entrée résolu par `realpathSync` : il s'exécute aussi à travers une jonction
+  (`npm link`, dépendance `file:`), cas où il sortait à 0 sans rien contrôler.
+- Contournement : `git commit --no-verify`, **réservé à l'hôte**. Un agent corrige ou signale.
+- **Toujours pas de `prepare` ni de `postinstall`** : le hook s'active dans chaque clone par
+  `git config core.hooksPath .githooks` (config locale, partagée par les worktrees).
+- Branchement côté site — `.githooks/pre-commit` **en LF** (`.gitattributes` :
+  `.githooks/* text eol=lf`, le poste est en `core.autocrlf=true` et `#!/bin/sh\r` casse) et
+  exécutable (`git update-index --chmod=+x .githooks/pre-commit`) :
+
+  ```sh
+  #!/bin/sh
+  garde=node_modules/@sejour/socle/scripts/garde-commit.mjs
+  [ -f "$garde" ] || { echo "garde-commit absent : lancer npm ci dans ce dossier, puis recommencer le commit" >&2; exit 1; }
+  exec node "$garde"
+  ```
+
+  Le socle appelle `scripts/garde-commit.mjs` directement (même `.githooks/`, même `.gitattributes`).
+- Calibré le jour même sur les trois dépôts : 1 134 fichiers suivis, **aucun faux positif**.
+- Tests : `tests/garde-commit.test.ts` — fonctions pures, `controlerIndex` sur un dépôt jetable
+  (worktree, `envFile`, `ignorer`, renommage, UTF-16, accents), et le hook déclenché par un vrai
+  `git commit -a` / `git commit <chemin>`. Aucun appel réseau.
 
 ### v3.31.0 — Jeton Beds24 partagé, agent borné, contrôles sur préversion (2026-11-20)
 
