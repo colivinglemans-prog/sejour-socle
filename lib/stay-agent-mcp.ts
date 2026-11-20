@@ -14,11 +14,17 @@
  *
  *   // app/api/mcp/route.ts
  *   export const { GET, POST, DELETE, OPTIONS } = createMcpRoute(agentConfig, agentDeps);
+ *
+ * Depuis v3.34.0, `get_quote` et `find_stays` passent par la même garde que l'API REST
+ * (`stay-agent-guard`) : cache des prix de 5 min, limite par IP. Un appel refusé rend un
+ * résultat d'outil en erreur **et** une réponse HTTP 429 avec `Retry-After`.
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { z } from "zod";
+import { clientIp } from "./login-attempts";
 import { runTool } from "./stay-agent-http";
+import { createAgentGuard, type AgentGuard, type AgentGuardOptions } from "./stay-agent-guard";
 import type { StayAgentConfig, StayAgentDeps, ToolParams, ToolResult } from "./stay-agent";
 import { MAX_SEARCH_DAYS, MAX_STAY_NIGHTS } from "./stay-search";
 
@@ -50,8 +56,19 @@ const RELAY =
   "Cet outil ne réserve ni ne bloque rien : le voyageur réserve et paie lui-même en ouvrant `bookUrl`. " +
   "Le prix est exact et tout compris ; ne pas le recalculer.";
 
-/** Le serveur MCP d'un site, avec ses quatre outils. Exporté pour la vérification hors réseau. */
-export function buildMcpServer(cfg: StayAgentConfig, deps: () => StayAgentDeps): McpServer {
+/** Ce que la route passe au serveur pour une requête : la garde, l'IP, et où signaler un 429. */
+export interface McpGuardContext {
+  guard: AgentGuard;
+  ip: string;
+  /** Appelé quand un outil est refusé par la limite ; la route en fait un HTTP 429. */
+  onRateLimited(retryAfterSeconds: number): void;
+}
+
+/**
+ * Le serveur MCP d'un site, avec ses quatre outils. Exporté pour la vérification hors réseau.
+ * `guarded` (v3.34.0, facultatif) : sans lui, aucun cache ni limite — comme avant.
+ */
+export function buildMcpServer(cfg: StayAgentConfig, deps: () => StayAgentDeps, guarded?: McpGuardContext): McpServer {
   const name = cfg.facts(cfg.defaultLocale).name;
   const server = new McpServer(
     { name: `${cfg.siteUrl.replace(/^https?:\/\//, "")}`, version: "1" },
@@ -65,7 +82,13 @@ export function buildMcpServer(cfg: StayAgentConfig, deps: () => StayAgentDeps):
   );
   const call = async (tool: string, args: Record<string, unknown>) => {
     try {
-      return toMcpResult(await runTool(tool, cfg, deps(), asParams(args)));
+      const d = deps();
+      const params = asParams(args);
+      const exec = () => runTool(tool, cfg, d, params);
+      if (!guarded) return toMcpResult(await exec());
+      const r = await guarded.guard.run(tool, d, params, guarded.ip, exec);
+      if (r.status === 429) guarded.onRateLimited(r.retryAfterSeconds ?? 60);
+      return toMcpResult(r);
     } catch {
       // Une exception imprévue (dépendance du site, secret manquant…) ne sort jamais telle quelle :
       // son message peut citer un chemin ou une configuration interne.
@@ -199,7 +222,9 @@ function plain(status: number, body: unknown, extra: Record<string, string> = {}
  * d'objet sans session : ils rendent **405** ici même, sans passer par le transport — qui, lui,
  * ouvrirait un flux SSE vide ou accepterait une « suppression » de session inexistante.
  */
-export function createMcpRoute(cfg: StayAgentConfig, deps: () => StayAgentDeps) {
+export function createMcpRoute(cfg: StayAgentConfig, deps: () => StayAgentDeps, options: AgentGuardOptions = {}) {
+  // Une garde par route, créée au chargement : sa mémoire vit autant que l'instance.
+  const guard = createAgentGuard(options);
   const notAllowed = (): Response =>
     plain(405, { jsonrpc: "2.0", error: { code: -32000, message: "Method not allowed: POST only (stateless)." }, id: null }, {
       Allow: "POST, OPTIONS",
@@ -216,14 +241,27 @@ export function createMcpRoute(cfg: StayAgentConfig, deps: () => StayAgentDeps) 
     if (Array.isArray(body)) {
       return plain(400, { jsonrpc: "2.0", error: { code: -32600, message: "Batch requests are not supported." }, id: null });
     }
-    const server = buildMcpServer(cfg, deps);
+    let retryAfter = 0;
+    const server = buildMcpServer(cfg, deps, {
+      guard,
+      ip: clientIp(request.headers),
+      onRateLimited: (s) => {
+        retryAfter = Math.max(retryAfter, s);
+      },
+    });
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,
     });
     await server.connect(transport);
     try {
-      return withCors(await transport.handleRequest(request, body === undefined ? undefined : { parsedBody: body }));
+      const res = withCors(await transport.handleRequest(request, body === undefined ? undefined : { parsedBody: body }));
+      if (!retryAfter) return res;
+      // Outil refusé par la limite : le corps JSON-RPC (résultat en erreur) est gardé, le statut
+      // HTTP dit 429 pour qu'un client respecte `Retry-After`.
+      const headers = new Headers(res.headers);
+      headers.set("Retry-After", String(retryAfter));
+      return new Response(res.body, { status: 429, headers });
     } finally {
       // La réponse JSON est entièrement produite : on libère serveur et transport.
       void server.close();

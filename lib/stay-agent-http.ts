@@ -10,8 +10,15 @@
  *
  *   // app/api/agent/[tool]/route.ts
  *   export const { GET, OPTIONS } = createAgentRoute(agentConfig, agentDeps);
+ *
+ * Depuis v3.34.0, `quote` et `find` passent par `createAgentGuard` (`stay-agent-guard`) : cache
+ * des prix de 5 min indexé sur la requête normalisée — un paramètre aléatoire ne contourne
+ * plus rien — et limite par IP (30 / 10 min, 429 + `Retry-After`). Troisième argument
+ * facultatif pour brancher Redis ; sans lui, tout reste en mémoire de l'instance.
  */
 import { MAX_SEARCH_DAYS, MAX_STAY_NIGHTS } from "./stay-search";
+import { clientIp } from "./login-attempts";
+import { createAgentGuard, type AgentGuardOptions } from "./stay-agent-guard";
 import { find, propertyInfo, quote, availability, type StayAgentConfig, type StayAgentDeps, type ToolParams, type ToolResult } from "./stay-agent";
 
 export const AGENT_TOOLS = ["info", "availability", "quote", "find", "openapi"] as const;
@@ -23,14 +30,18 @@ const CORS = {
   "Access-Control-Allow-Headers": "Content-Type",
 };
 
-function json(r: ToolResult, maxAge: number): Response {
+function json(r: ToolResult & { retryAfterSeconds?: number }, maxAge: number): Response {
   return new Response(JSON.stringify(r.body, null, 2), {
     status: r.status,
     headers: {
       "Content-Type": "application/json; charset=utf-8",
       // Un refus pour panne ne se met pas en cache : il doit pouvoir réussir à la minute suivante.
-      // Ni une panne, ni un résultat partiel (206) ne se mettent en cache.
-      "Cache-Control": r.status >= 500 || r.status === 206 ? "no-store" : `public, s-maxage=${maxAge}, stale-while-revalidate=60`,
+      // Ni une panne, ni un résultat partiel (206), ni un refus de limite (429, propre à une IP).
+      "Cache-Control":
+        r.status >= 500 || r.status === 206 || r.status === 429
+          ? "no-store"
+          : `public, s-maxage=${maxAge}, stale-while-revalidate=60`,
+      ...(r.retryAfterSeconds ? { "Retry-After": String(r.retryAfterSeconds) } : {}),
       "X-Robots-Tag": "noindex",
       ...CORS,
     },
@@ -75,11 +86,15 @@ export async function runTool(
  * La route Next. `deps` est une fabrique : `today` doit être calculé à chaque requête, pas au
  * chargement du module (une instance chaude vit plusieurs jours).
  */
-export function createAgentRoute(cfg: StayAgentConfig, deps: () => StayAgentDeps) {
+export function createAgentRoute(cfg: StayAgentConfig, deps: () => StayAgentDeps, options: AgentGuardOptions = {}) {
+  // Une garde par route, créée au chargement : sa mémoire vit autant que l'instance.
+  const guard = createAgentGuard(options);
   return {
     async GET(request: Request, ctx: { params: Promise<{ tool: string }> }): Promise<Response> {
       const { tool } = await ctx.params;
-      const r = await runTool(tool, cfg, deps(), paramsOf(new URL(request.url)));
+      const d = deps();
+      const params = paramsOf(new URL(request.url));
+      const r = await guard.run(tool, d, params, clientIp(request.headers), () => runTool(tool, cfg, d, params));
       // La fiche et le schéma changent rarement ; les prix suivent le cache Beds24 (5 min).
       return json(r, tool === "info" || tool === "openapi" ? 3600 : 300);
     },
