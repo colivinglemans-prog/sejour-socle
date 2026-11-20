@@ -16,7 +16,7 @@ import { addDays, daysBetween } from "./dates";
 import { signQuote, QUOTE_VALIDITY_DAYS, type QuoteKeys } from "./quote-token";
 import { cleanSrc, stayQuery } from "./stay-page";
 import { isDay, quoteStay, selectionContext, type StayQuote, type StayQuoteConfig, type StayQuoteDeps } from "./stay-quote";
-import { findStays, MAX_SEARCH_DAYS, MAX_STAY_NIGHTS, nearbyStays, shortestStay, type PricedStay } from "./stay-search";
+import { findStays, MAX_SEARCH_DAYS, MAX_STAY_NIGHTS, nearbyStays, shortestStay, type PricedStay, type StaySearchDeps } from "./stay-search";
 
 /** Nuits ajoutées au plus pour atteindre un départ ouvert (deux semaines de rotation). */
 const MAX_EXTRA_NIGHTS = 14;
@@ -78,9 +78,23 @@ export interface StayAgentConfig {
    * effet sur le prix. Sans lui, un parent d'enfants de 5 ans ne sait pas quoi déclarer.
    */
   childrenDescription?: string;
+  /**
+   * `false` : aucun prix « par personne et par nuit » dans les réponses (`perPersonPerNight`
+   * retiré de `quote`, des alternatives et de `find`). Albiez, décision de l'hôte du 20/11/2026 :
+   * une IA le répète tel quel, et l'appartement se loue en entier. `true` par défaut.
+   */
+  perPersonPrice?: boolean;
 }
 
-export interface StayAgentDeps extends StayQuoteDeps {
+/** Un séjour chiffré tel que l'API le montre : sans prix par personne si le site n'en veut pas. */
+function shown<T extends { perPersonPerNight?: number }>(cfg: StayAgentConfig, q: T): T {
+  if (cfg.perPersonPrice !== false) return q;
+  const { perPersonPerNight: _drop, ...rest } = q;
+  void _drop;
+  return rest as T;
+}
+
+export interface StayAgentDeps extends StaySearchDeps {
   /** Secrets de signature des devis ; sans eux, pas de lien de devis (le reste fonctionne). */
   keys?: () => QuoteKeys;
 }
@@ -356,11 +370,13 @@ export async function quote(cfg: StayAgentConfig, deps: StayAgentDeps, p: ToolPa
   };
   const q: StayQuote = await quoteStay(cfg.quote, deps, req);
   if (q.ok) {
-    return { status: 200, body: { ...q, ...(await links(cfg, deps, q, lang, src, extras)), ...policies(cfg) } };
+    return { status: 200, body: { ...shown(cfg, q), ...(await links(cfg, deps, q, lang, src, extras)), ...policies(cfg) } };
   }
+  // Le devis vient d'appeler Beds24 : la pause vaut aussi avant la première alternative.
+  if (deps.pauseMs) await (deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms))))(deps.pauseMs);
   const alternatives = await nearbyStays(cfg.quote, deps, req, q).catch(() => []);
   const withLinks = await Promise.all(
-    alternatives.map(async (a) => ({ ...a, ...(await links(cfg, deps, a, lang, src, extras)) })),
+    alternatives.map(async (a) => ({ ...shown(cfg, a), ...(await links(cfg, deps, a, lang, src, extras)) })),
   );
   return {
     status: q.reason === "invalid-request" ? 400 : q.reason === "service-unavailable" ? 503 : 200,
@@ -393,7 +409,7 @@ export async function find(cfg: StayAgentConfig, deps: StayAgentDeps, p: ToolPar
     near,
     limit,
   });
-  const stays = await Promise.all(r.stays.map(async (s) => ({ ...s, ...(await links(cfg, deps, s, lang, src, extras)) })));
+  const stays = await Promise.all(r.stays.map(async (s) => ({ ...shown(cfg, s), ...(await links(cfg, deps, s, lang, src, extras)) })));
   if (stays.length) {
     // Panne en cours de route : résultat partiel, à ne pas mettre en cache comme complet.
     const partial = r.failure?.reason === "service-unavailable";

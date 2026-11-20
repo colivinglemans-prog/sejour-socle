@@ -97,18 +97,30 @@ export function roomPriceUrl(req: RoomPriceRequest): string {
 }
 
 /**
- * Interroge Beds24. Mis en cache 5 minutes par défaut par le cache de données de Next (`revalidate`) :
- * un même devis demandé deux fois par une IA ne coûte qu'un appel, et un prix vieux de cinq
- * minutes reste celui que la page de réservation affichera.
+ * Interroge Beds24.
+ *
+ * **Sans `revalidate` (depuis v3.36.0) : `cache: "no-store"`**, le prix frais de Beds24 — c'est le
+ * cas de tout prix montré à un visiteur ou à une IA (API agent, MCP, page Séjour, devis,
+ * calendrier). Avant v3.36.0, le prix passait par défaut par le cache de données de Next
+ * (`next.revalidate`, 5 min), qui est un **stale-while-revalidate** : une fois le délai
+ * passé, le premier appel reçoit encore l'ancienne valeur, **quel que soit son âge**, et le
+ * rafraîchissement part en arrière-plan. La clé ne contient pas `revalidate` : une entrée posée
+ * par la grille de prix (cache de plusieurs heures) est relue telle quelle par l'API. Mesuré le
+ * 20/11/2026 à Barbusse : 4 séjours sur 4 donnaient l'ancien prix au premier appel, le bon cinq
+ * secondes plus tard (jusqu'à 57,66 € d'écart). Les répétitions sont absorbées par la garde de
+ * l'agent et le cache CDN.
+ *
+ * Avec `revalidate` (la grille de prix seulement, qui assume des prix de quelques heures), le
+ * cache de données de Next reste utilisé, avec le piège ci-dessus.
  *
  * `fetchImpl` est injectable pour la vérification hors réseau.
  */
 export async function fetchRoomPrice(
   req: RoomPriceRequest,
-  { fetchImpl = fetch, revalidate = 300 }: { fetchImpl?: typeof fetch; revalidate?: number } = {},
+  { fetchImpl = fetch, revalidate }: { fetchImpl?: typeof fetch; revalidate?: number } = {},
 ): Promise<RoomPrice> {
   const res = await fetchImpl(roomPriceUrl(req), {
-    next: { revalidate },
+    ...(revalidate === undefined ? { cache: "no-store" } : { next: { revalidate } }),
     // Au-delà de 8 s, Beds24 est tenu pour en panne : le devis et la grille ne restent pas suspendus.
     signal: AbortSignal.timeout(8000),
   } as RequestInit);

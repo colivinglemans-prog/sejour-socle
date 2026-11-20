@@ -1705,6 +1705,41 @@ tout identifiant de plus de 10 / 7 caractères — chez Albiez comme chez Barbus
 - Correctif : aucune signature publique ne change. Les deux sites montent sans modification de code
   (ils n'écrivent aucun code `MSG_` en dur) ; leur `validateTemplates` couvre leurs identifiants.
 
+### v3.36.0 — Prix frais partout, alternatives du week-end (2026-11-20)
+
+Base : `v3.35.1`. Additif et rétrocompatible. Cause : test voyageur IA du 20/11 au soir (Barbusse
+8,5 → 8, Albiez 9 → 8). Plan `curried-mapping-stallman` v2, relu par Fable et `le-douanier`.
+
+- **Le piège (mesuré).** Le cache de données de Next (`fetch` avec `next.revalidate`) est un
+  **stale-while-revalidate** : passé le délai, le premier appel reçoit encore l'ancienne valeur,
+  **quel que soit son âge**, et le rafraîchissement part en arrière-plan. La clé ne contient pas
+  `revalidate` (URL, méthode, en-têtes, corps) : une entrée posée par la grille de prix (12-24 h)
+  était relue telle quelle par l'API. Reproduit en prod à Barbusse, 4 séjours sur 4 : l'ancien prix
+  au premier appel, le bon 5 s plus tard (`find` 1 534,16 € puis `quote` 1 476,50 €).
+- **`fetchRoomPrice` sans `revalidate` = `cache: "no-store"`.** Les `lib/agent.ts` des sites
+  appellent `fetchRoomPrice(req)` : ils deviennent frais sans changement. Avec `revalidate` (grille
+  seulement), le cache de Next reste, avec son piège — d'où le renouvellement par âge prévu en
+  v3.37.0.
+- **`StaySearchDeps`** (`stay-search`) = `StayQuoteDeps` + `pauseMs` / `sleep` : pause avant chaque
+  appel de prix sauf le premier dans `findStays`, et entre un devis refusé et ses alternatives
+  (`quoteWithAlternatives`, `quote` de l'agent). Le débit est réglé par le site, jamais par la
+  requête. `StayAgentDeps` en hérite. Mesures : 403 en alternance après ~20 appels sans pause
+  (19/11) ; 30/30 acceptés à 250 ms (20/11). Les sites posent 250 ms.
+- **CDN de l'API** : `quote`, `find`, `availability` en `public, s-maxage=120` **sans**
+  `stale-while-revalidate` (`PRICE_MAX_AGE`). Avec la garde (5 min par requête normalisée), un prix
+  servi a au plus 5 min.
+- **Alternatives du week-end** : `StaySearch.sameWeekdayFirst`, posé par `nearbyStays` quand la
+  demande refusée couvre la nuit du samedi : le meilleur séjour de même jour d'arrivée et de même
+  durée passe en tête (vendredi 18 → 20/12 pris : le 11 → 13/12 d'abord, plus 16-18 / 15-17 / 21-24
+  seulement). Une seule lecture de disponibilité. Un mardi pris garde l'ancien classement ; la
+  semaine du samedi d'Albiez est inchangée.
+- **`lowestTotal(grid, column, filter?)`** : « 7 nuits à partir de » sur les semaines de 7 nuits
+  seulement (Albiez citait un sous-séjour de 3 nuits à 238,57 €).
+- **`StayAgentConfig.perPersonPrice?: boolean`** (`true` par défaut) : à `false`, `perPersonPerNight`
+  disparaît de `quote`, des alternatives et de `find` (API et MCP). `interpretQuote` (calendrier)
+  l'accepte absent — sinon le calendrier d'Albiez retomberait sur « prix sur la page de paiement ».
+- Tests : `tests/prix-frais.test.ts`.
+
 ### v3.35.1 — nodemailer 10 (2026-11-20)
 
 Base : `v3.35.0`. Correctif de sécurité, sans changement d'API.

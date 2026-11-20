@@ -518,10 +518,15 @@ export function mergeColumns(grid: PriceGrid): PriceGrid {
   return { ...grid, columns, rows: grid.rows.map((r) => ({ ...r, cells: keep.map((i) => r.cells[i]) })) };
 }
 
-/** Le plus petit total affiché d'une colonne — la base d'un « à partir de X € ». */
-export function lowestTotal(grid: PriceGrid, column = 0): number | null {
+/**
+ * Le plus petit total affiché d'une colonne — la base d'un « à partir de X € ». `filter` restreint
+ * aux lignes de référence (v3.36.0) : « 7 nuits à partir de » ne doit pas citer le prix d'un
+ * séjour de 3 nuits glissé dans une semaine en partie prise (Albiez, test voyageur du 20/11/2026).
+ */
+export function lowestTotal(grid: PriceGrid, column = 0, filter?: (row: GridRow) => boolean): number | null {
   let min: number | null = null;
   for (const r of grid.rows) {
+    if (filter && !filter(r)) continue;
     const c = r.cells[column];
     if (c?.status === "available" && (min === null || c.total < min)) min = c.total;
   }

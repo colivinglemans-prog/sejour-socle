@@ -40,8 +40,11 @@ export type CalendarQuoteState =
   | {
       kind: "priced";
       total: number;
-      /** Repère pour un groupe, arrondi à l'euro par l'API. */
-      perPersonPerNight: number;
+      /**
+       * Repère pour un groupe, arrondi à l'euro par l'API. Absent quand le site ne publie pas de
+       * prix par personne (`StayAgentConfig.perPersonPrice: false`, Albiez).
+       */
+      perPersonPerNight?: number;
       /** Détail du total (nuits, ménage, linge, taxe), quand le site le fournit. */
       lines: QuoteLine[];
       /** Avertissements à lire avant de réserver (arrivée de dernière minute…). */
@@ -71,7 +74,9 @@ export function interpretQuote(status: number, body: unknown): CalendarQuoteStat
   const b = body as Record<string, unknown>;
 
   if (b.ok === true) {
-    if (!money(b.total) || b.total <= 0 || !money(b.perPersonPerNight)) return QUOTE_FALLBACK;
+    if (!money(b.total) || b.total <= 0) return QUOTE_FALLBACK;
+    // Facultatif (v3.36.0) ; présent, il doit être un montant.
+    if (b.perPersonPerNight !== undefined && !money(b.perPersonPerNight)) return QUOTE_FALLBACK;
     // Le détail doit retomber sur le total affiché : lignes du séjour, puis suppléments retenus.
     const rawLines = [...(Array.isArray(b.stayLines) ? b.stayLines : []), ...(Array.isArray(b.extras) ? b.extras : [])];
     const lines: QuoteLine[] = [];
@@ -81,7 +86,13 @@ export function interpretQuote(status: number, body: unknown): CalendarQuoteStat
       lines.push({ id: typeof x.id === "string" ? x.id : "", label: x.label, amount: x.amount });
     }
     const notices = (Array.isArray(b.notices) ? b.notices : []).filter(text);
-    return { kind: "priced", total: b.total, perPersonPerNight: b.perPersonPerNight, lines, notices };
+    return {
+      kind: "priced",
+      total: b.total,
+      ...(money(b.perPersonPerNight) ? { perPersonPerNight: b.perPersonPerNight } : {}),
+      lines,
+      notices,
+    };
   }
 
   if (b.ok === false && (CONFIRMED_REFUSALS as readonly unknown[]).includes(b.reason)) {

@@ -51,10 +51,52 @@ export interface StaySearch {
    * « 3 nuits du 21 au 24 » ; chez Albiez, un lundi fermé sur la semaine samedi → samedi.
    */
   maxExtraNights?: number;
+  /**
+   * Avec `near` : le meilleur séjour qui commence **le même jour de la semaine que `near`**, de
+   * **`nights` nuits exactement**, passe en tête. Posé par `nearbyStays` quand la demande refusée
+   * couvre la nuit du samedi : un week-end du vendredi pris doit d'abord proposer le week-end
+   * libre le plus proche, pas trois séjours en semaine plus près (test voyageur du 20/11/2026).
+   */
+  sameWeekdayFirst?: boolean;
 }
 
 /** Durée maximale d'un séjour chiffré : définie dans `stay-quote`, réexportée pour les appelants existants. */
 export { MAX_STAY_NIGHTS };
+
+/**
+ * Les dépendances d'une recherche : celles du devis, plus le **débit** vers Beds24 — réglé par le
+ * site, jamais par la requête (qu'une IA remplit).
+ */
+export interface StaySearchDeps extends StayQuoteDeps {
+  /**
+   * Pause avant chaque appel de prix sauf le premier, en millisecondes. 0 par défaut (tests).
+   * Depuis v3.36.0, les prix des visiteurs ne passent plus par le cache de Next (`fetchRoomPrice`
+   * sans `revalidate`) : chaque appel part chez Beds24, d'où la pause **à chaque appel** (pas
+   * seulement après un appel lent, comme la grille). Mesures de `getroomprice.php` : des 403 en
+   * alternance après une vingtaine d'appels enchaînés sans pause (19/11/2026) ; 30 appels sur 30
+   * acceptés avec 250 ms d'écart (20/11/2026).
+   */
+  pauseMs?: number;
+  /** Attente injectée (tests). */
+  sleep?: (ms: number) => Promise<void>;
+}
+
+/** La pause entre deux appels de prix d'une même recherche (aucune avant le premier). */
+function pacer(deps: StaySearchDeps): () => Promise<void> {
+  let first = true;
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  return async () => {
+    if (!first && deps.pauseMs) await sleep(deps.pauseMs);
+    first = false;
+  };
+}
+
+/**
+ * La nuit du samedi (0 = dimanche … 6 = samedi) : une demande refusée qui la contient est un
+ * week-end — ou une semaine du samedi chez Albiez —, et son remplaçant naturel commence le même
+ * jour de la semaine (voir `findStays`, `sameWeekdayFirst`).
+ */
+const SATURDAY = 6;
 
 export type PricedStay = Extract<StayQuote, { ok: true }>;
 
@@ -113,7 +155,7 @@ const EXTRA_NIGHT_WEIGHT = 3;
 
 export async function findStays(
   cfg: StayQuoteConfig,
-  deps: StayQuoteDeps,
+  deps: StaySearchDeps,
   q: StaySearch,
 ): Promise<StaySearchResult> {
   // `NaN` (paramètre illisible) ferait sauter le plafond d'appels : seul un entier est retenu.
@@ -193,6 +235,19 @@ export async function findStays(
     const score = (a: { day: string; nights: number }) =>
       EXTRA_NIGHT_WEIGHT * stretch(a) + Math.abs(daysBetween(near, a.day));
     arrivals.sort((a, b) => score(a) - score(b) || (a.day < b.day ? -1 : 1));
+    // Le même jour d'arrivée et la même durée d'abord, si demandé (`sameWeekdayFirst`) : le
+    // meilleur au classement, déplacé en tête. Il a la durée exacte : le placement suivant n'a
+    // alors rien à faire, et l'ancre du jour demandé ne le remplace pas (voir `weekdayPinned`).
+    let weekdayPinned = false;
+    if (q.sameWeekdayFirst) {
+      const wd = parseDate(near).getDay();
+      const at = arrivals.findIndex((a) => a.nights === q.nights && a.day !== near && parseDate(a.day).getDay() === wd);
+      if (at >= 0) {
+        const [pinned] = arrivals.splice(at, 1);
+        arrivals.unshift(pinned);
+        weekdayPinned = true;
+      }
+    }
     // Au moins un séjour de la durée exacte demandée, s'il en existe un : à Noël, la demande de
     // deux nuits doit aussi recevoir le week-end de deux nuits le plus proche, pas seulement des
     // séjours de trois nuits pendant les fêtes.
@@ -219,7 +274,7 @@ export async function findStays(
         if (at >= 0) arrivals.splice(at, 1);
         const exactAt = arrivals.slice(0, limit).findIndex((a) => a.nights === q.nights);
         const slot = exactAt === limit - 1 ? limit - 2 : limit - 1;
-        if (slot >= 0) {
+        if (slot >= (weekdayPinned ? 1 : 0)) {
           const anchor = { day: near, nights: n };
           if (slot >= arrivals.length) arrivals.push(anchor);
           else {
@@ -237,9 +292,11 @@ export async function findStays(
   // (une règle qui diffère de la nôtre), on s'arrête au lieu de l'interroger 120 fois.
   const maxAttempts = limit * 2;
   let attempts = 0;
+  const pace = pacer(deps);
   for (const { day, nights } of arrivals) {
     if (stays.length >= limit || attempts >= maxAttempts) break;
     attempts++;
+    await pace();
     const quote = await priceStay(cfg, deps, { ...probe, checkIn: day, checkOut: addDays(day, nights) });
     if (quote.ok) stays.push(quote);
     else {
@@ -262,7 +319,7 @@ export async function findStays(
  */
 export async function nearbyStays(
   cfg: StayQuoteConfig,
-  deps: StayQuoteDeps,
+  deps: StaySearchDeps,
   req: StayRequest,
   refused: Extract<StayQuote, { ok: false }>,
   windowDays = 21,
@@ -271,6 +328,11 @@ export async function nearbyStays(
   const dateBound = ["unavailable", "min-stay", "no-check-in", "no-check-out"];
   if (!dateBound.includes(refused.reason)) return [];
   const nights = Math.max(daysBetween(req.checkIn, req.checkOut), refused.minStay ?? 0);
+  // La demande couvre-t-elle la nuit du samedi ? Alors c'est un week-end (ou la semaine du samedi).
+  let weekend = false;
+  for (let d = req.checkIn; d < req.checkOut && !weekend; d = addDays(d, 1)) {
+    weekend = parseDate(d).getDay() === SATURDAY;
+  }
   const { stays } = await findStays(cfg, deps, {
     from: addDays(req.checkIn, -windowDays),
     to: addDays(req.checkIn, windowDays),
@@ -283,6 +345,7 @@ export async function nearbyStays(
     limit,
     purpose: req.purpose,
     maxExtraNights: 7,
+    sameWeekdayFirst: weekend,
   });
   return stays;
 }
@@ -295,11 +358,13 @@ export async function nearbyStays(
  */
 export async function quoteWithAlternatives(
   cfg: StayQuoteConfig,
-  deps: StayQuoteDeps,
+  deps: StaySearchDeps,
   req: StayRequest,
 ): Promise<{ quote: StayQuote; alternatives: PricedStay[] }> {
   const quote = await quoteStay(cfg, deps, req);
   if (quote.ok) return { quote, alternatives: [] };
+  // Le devis vient d'appeler Beds24 : la pause vaut aussi avant la première alternative.
+  if (deps.pauseMs) await (deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms))))(deps.pauseMs);
   const alternatives = await nearbyStays(cfg, deps, req, quote).catch((): PricedStay[] => []);
   return { quote, alternatives };
 }

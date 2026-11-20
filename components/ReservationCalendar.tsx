@@ -797,7 +797,7 @@ function QuoteBlock({
             {labels.total}{" "}
             <span className="text-xl font-semibold text-foreground">{formatEuro(state.total, lang)}</span>
           </p>
-          {labels.perPersonPerNight && (
+          {labels.perPersonPerNight && state.perPersonPerNight !== undefined && (
             <p className="text-xs text-secondary">
               {labels.perPersonPerNight(formatEuro(state.perPersonPerNight, lang, false))}
             </p>

@@ -30,6 +30,13 @@ const CORS = {
   "Access-Control-Allow-Headers": "Content-Type",
 };
 
+/**
+ * Durée de cache CDN des réponses qui portent un prix ou une disponibilité (`quote`, `find`,
+ * `availability`), en secondes, **sans** `stale-while-revalidate`. Avec la garde de l'agent
+ * (5 min par requête normalisée), un prix servi a au plus 5 min.
+ */
+export const PRICE_MAX_AGE = 120;
+
 function json(r: ToolResult & { retryAfterSeconds?: number }, maxAge: number): Response {
   return new Response(JSON.stringify(r.body, null, 2), {
     status: r.status,
@@ -40,7 +47,10 @@ function json(r: ToolResult & { retryAfterSeconds?: number }, maxAge: number): R
       "Cache-Control":
         r.status >= 500 || r.status === 206 || r.status === 429
           ? "no-store"
-          : `public, s-maxage=${maxAge}, stale-while-revalidate=60`,
+          : maxAge === PRICE_MAX_AGE
+            ? // Un prix : jamais de `stale-while-revalidate`, qui servirait un prix périmé (v3.36.0).
+              `public, s-maxage=${maxAge}`
+            : `public, s-maxage=${maxAge}, stale-while-revalidate=60`,
       ...(r.retryAfterSeconds ? { "Retry-After": String(r.retryAfterSeconds) } : {}),
       "X-Robots-Tag": "noindex",
       ...CORS,
@@ -95,8 +105,8 @@ export function createAgentRoute(cfg: StayAgentConfig, deps: () => StayAgentDeps
       const d = deps();
       const params = paramsOf(new URL(request.url));
       const r = await guard.run(tool, d, params, clientIp(request.headers), () => runTool(tool, cfg, d, params));
-      // La fiche et le schéma changent rarement ; les prix suivent le cache Beds24 (5 min).
-      return json(r, tool === "info" || tool === "openapi" ? 3600 : 300);
+      // La fiche et le schéma changent rarement ; les prix et la disponibilité, 2 min au CDN.
+      return json(r, tool === "info" || tool === "openapi" ? 3600 : PRICE_MAX_AGE);
     },
     OPTIONS(): Response {
       return new Response(null, { status: 204, headers: CORS });

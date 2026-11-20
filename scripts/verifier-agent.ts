@@ -785,7 +785,7 @@ async function main() {
   const rb = (await res.json()) as Record<string, unknown>;
   check("route HTTP : paramètres insensibles à la casse, CORS ouvert, cache court",
     res.status === 200 && rb.total === 1141.87 && res.headers.get("access-control-allow-origin") === "*" &&
-      (res.headers.get("cache-control") ?? "").includes("s-maxage=300"));
+      (res.headers.get("cache-control") ?? "") === "public, s-maxage=120");
 
   console.log(failures === 0 ? "\nDevis pour les IA : tout est cohérent.\n" : `\n${failures} vérification(s) en échec.\n`);
   process.exit(failures === 0 ? 0 : 1);
