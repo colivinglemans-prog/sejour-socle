@@ -36,7 +36,7 @@ on:
         type: string
         default: full
       base_url:
-        description: URL testée (vide = URL canonique du site)
+        description: "URL testée (vide = URL canonique du site). Une préversion n'ouvre jamais d'issue et n'alerte qu'en priorité 2 (v3.31.0)"
         type: string
         default: ""
       alert:
@@ -164,6 +164,22 @@ jobs:
             const site = process.env.SITE_NAME;
             let report = null;
             try { report = JSON.parse(fs.readFileSync("report/deploy-report.json", "utf8")); } catch {}
+
+            // Préversion (v3.31.0) : passage manuel avec `base_url` hors du domaine de production.
+            // Ni issue publique, ni priorité 5, ni état d'alerte touché : le détail part en
+            // priorité 2 (sans son), seulement s'il y a des KO. `production` absent (socle
+            // antérieur) = production, comme avant.
+            if (report && report.production === false) {
+              const ids = report.failingIds || [];
+              if (ids.length) {
+                const failing = (report.results || []).filter((r) => ids.includes(r.id));
+                const detail = failing.map((r) => `• ${r.title}${r.detail ? ` — ${r.detail}` : ""}`).join("\n");
+                core.setOutput("ntfy_priority", "2");
+                core.setOutput("ntfy_title", `[Préversion] ${site} : ${ids.length} contrôle(s) KO`);
+                core.setOutput("ntfy_body", `${detail}\n${runUrl}`);
+              }
+              return;
+            }
 
             // Pas de rapport du tout : le job de contrôles a planté avant la fin (dépendances,
             // runner). C'est une panne de la surveillance, signalée comme telle — jamais un vert.
