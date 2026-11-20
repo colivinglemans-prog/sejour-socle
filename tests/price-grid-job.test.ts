@@ -105,7 +105,17 @@ describe("runPriceGridJob : verrou et « incomplete » qui dure", () => {
     expect(m.data.has(`${CFG.key}:lock`)).toBe(false);
   });
 
-  it("au 3e « incomplete » de suite, relevé KO ; alerte au 2e relevé KO", async () => {
+  it("au 6e « incomplete » de suite (défaut), relevé KO ; les 5 premiers sont un remplissage normal", async () => {
+    const m = memory();
+    const slow = async () => {
+      throw new IncompleteGridError(28, 90);
+    };
+    const runs = [];
+    for (let i = 1; i <= 6; i++) runs.push(await runPriceGridJob(CFG, { store: m.store, build: slow, now: at(60 * i) }));
+    expect(runs.map((r) => Boolean(r.stalled))).toEqual([false, false, false, false, false, true]);
+  });
+
+  it("maxIncompleteStreak = 3 : relevé KO au 3e « incomplete » ; alerte au 2e relevé KO", async () => {
     const m = memory();
     const sent: PriceGridNotification[] = [];
     const notify = (n: PriceGridNotification) => {
@@ -115,7 +125,7 @@ describe("runPriceGridJob : verrou et « incomplete » qui dure", () => {
       throw new IncompleteGridError(10, 60);
     };
     const runs = [];
-    for (let i = 1; i <= 4; i++) runs.push(await runPriceGridJob(CFG, { store: m.store, build: slow, now: at(60 * i), notify }));
+    for (let i = 1; i <= 4; i++) runs.push(await runPriceGridJob({ ...CFG, maxIncompleteStreak: 3 }, { store: m.store, build: slow, now: at(60 * i), notify }));
     expect(runs.map((r) => Boolean(r.stalled))).toEqual([false, false, true, true]);
     expect(sent.map((n) => n.priority)).toEqual([4]); // ouverte au 4e passage (2e relevé KO)
   });

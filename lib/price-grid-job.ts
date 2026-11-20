@@ -14,7 +14,7 @@
  *   (24) : les lignes passées sont retirées et `stale` vaut `true` (la page n'émet plus de JSON-LD).
  *
  * - Un passage `incomplete` (temps épuisé, cache de prix froid) n'est pas un échec… tant qu'il ne
- *   dure pas : au 3e de suite, ou dès que le dernier succès date de plus de `staleHours`, il compte
+ *   dure pas : au `maxIncompleteStreak`-ième de suite (6), ou dès que le dernier succès date de plus de `staleHours`, il compte
  *   comme un relevé KO pour l'alerte (`stalled` dans le rapport, à compter en erreur par le site).
  * - Un **verrou** (`setIfAbsent(<clé>:lock, …, 90 s)`) empêche deux calculs simultanés, `dry`
  *   compris : un second appel rend `skipped`.
@@ -53,6 +53,13 @@ export interface PriceGridJobConfig {
   retryAfterMinutes?: number;
   /** Au-delà, sans succès, les passages `incomplete` comptent comme des échecs. 24 h par défaut. */
   staleHours?: number;
+  /**
+   * Nombre de passages `incomplete` de suite à partir duquel le passage compte comme un relevé KO.
+   * 6 par défaut : une grille d'une centaine de prix se remplit à froid en 4 passages (une
+   * trentaine de prix par passage de 22 s) ; avec des durées de cache étalées (`spreadTtl`), le
+   * régime normal reste à un passage.
+   */
+  maxIncompleteStreak?: number;
 }
 
 export interface PriceGridNotification {
@@ -147,7 +154,7 @@ async function locked(
       await deps.store.set(jobKey, JSON.stringify({ ...job, incompleteStreak: streak }));
       const staleMs = (cfg.staleHours ?? 24) * 3_600_000;
       const tooOld = job.lastSuccessAt !== undefined && now.getTime() - Date.parse(job.lastSuccessAt) > staleMs;
-      if (streak < 3 && !tooOld) return { outcome: "incomplete", reason: e.message };
+      if (streak < (cfg.maxIncompleteStreak ?? 6) && !tooOld) return { outcome: "incomplete", reason: e.message };
       // Ça dure : relevé KO pour l'alerte (deux de suite pour ouvrir), sans pause de 15 min — le
       // passage suivant doit pouvoir avancer avec les prix déjà en cache.
       const alert = await advanceAlert(cfg, deps, true, now);

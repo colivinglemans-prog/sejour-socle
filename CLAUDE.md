@@ -1695,6 +1695,25 @@ tout identifiant de plus de 10 / 7 caractères — chez Albiez comme chez Barbus
 - Correctif : aucune signature publique ne change. Les deux sites montent sans modification de code
   (ils n'écrivent aucun code `MSG_` en dur) ; leur `validateTemplates` couvre leurs identifiants.
 
+### v3.28.0 — Grille : semaines réservées visibles, durées de cache étalées (2026-11-20)
+
+Demande de l'hôte du 20/11 : à Albiez, afficher les semaines réservées comme à Barbusse ; à
+Barbusse, ajouter les séjours du lundi au vendredi (côté site : `weekendStays` avec
+`startWeekday: 1, nights: 4`).
+
+- `chainedStays` suit les **règles** du calendrier (arrivées et départs ouverts, séjours minimum)
+  mais **plus l'occupation** : une semaine réservée reste dans la suite et `buildPriceGrid` la
+  résout « complet » (aucun appel de prix). Auparavant elle disparaissait (l'arrivée avançait d'un
+  jour). Aucune règle de calendrier n'est écrite chez le site : une rotation du mardi est suivie.
+  Une semaine **en partie** prise garde le comportement de `resolveWindow` (plus long séjour libre
+  contenu, s'il respecte les règles ; sinon « complet »).
+- `spreadTtl(key, base, spread)` : durée de cache d'un prix étalée sur `[base, base + spread[`,
+  déterministe par séjour. Les prix d'une grille calculée d'un coup n'expirent plus tous ensemble
+  (12 h plus tard), ce qui imposait plusieurs passages « incomplete » de suite.
+- `PriceGridJobConfig.maxIncompleteStreak` (6 par défaut, 3 auparavant, codé en dur) : une grille
+  d'une centaine de prix se remplit à froid en ~4 passages de 22 s ; 3 donnait une fausse alerte.
+- Relecture : à faire (`le-douanier`, `le-dahu`, `chef-de-stand`).
+
 ### v3.27.0 — Grille de prix publiée en HTML : la page « Tarifs » (2026-11-19)
 
 Tests réels des 18-19/11/2026 dans ChatGPT, Gemini, Copilot et Perplexity : au mieux, ils trouvent

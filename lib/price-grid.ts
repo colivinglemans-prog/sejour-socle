@@ -172,7 +172,12 @@ export class DegradedGridError extends Error {
  * minimum du jour, jour de départ ouvert). Si la rotation de la saison est le samedi, la grille
  * suit le samedi ; si elle était le mardi, elle suivrait le mardi.
  *
- * Une arrivée impossible (nuit prise, arrivée fermée) fait avancer d'un jour. Quand la première
+ * Les séjours suivent les **règles** du calendrier (arrivées et départs ouverts, séjours minimum)
+ * mais **pas l'occupation** : une semaine déjà réservée reste dans la suite et sera résolue
+ * « complet » par `buildPriceGrid`. La grille montre donc les semaines prises (au lieu de les
+ * omettre) sans qu'aucune règle de calendrier ne soit écrite chez le site.
+ *
+ * Une arrivée impossible (arrivée fermée, durée impossible) fait avancer d'un jour. Quand la première
  * arrivée possible imposerait plus de `minNights` (arrivée un jeudi, départ ouvert le samedi
  * suivant : 9 nuits), une arrivée dans les six jours qui suivent donnant exactement `minNights`
  * est préférée : la grille montre des semaines, pas des séjours allongés.
@@ -181,7 +186,9 @@ export function chainedStays(
   span: ArrivalSpan,
   { minNights, maxExtraNights = 7 }: { minNights: number; maxExtraNights?: number },
 ): WindowSource {
-  return (ctx) => {
+  return (real) => {
+    // Les règles du calendrier, sans l'occupation : voir l'en-tête.
+    const ctx: SelectionContext = { ...real, isFree: () => true };
     const out: StayWindow[] = [];
     let d = span.from < ctx.today ? ctx.today : span.from;
     let guard = 0;
@@ -210,7 +217,7 @@ export function chainedStays(
 
 /**
  * Un séjour par semaine, arrivée un jour donné (5 = vendredi) pour `nights` nuits : le week-end
- * d'une maison de groupe. Rendu même quand il est pris : la ligne « complet » est une
+ * d'une maison de groupe, ou la semaine de travail (1 = lundi, 4 nuits). Rendu même quand il est pris : la ligne « complet » est une
  * information pour qui cherche un week-end.
  */
 export function weekendStays(
@@ -268,6 +275,18 @@ export function eventStays(
 /** Des périodes fournies telles quelles par le site (fêtes, vacances) : `[checkIn, checkOut[`. */
 export function fixedStays(periods: StayWindow[]): WindowSource {
   return (ctx) => periods.filter((p) => p.checkOut > ctx.today);
+}
+
+/**
+ * Durée de cache d'un prix **étalée** sur `[base, base + spread[`, déterministe par séjour : sans
+ * cela, tous les prix d'une grille calculée d'un coup expirent ensemble, et le passage qui suit
+ * doit tous les redemander — plusieurs passages « incomplete » de suite, donc une fausse alerte.
+ * Étalés, il n'en expire qu'une fraction à chaque passage horaire.
+ */
+export function spreadTtl(key: string, base: number, spread: number): number {
+  let h = 2166136261;
+  for (let i = 0; i < key.length; i++) h = Math.imul(h ^ key.charCodeAt(i), 16777619);
+  return base + ((h >>> 0) % Math.max(1, Math.floor(spread)));
 }
 
 // ── Résolution d'un séjour sur la disponibilité ───────────────────────────────────────

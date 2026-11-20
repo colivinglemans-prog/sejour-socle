@@ -9,6 +9,7 @@ import type { LocalEvent } from "../lib/events";
 import {
   buildPriceGrid,
   chainedStays,
+  spreadTtl,
   DegradedGridError,
   eventStays,
   IncompleteGridError,
@@ -119,6 +120,32 @@ describe("buildPriceGrid", () => {
     });
     expect(grid.rows.map((r) => r.checkIn)).toEqual(["2027-01-05", "2027-01-12", "2027-01-19", "2027-01-26"]);
     expect(grid.rows.every((r) => r.nights === 7)).toBe(true);
+  });
+
+  it("rotation du mardi : une semaine réservée reste une ligne « complet », sans règle écrite", async () => {
+    const closed: string[] = [];
+    for (let d = "2027-01-01"; d <= "2027-03-01"; d = addDays(d, 1)) {
+      if (new Date(`${d}T12:00:00`).getDay() !== 2) closed.push(d);
+    }
+    // La semaine du mardi 12 au mardi 19 est réservée (toutes ses nuits).
+    const taken: string[] = [];
+    for (let d = "2027-01-12"; d < "2027-01-19"; d = addDays(d, 1)) taken.push(d);
+    const { d, calls } = deps({ noIn: closed, noOut: closed, taken });
+    const grid = await buildPriceGrid(CFG, d, {
+      sources: [chainedStays({ from: "2027-01-01", to: "2027-01-31" }, { minNights: 7 })],
+      parties: [{ adults: 4, children: 0 }],
+    });
+    expect(grid.rows.map((r) => r.checkIn)).toEqual(["2027-01-05", "2027-01-12", "2027-01-19", "2027-01-26"]);
+    const booked = grid.rows.find((r) => r.checkIn === "2027-01-12")!;
+    expect(booked.cells[0].status).toBe("taken");
+    expect(calls).toHaveLength(3); // la semaine prise ne coûte aucun appel de prix
+  });
+
+  it("spreadTtl étale les durées de cache, de façon déterministe", () => {
+    const ttls = ["a", "b", "c", "d", "e", "f", "g", "h"].map((k) => spreadTtl(k, 43_200, 43_200));
+    expect(ttls.every((t) => t >= 43_200 && t < 86_400)).toBe(true);
+    expect(new Set(ttls).size).toBeGreaterThan(4);
+    expect(spreadTtl("a", 43_200, 43_200)).toBe(ttls[0]);
   });
 
   it("lit l'hiver et l'été séparément, sans les mois creux entre les deux", async () => {
