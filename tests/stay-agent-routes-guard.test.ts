@@ -67,16 +67,17 @@ describe("createMcpRoute", () => {
       }),
     });
 
-  it("un outil de prix refusé par la limite rend HTTP 429 et Retry-After", async () => {
+  it("un outil refusé par la limite rend HTTP 200 et un résultat isError « réessayez dans N s »", async () => {
     const { POST } = createMcpRoute(cfg, deps, { rateLimitMax: 1 });
     const first = await POST(call(1, 2));
     expect(first.status).toBe(200);
     const second = await POST(call(2, 3));
-    expect(second.status).toBe(429);
-    expect(Number(second.headers.get("Retry-After"))).toBeGreaterThan(0);
+    // Pas de 429 : le client MCP du SDK lèverait une erreur de transport.
+    expect(second.status).toBe(200);
     const body = await second.json();
     expect(body.result.isError).toBe(true);
     expect(body.result.structuredContent).toMatchObject({ reason: "rate-limited" });
+    expect(body.result.content[0].text).toMatch(/Réessayez dans \d+ s/);
     expect(quote).toHaveBeenCalledTimes(1);
   });
 });

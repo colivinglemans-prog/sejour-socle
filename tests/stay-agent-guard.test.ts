@@ -22,11 +22,16 @@ describe("priceCacheKey", () => {
     expect(priceCacheKey("quote", { ...Q, x: "123" }, deps.today)).toBe(priceCacheKey("quote", Q, deps.today));
   });
 
-  it("normalise listes, langue et casse", () => {
+  it("normalise comme l'outil lit : jours en minuscules sans espaces, langue sur deux lettres", () => {
     const base = { from: "2027-01-01", to: "2027-01-31", nights: "3", adults: "2" };
-    const a = priceCacheKey("find", { ...base, weekdays: "sat,FRI", lang: "fr-FR" }, deps.today);
-    const b = priceCacheKey("find", { ...base, weekdays: "fri, sat", lang: "fr" }, deps.today);
+    const a = priceCacheKey("find", { ...base, weekdays: "FRI, sat", lang: "fr-FR" }, deps.today);
+    const b = priceCacheKey("find", { ...base, weekdays: "fri,sat", lang: "fr" }, deps.today);
     expect(a).toBe(b);
+  });
+
+  it("pas de normalisation que l'outil ne fait pas : ` en` n'est pas `en`, ` 2` n'est pas `2`", () => {
+    expect(priceCacheKey("quote", { ...Q, lang: " en" }, deps.today)).not.toBe(priceCacheKey("quote", { ...Q, lang: "en" }, deps.today));
+    expect(priceCacheKey("quote", { ...Q, adults: " 2" }, deps.today)).not.toBe(priceCacheKey("quote", Q, deps.today));
   });
 
   it("les dates, les voyageurs et le jour courant changent la clé", () => {
@@ -92,6 +97,22 @@ describe("createAgentGuard — cache", () => {
     expect(exec).toHaveBeenCalledTimes(2);
   });
 
+  it("un cache trop lent (plus de 1,5 s) est ignoré", async () => {
+    vi.useFakeTimers();
+    try {
+      const slow: PriceCacheStore = { get: () => new Promise(() => {}), set: () => new Promise(() => {}) };
+      const guard = createAgentGuard({ priceCache: slow });
+      const exec = vi.fn(async () => ok());
+      const pending = guard.run("quote", deps, Q, "ip", exec);
+      await vi.advanceTimersByTimeAsync(1_500);
+      await vi.advanceTimersByTimeAsync(1_500);
+      expect((await pending).status).toBe(200);
+      expect(exec).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("le magasin Redis préfixe, expire en PX et relit un objet désérialisé par Upstash", async () => {
     const data = new Map<string, unknown>();
     const redis = {
@@ -134,6 +155,14 @@ describe("createAgentGuard — limite par IP", () => {
     const exec = vi.fn(async () => ok());
     for (let i = 0; i < 10; i++) expect((await guard.run("quote", deps, Q, "ip", exec)).status).toBe(200);
     expect(exec).toHaveBeenCalledTimes(1);
+  });
+
+  it("une requête invalide (400) ne compte pas", async () => {
+    const guard = createAgentGuard({ rateLimitMax: 1 });
+    const bad = vi.fn(async (): Promise<ToolResult> => ({ status: 400, body: { ok: false } }));
+    for (let i = 0; i < 5; i++) expect((await guard.run("quote", deps, { ...Q, adults: `x${i}` }, "ip", bad)).status).toBe(400);
+    expect((await guard.run("quote", deps, Q, "ip", async () => ok())).status).toBe(200);
+    expect((await guard.run("quote", deps, { ...Q, adults: "3" }, "ip", async () => ok())).status).toBe(429);
   });
 
   it("les outils sans prix ne comptent pas", async () => {

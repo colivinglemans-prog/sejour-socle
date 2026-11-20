@@ -1737,13 +1737,17 @@ jeton public partagé avec le calendrier, et le cache CDN de `/api/agent/*` se c
 paramètre aléatoire.
 
 - **Cache** indexé sur la requête normalisée (`priceCacheKey`) : outil, paramètres **connus** de
-  l'outil (les autres sont ignorés), listes triées, langue sur deux lettres, `src` nettoyé, et
-  `today`. Seuls les 200 sont gardés (ni 206, ni 4xx, ni 5xx). Durée 5 min.
-- **Limite par IP** : 30 requêtes de prix par 10 min, puis **429 + `Retry-After`** (`no-store`,
-  jamais en cache CDN). Seules les requêtes qui manquent le cache comptent. Le compteur
+  l'outil (les autres sont ignorés), chacun ramené **exactement** comme l'outil le lit (`lang`
+  comme `langOf`, sans `trim` ; `extras`, `weekdays`, `src` comme `stay-agent`), et `today`.
+  Seuls les 200 sont gardés (ni 206, ni 4xx, ni 5xx). Durée 5 min. Lectures et écritures
+  bornées à 1,5 s, comme `tokenStore`.
+- **Limite par IP** : 30 requêtes de prix par 10 min. REST : **429 + `Retry-After`**
+  (`no-store`, jamais en cache CDN). MCP : HTTP **200** avec un résultat d'outil `isError`
+  (`reason: "rate-limited"`, « réessayez dans N s ») — un 429 ferait lever au client du SDK une
+  erreur de transport. Seules les requêtes qui manquent le cache comptent ; une requête
+  invalide (400) est rendue au compteur (`unhit`, si le magasin l'a). Le compteur
   **réutilise** `LoginAttemptStore` (`lib/login-attempts.ts`) — même fenêtre par IP, chemin
-  atomique `hit` si le magasin l'a. MCP : l'outil refusé rend un résultat `isError`
-  (`reason: "rate-limited"`) et la réponse HTTP passe en 429 avec `Retry-After`.
+  atomique `hit` si le magasin l'a.
 - **Rien d'obligatoire** : sans option, cache et limite vivent en mémoire de l'instance. Un
   magasin en panne ne bloque jamais (cache : servi sans lui ; compteur : repli en mémoire,
   un avertissement).

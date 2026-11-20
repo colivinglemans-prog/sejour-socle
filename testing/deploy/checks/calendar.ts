@@ -2,8 +2,9 @@
  * Contrôles du calendrier public de réservation.
  *
  * Le calendrier est le chemin qui produit le chiffre d'affaires direct, et il tombe en panne
- * **en silence** : une clé absente est traitée comme libre par `longestFreeRange`, comme
- * occupée par le composant ; un jeton public révoqué rend un calendrier muet ; un cache figé
+ * **en silence** : une clé absente est traitée comme non réservable (par `longestFreeRange`
+ * depuis v3.34.0, comme par le composant), si bien qu'une réponse incomplète masque des nuits
+ * vendables ; un jeton public révoqué rend un calendrier muet ; un cache figé
  * affiche des nuits vendues. Aucun de ces cas ne produit d'erreur visible côté visiteur.
  *
  * - `calendar.complete` interroge la route publique **comme le composant** : fenêtres de deux
