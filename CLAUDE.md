@@ -191,6 +191,7 @@ deux validations.
 | — | Sécurité — **garde-commit en CI** (`--depuis <réf>` : fichiers modifiés d'une PR ou d'un push) | `cerbere` | `v3.35.0` |
 | — | Sécurité — **nodemailer 10** (paire optionnelle `^6.10.1 || ^10.6.1`, les sites en `^10.6.1` ; la 6 cumule 18 avis, dont injection SMTP et envoi vers un domaine non voulu) | — | `v3.35.1` |
 | — | Prix — **prix frais partout** (`fetchRoomPrice` sans `revalidate` = `no-store`), `StaySearchDeps.pauseMs`, CDN des prix 120 s sans SWR, alternatives du week-end (`sameWeekdayFirst`), `lowestTotal(filter)`, `perPersonPrice` | `monsieur-loyal` | `v3.36.0` |
+| — | Prix — **grille renouvelée par âge** (`buildPriceGrid({ previous })`, `pricedAt`, `runPriceGridJob({ incremental })`, `<clé>:work`, `readPriceGrid().priced`, `pricedRange`) | — | `v3.37.0` |
 | — | Veille des dates d'événements (`lib/events-watch.ts`) | — | `v0.7.0` |
 
 Plan détaillé : `C:\Users\alexa\.claude\plans\cheerful-toasting-rivest.md`.
@@ -1705,6 +1706,32 @@ tout identifiant de plus de 10 / 7 caractères — chez Albiez comme chez Barbus
   `_T`, la boucle des copies de test reviendrait et le départage redeviendrait aveugle.
 - Correctif : aucune signature publique ne change. Les deux sites montent sans modification de code
   (ils n'écrivent aucun code `MSG_` en dur) ; leur `validateTemplates` couvre leurs identifiants.
+
+### v3.37.0 — Grille de prix renouvelée par âge (2026-11-20)
+
+Base : `v3.36.0`. Additif : sans `previous` / `incremental`, la grille se calcule comme avant.
+Plan `curried-mapping-stallman` v2, section B (corrections de Fable intégrées).
+
+- **Pourquoi.** La grille passait par le cache de données de Next (12-24 h, puis 6-12 h) : prix de
+  la veille affichés (Albiez 575,10 € pour 620,24 €, Barbusse jusqu'à 54 € d'écart), et une date
+  (`generatedAt`) qui disait l'heure du cron, pas l'âge des prix.
+- **`buildPriceGrid({ previous })`** (même `null`) : chaque cellule porte `pricedAt` (instant de
+  l'appel Beds24, y compris `taken`, `no-price`, `price-blocked`) ; les cellules jamais demandées
+  passent d'abord, puis les plus anciennes, dans `timeBudgetMs` — **jamais** `IncompleteGridError`.
+  Panne pour une cellule : la précédente reste, avec son âge. `DegradedGridError` si ≥ 3 pannes et
+  au-delà de `maxFailureRatio` **des appels du passage**. Grille rendue **non fusionnée**, avec
+  `complete` (`false` tant qu'une cellule est `pending`). Les prix doivent venir de Beds24 **sans
+  cache** (`fetchRoomPrice` sans `revalidate`) ; la pause vaut avant chaque appel sauf le premier.
+- **`runPriceGridJob` avec `incremental: true`** : `build(previous)` reçoit la grille de travail
+  (`<clé>:work`, sinon la grille servie, même composition). La grille de travail est rangée à chaque
+  passage, même partielle (démarrage à froid : le suivant reprend) ; la grille servie (`<clé>`) n'est
+  remplacée que par une grille complète. Relevé KO (alerte au 2e, règle du socle) si la grille reste
+  incomplète `maxIncompleteStreak` fois, ou si le plus vieux prix rangé dépasse `staleHours`.
+- **`readPriceGrid`** : fusionne les colonnes à la lecture (`mergeColumns`), `stale` sur le plus vieux
+  `pricedAt`, et rend `priced: { oldest, newest }` — la date honnête à afficher.
+- **`pricedRange(grid)`** exporté.
+- **Changer la composition** côté site en passant au mode par âge (la grille rangée change de forme).
+- Tests : `tests/grille-par-age.test.ts`.
 
 ### v3.36.0 — Prix frais partout, alternatives du week-end (2026-11-20)
 

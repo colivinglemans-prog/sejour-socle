@@ -73,12 +73,18 @@ export type GridCell =
       /** Le détail, quand le site fournit `breakdown`. */
       lines?: QuoteLine[];
       perPersonPerNight: number;
+      /** Instant de l'appel Beds24 qui a donné ce prix, ISO (grille renouvelée par âge, v3.37.0). */
+      pricedAt?: string;
     }
-  | { status: "taken" }
+  | { status: "taken"; pricedAt?: string }
   | {
-      /** Pas de prix affichable : panne, garde-fou, pas de tarif, ou prix publics coupés. */
+      /**
+       * Pas de prix affichable : panne, garde-fou, pas de tarif, prix publics coupés — ou
+       * `pending` : pas encore demandé (grille partielle d'un démarrage à froid, jamais servie).
+       */
       status: "on-request";
-      reason: "disabled" | "service-unavailable" | "price-blocked" | "no-price" | "capacity" | "rule";
+      reason: "disabled" | "service-unavailable" | "price-blocked" | "no-price" | "capacity" | "rule" | "pending";
+      pricedAt?: string;
     };
 
 export interface GridRow {
@@ -103,6 +109,11 @@ export interface PriceGrid {
   generatedAt: string;
   /** `false` quand les prix publics sont coupés (interrupteur du site). */
   pricesShown: boolean;
+  /**
+   * Grille renouvelée par âge (`previous`) : `false` tant qu'une cellule n'a jamais été demandée
+   * (démarrage à froid). Une grille incomplète n'est jamais servie (`price-grid-job`).
+   */
+  complete?: boolean;
 }
 
 export interface BuildPriceGridOptions {
@@ -141,6 +152,21 @@ export interface BuildPriceGridOptions {
   clock?: () => number;
   /** Instant du calcul, injecté pour les tests. */
   now?: Date;
+  /**
+   * **Renouvellement par âge** (v3.37.0). Fourni (même `null`), le calcul :
+   * - reprend chaque cellule de `previous` (mêmes dates, même groupe) ;
+   * - redemande d'abord les cellules **jamais demandées**, puis les **plus anciennes**
+   *   (`pricedAt`), tant que `timeBudgetMs` le permet, **sans** lever `IncompleteGridError` ;
+   * - garde la cellule précédente si Beds24 est en panne pour elle ;
+   * - rend la grille **non fusionnée** (`mergeColumns` à la lecture : sinon le `pricedAt` des
+   *   colonnes réunies serait perdu), avec `complete` et un `pricedAt` sur chaque cellule demandée.
+   *
+   * Les prix doivent alors venir de Beds24 **sans cache** (`fetchRoomPrice` sans `revalidate`) :
+   * c'est l'âge de chaque cellule qui fait la fraîcheur, plus le cache de Next (stale-while-
+   * revalidate, qui servait des prix de la veille : test voyageur du 20/11/2026).
+   * `undefined` : l'ancien calcul complet (`IncompleteGridError` si le temps manque).
+   */
+  previous?: PriceGrid | null;
 }
 
 /**
@@ -376,6 +402,7 @@ export async function buildPriceGrid(
     timeBudgetMs,
     clock = Date.now,
     now = new Date(),
+    previous,
   }: BuildPriceGridOptions,
 ): Promise<PriceGrid> {
   // Sans `onAnomaly` : voir l'en-tête. Le reste des dépendances est celui du devis.
@@ -440,6 +467,19 @@ export async function buildPriceGrid(
     )
     .sort(byDates);
 
+  if (previous !== undefined) {
+    return renewByAge(cfg, quiet, rows, parties, previous, {
+      enabled,
+      priceLang,
+      maxFailureRatio,
+      pauseMs,
+      sleep,
+      timeBudgetMs,
+      clock,
+      now,
+    });
+  }
+
   const planned = enabled ? rows.filter((r) => !r.cells.length).length * parties.length : 0;
   const maxFailed = Math.floor(maxFailureRatio * planned);
   let failed = 0;
@@ -497,6 +537,133 @@ export async function buildPriceGrid(
     generatedAt: now.toISOString(),
     pricesShown: enabled,
   });
+}
+
+const cellKey = (checkIn: string, checkOut: string, p: Party) => `${checkIn}/${checkOut}/${p.adults}/${p.children}`;
+const isPending = (c: GridCell) => c.status === FAILURE && c.reason === "pending";
+
+/** Le calcul par âge (`BuildPriceGridOptions.previous`) : voir là. */
+async function renewByAge(
+  cfg: StayQuoteConfig,
+  deps: StayQuoteDeps,
+  rows: GridRow[],
+  parties: Party[],
+  previous: PriceGrid | null,
+  o: {
+    enabled: boolean;
+    priceLang: string;
+    maxFailureRatio: number;
+    pauseMs: number;
+    sleep: (ms: number) => Promise<void>;
+    timeBudgetMs?: number;
+    clock: () => number;
+    now: Date;
+  },
+): Promise<PriceGrid> {
+  const started = o.clock();
+  const stamp = () => new Date(o.now.getTime() + (o.clock() - started)).toISOString();
+  // Les cellules précédentes, par dates et groupe. Une grille fusionnée (colonnes de plusieurs
+  // groupes) est relue groupe par groupe.
+  const before = new Map<string, GridCell>();
+  for (const r of previous?.rows ?? []) {
+    previous!.columns.forEach((col, i) => {
+      const c = r.cells[i];
+      if (c) for (const p of col.parties) before.set(cellKey(r.checkIn, r.checkOut, p), c);
+    });
+  }
+
+  type Task = { row: GridRow; i: number; party: Party; prev?: GridCell };
+  const tasks: Task[] = [];
+  for (const row of rows) {
+    if (row.cells.length) {
+      // Ligne « complet » d'après la disponibilité lue à l'instant : rien à demander.
+      row.cells = row.cells.map((c) => ({ ...c, pricedAt: o.now.toISOString() }));
+      continue;
+    }
+    parties.forEach((party, i) => {
+      if (!o.enabled) {
+        row.cells[i] = { status: FAILURE, reason: "disabled" };
+        return;
+      }
+      const req = { checkIn: row.checkIn, checkOut: row.checkOut, adults: party.adults, children: party.children, lang: o.priceLang };
+      const invalid = validateRequest(cfg, req, deps.today);
+      if (invalid && !invalid.ok) {
+        row.cells[i] = { status: FAILURE, reason: invalid.reason === "capacity" ? "capacity" : "rule" };
+        return;
+      }
+      const prev = before.get(cellKey(row.checkIn, row.checkOut, party));
+      const usable = prev && prev.pricedAt && !isPending(prev) ? prev : undefined;
+      row.cells[i] = usable ?? { status: FAILURE, reason: "pending" };
+      tasks.push({ row, i, party, prev: usable });
+    });
+  }
+  // Jamais demandées d'abord (dans l'ordre de la grille : tri stable), puis la plus ancienne.
+  const age = (t: Task) => (t.prev?.pricedAt ? Date.parse(t.prev.pricedAt) : -Infinity);
+  tasks.sort((a, b) => age(a) - age(b));
+
+  const deadline = o.timeBudgetMs ? started + o.timeBudgetMs : Infinity;
+  let calls = 0;
+  let failed = 0;
+  for (const t of tasks) {
+    // Chaque appel part chez Beds24 (pas de cache) : la pause vaut avant chacun, sauf le premier.
+    if (calls > 0 && o.pauseMs) await o.sleep(o.pauseMs);
+    if (o.clock() > deadline) break;
+    calls++;
+    const q = await priceStay(cfg, deps, {
+      checkIn: t.row.checkIn,
+      checkOut: t.row.checkOut,
+      adults: t.party.adults,
+      children: t.party.children,
+      lang: o.priceLang,
+    });
+    const at = stamp();
+    if (q.ok) {
+      t.row.cells[t.i] = {
+        status: "available",
+        total: q.stayTotal,
+        lines: q.stayLines,
+        perPersonPerNight: q.perPersonPerNight,
+        pricedAt: at,
+      };
+    } else if (q.reason === "service-unavailable") {
+      failed++;
+      // La cellule précédente reste, son `pricedAt` dit son âge. Au-delà du seuil, rapporté aux
+      // appels **de ce passage**, on s'arrête : insister aggrave la limitation de Beds24.
+      if (failed >= 3 && failed > o.maxFailureRatio * calls) throw new DegradedGridError(failed, calls);
+    } else if (q.reason === "unavailable") {
+      // Beds24 refuse alors que nos règles acceptaient : il a le dernier mot.
+      t.row.cells[t.i] = { status: "taken", pricedAt: at };
+    } else if (q.reason === "price-blocked" || q.reason === "no-price") {
+      t.row.cells[t.i] = { status: FAILURE, reason: q.reason, pricedAt: at };
+    } else {
+      t.row.cells[t.i] = { status: FAILURE, reason: "rule", pricedAt: at };
+    }
+  }
+
+  return {
+    columns: parties.map((p) => ({ parties: [p] })),
+    rows,
+    generatedAt: o.now.toISOString(),
+    pricesShown: o.enabled,
+    complete: rows.every((r) => r.cells.every((c) => !isPending(c))),
+  };
+}
+
+/**
+ * L'âge des prix d'une grille renouvelée par âge : le plus ancien et le plus récent `pricedAt`.
+ * `null` pour une grille sans `pricedAt` (calcul complet d'avant v3.37.0).
+ */
+export function pricedRange(grid: PriceGrid): { oldest: string; newest: string } | null {
+  let oldest: string | null = null;
+  let newest: string | null = null;
+  for (const r of grid.rows) {
+    for (const c of r.cells) {
+      if (!c.pricedAt) continue;
+      if (oldest === null || c.pricedAt < oldest) oldest = c.pricedAt;
+      if (newest === null || c.pricedAt > newest) newest = c.pricedAt;
+    }
+  }
+  return oldest && newest ? { oldest, newest } : null;
 }
 
 const sameCell = (a: GridCell, b: GridCell) =>

@@ -35,7 +35,7 @@ export interface PriceGridStore extends HeartbeatStore {
 
 /** Durée du verrou : plus que les 60 s d'une route de cron. */
 const LOCK_SECONDS = 90;
-import { DegradedGridError, IncompleteGridError, type PriceGrid } from "./price-grid";
+import { DegradedGridError, IncompleteGridError, mergeColumns, pricedRange, type PriceGrid } from "./price-grid";
 
 export interface StoredPriceGrid {
   grid: PriceGrid;
@@ -60,6 +60,14 @@ export interface PriceGridJobConfig {
    * régime normal reste à un passage.
    */
   maxIncompleteStreak?: number;
+  /**
+   * **Renouvellement par âge** (v3.37.0) : `build` reçoit la grille de travail précédente et la
+   * renouvelle cellule par cellule (`buildPriceGrid({ previous })`). La grille de travail est
+   * rangée **à chaque passage** sous `<clé>:work`, même partielle (démarrage à froid : le passage
+   * suivant reprend où il s'est arrêté) ; la grille servie (`<clé>`) n'est remplacée que par une
+   * grille **complète**. L'alerte suit l'âge du plus vieux prix (`staleHours`), plus `generatedAt`.
+   */
+  incremental?: boolean;
 }
 
 export interface PriceGridNotification {
@@ -70,8 +78,11 @@ export interface PriceGridNotification {
 
 export interface PriceGridJobDeps {
   store: PriceGridStore;
-  /** Le calcul, avec ses dépendances Beds24 déjà branchées par le site. */
-  build: () => Promise<PriceGrid>;
+  /**
+   * Le calcul, avec ses dépendances Beds24 déjà branchées par le site. En mode `incremental`, il
+   * reçoit la grille de travail précédente (`null` au premier passage) à passer en `previous`.
+   */
+  build: (previous: PriceGrid | null) => Promise<PriceGrid>;
   notify?: (n: PriceGridNotification) => Promise<void> | void;
   /** `true` : calculer et rendre la grille, sans rien écrire ni alerter. */
   dry?: boolean;
@@ -144,9 +155,10 @@ async function locked(
   jobKey: string,
   now: Date,
 ): Promise<PriceGridJobReport> {
+  if (cfg.incremental) return renewed(cfg, deps, job, jobKey, now);
   let grid: PriceGrid;
   try {
-    grid = await deps.build();
+    grid = await deps.build(null);
   } catch (e) {
     if (e instanceof IncompleteGridError) {
       if (deps.dry) return { outcome: "incomplete", reason: e.message };
@@ -173,6 +185,60 @@ async function locked(
   await deps.store.set(jobKey, JSON.stringify({ lastSuccessAt: now.toISOString() }));
   const alert = await advanceAlert(cfg, deps, false, now);
   return { outcome: "stored", grid, alert };
+}
+
+/** La grille de travail précédente : `<clé>:work`, sinon la grille servie (même composition). */
+async function previousGrid(cfg: PriceGridJobConfig, store: HeartbeatStore): Promise<PriceGrid | null> {
+  for (const key of [`${cfg.key}:work`, cfg.key]) {
+    const s = await readJson<StoredPriceGrid>(store, key);
+    if (s && s.composition === cfg.composition && s.grid?.rows) return s.grid;
+  }
+  return null;
+}
+
+/** Le passage en mode `incremental` : voir `PriceGridJobConfig.incremental`. */
+async function renewed(
+  cfg: PriceGridJobConfig,
+  deps: PriceGridJobDeps,
+  job: JobState,
+  jobKey: string,
+  now: Date,
+): Promise<PriceGridJobReport> {
+  const staleMs = (cfg.staleHours ?? 24) * 3_600_000;
+  let grid: PriceGrid;
+  try {
+    grid = await deps.build(await previousGrid(cfg, deps.store));
+  } catch (e) {
+    const reason = e instanceof DegradedGridError ? e.message : "Calcul de la grille impossible (Beds24 indisponible ?).";
+    if (deps.dry) return { outcome: "failed", reason };
+    await deps.store.set(jobKey, JSON.stringify({ ...job, incompleteStreak: 0, lastFailureAt: now.toISOString() }));
+    const alert = await advanceAlert(cfg, deps, true, now);
+    return { outcome: "failed", reason, alert };
+  }
+  if (deps.dry) return { outcome: grid.complete === false ? "incomplete" : "dry", grid };
+
+  const stored: StoredPriceGrid = { grid, generatedAt: grid.generatedAt, composition: cfg.composition };
+  await deps.store.set(`${cfg.key}:work`, JSON.stringify(stored));
+
+  if (grid.complete === false) {
+    // Démarrage à froid : la progression est rangée, la grille servie reste l'ancienne.
+    const streak = (job.incompleteStreak ?? 0) + 1;
+    await deps.store.set(jobKey, JSON.stringify({ ...job, lastFailureAt: undefined, incompleteStreak: streak }));
+    if (streak < (cfg.maxIncompleteStreak ?? 6)) return { outcome: "incomplete", reason: "Grille en cours de remplissage." };
+    const alert = await advanceAlert(cfg, deps, true, now);
+    return { outcome: "incomplete", stalled: true, reason: "Grille toujours incomplète.", alert };
+  }
+
+  await deps.store.set(cfg.key, JSON.stringify(stored));
+  await deps.store.set(jobKey, JSON.stringify({ lastSuccessAt: now.toISOString() }));
+  // Grille rangée, mais un prix trop vieux (Beds24 refuse depuis des heures les mêmes cellules) :
+  // relevé KO pour l'alerte.
+  const range = pricedRange(grid);
+  const tooOld = range !== null && now.getTime() - Date.parse(range.oldest) > staleMs;
+  const alert = await advanceAlert(cfg, deps, tooOld, now);
+  return tooOld
+    ? { outcome: "stored", stalled: true, grid, reason: `Prix le plus ancien : ${range!.oldest}.`, alert }
+    : { outcome: "stored", grid, alert };
 }
 
 async function advanceAlert(
@@ -212,6 +278,11 @@ export interface ReadPriceGrid {
   grid: PriceGrid;
   /** Plus vieille que `staleHours` : lignes passées retirées, pas de JSON-LD. */
   stale: boolean;
+  /**
+   * Grille renouvelée par âge : l'instant du plus ancien et du plus récent prix affichés, ISO —
+   * la date honnête à afficher (« prix relevés entre le … et le … »). Absent sinon.
+   */
+  priced?: { oldest: string; newest: string };
 }
 
 /** La grille rangée par le cron, ou `null` (magasin vide ou illisible, composition différente). */
@@ -223,8 +294,11 @@ export async function readPriceGrid(
 ): Promise<ReadPriceGrid | null> {
   const stored = await readJson<StoredPriceGrid>(store, key);
   if (!stored || stored.composition !== composition || !stored.grid?.rows) return null;
-  const age = now.getTime() - Date.parse(stored.generatedAt);
   // Les séjours déjà commencés ne s'affichent jamais, grille fraîche ou non.
-  const grid = { ...stored.grid, rows: stored.grid.rows.filter((r) => r.checkIn >= today) };
-  return { grid, stale: !Number.isFinite(age) || age > staleHours * 3_600_000 };
+  const raw = { ...stored.grid, rows: stored.grid.rows.filter((r) => r.checkIn >= today) };
+  // Grille renouvelée par âge : rangée non fusionnée, l'âge est celui du plus vieux prix.
+  const priced = pricedRange(raw) ?? undefined;
+  const age = now.getTime() - Date.parse(priced?.oldest ?? stored.generatedAt);
+  const grid = priced ? mergeColumns(raw) : raw;
+  return { grid, stale: !Number.isFinite(age) || age > staleHours * 3_600_000, ...(priced ? { priced } : {}) };
 }
