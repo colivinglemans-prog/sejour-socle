@@ -120,6 +120,9 @@ function memeMotDePasse(donne: string, attendu: string): boolean {
   return constantTimeEqual(sha256Hex(donne), sha256Hex(attendu));
 }
 
+/** Longueur maximale d'un mot de passe soumis ; au-delà, refus sans calcul d'empreinte. */
+export const MAX_PASSWORD_LENGTH = 1024;
+
 export function createAuth<Role extends string>(config: AuthConfig<Role>): Auth<Role> {
   const {
     adminRole,
@@ -179,6 +182,9 @@ export function createAuth<Role extends string>(config: AuthConfig<Role>): Auth<
   ): Role | null {
     // Un corps JSON peut porter n'importe quoi : seule une chaîne non vide est un mot de passe.
     if (!password || typeof password !== "string") return null;
+    // Au-delà de 1 024 caractères, refus avant toute empreinte : un corps de plusieurs mégaoctets
+    // ferait hacher autant de fois qu'il y a de variables de mot de passe (relecture Fable).
+    if (password.length > MAX_PASSWORD_LENGTH) return null;
 
     // Toutes les comparaisons sont faites, sans court-circuit : le temps de réponse ne dit pas
     // laquelle a réussi, ni combien de variables ont été essayées avant.

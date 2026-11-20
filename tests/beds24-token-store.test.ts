@@ -190,21 +190,107 @@ describe("tokenStore", () => {
     expect(console.error).not.toHaveBeenCalled();
   });
 
-  it("un 401 persistant sans repli laisse le magasin vide et remonte l'erreur", async () => {
+  it("un jeton tout juste échangé et refusé ne relance aucun échange (pas de rafale)", async () => {
     const store = memoryStore();
-    fakeFetch(() => 401);
+    const { exchanges } = fakeFetch(() => 401);
     const c = createBeds24Client({ routes, defaultRoute: "seule", tokenStore: store });
     await expect(c.get("/x")).rejects.toMatchObject({ status: 401 });
+    await expect(c.get("/x")).rejects.toMatchObject({ status: 401 });
+    await expect(c.get("/x")).rejects.toMatchObject({ status: 401 });
+    expect(exchanges()).toBe(1);
+    expect(store.delete).not.toHaveBeenCalled();
+  });
+
+  it("un jeton échangé il y a plus de 5 min et refusé est effacé partout puis renouvelé", async () => {
+    vi.useFakeTimers();
+    const store = memoryStore();
+    let refuse = false;
+    const { exchanges } = fakeFetch((t) => (refuse && t.endsWith("-1") ? 401 : 200));
+    const c = createBeds24Client({ routes, defaultRoute: "seule", tokenStore: store });
+    await c.get("/x");
+    vi.advanceTimersByTime(6 * 60_000);
+    refuse = true;
+    await expect(c.get("/x")).resolves.toEqual({});
+    expect(exchanges()).toBe(2);
+    expect(store.delete).toHaveBeenCalledTimes(1);
+  });
+
+  it("un 401 persistant avec repli : le repli prend le relais, sans échange en rafale", async () => {
+    const store = memoryStore();
+    const { exchanges } = fakeFetch((t) => (t.startsWith("acces-lecture") ? 401 : 200));
+    const c = createBeds24Client({ routes, defaultRoute: "lecture", tokenStore: store });
+    await expect(c.get("/x")).resolves.toEqual({});
+    await expect(c.get("/x")).resolves.toEqual({});
+    // Un échange par voie, pas un par appel.
+    expect(exchanges()).toBe(2);
+    expect(store.data.has(await beds24TokenStoreKey(FALLBACK))).toBe(true);
+  });
+
+  it("si le nouvel essai ne peut pas échanger (429), on tombe dans le repli au lieu de lever", async () => {
+    const store = memoryStore();
+    store.data.set(await beds24TokenStoreKey(REFRESH), {
+      value: { token: "acces-perime", expiresAt: Date.now() + 3_600_000 },
+      ttl: 1,
+    });
+    let n = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const headers = (init?.headers ?? {}) as Record<string, string>;
+        if (String(input).endsWith("/authentication/token")) {
+          if (headers.refreshToken === REFRESH) return new Response("quota", { status: 429 });
+          n += 1;
+          return new Response(JSON.stringify({ token: `acces-secours-${n}`, expiresIn: 86_400 }));
+        }
+        return new Response(headers.token === "acces-perime" ? "refus" : "{}", {
+          status: headers.token === "acces-perime" ? 401 : 200,
+        });
+      }),
+    );
+    const c = createBeds24Client({ routes, defaultRoute: "lecture", tokenStore: store });
+    await expect(c.get("/x")).resolves.toEqual({});
+    expect(console.error).toHaveBeenCalled();
+  });
+
+  it("une erreur du magasin ne journalise jamais son message (Upstash y recopie la commande)", async () => {
+    fakeFetch();
+    const warn = vi.mocked(console.warn);
+    const leaky: Beds24TokenStore = {
+      get: async () => null,
+      set: async (_k, v) => {
+        throw new Error(`command was: ["set", "cle", ${JSON.stringify(v)}]`);
+      },
+      delete: async () => {},
+    };
+    const c = createBeds24Client({ routes, defaultRoute: "lecture", tokenStore: leaky });
+    const t = await c.token();
+    const logged = warn.mock.calls.flat().join(" ");
+    expect(logged).toContain("magasin de jetons indisponible");
+    expect(logged).not.toContain(t);
+    expect(logged).not.toContain("command was");
+  });
+
+  it("invalidateShared() attend la suppression dans le magasin", async () => {
+    fakeFetch();
+    const store = memoryStore();
+    const c = createBeds24Client({ routes, defaultRoute: "lecture", tokenStore: store });
+    await c.token();
+    await c.invalidateShared("lecture");
     expect(store.data.size).toBe(0);
   });
 
-  it("un 401 persistant avec repli : la voie refusée est effacée, le repli prend le relais", async () => {
-    const store = memoryStore();
-    fakeFetch((t) => (t.startsWith("acces-lecture") ? 401 : 200));
-    const c = createBeds24Client({ routes, defaultRoute: "lecture", tokenStore: store });
-    await expect(c.get("/x")).resolves.toEqual({});
-    expect(store.data.has(await beds24TokenStoreKey(REFRESH))).toBe(false);
-    expect(store.data.has(await beds24TokenStoreKey(FALLBACK))).toBe(true);
+  it("invalidateShared() ne lève jamais, même magasin en panne", async () => {
+    fakeFetch();
+    const broken: Beds24TokenStore = {
+      get: async () => null,
+      set: async () => {},
+      delete: async () => {
+        throw new Error("redis injoignable");
+      },
+    };
+    const c = createBeds24Client({ routes, defaultRoute: "lecture", tokenStore: broken });
+    await c.token();
+    await expect(c.invalidateShared("lecture")).resolves.toBeUndefined();
   });
 
   it("invalidate() efface aussi l'entrée du magasin", async () => {

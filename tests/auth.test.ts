@@ -64,6 +64,13 @@ describe("roleForPassword", () => {
     expect(auth.roleForPassword(42 as unknown as string, env)).toBeNull();
   });
 
+  it("refuse sans hacher un mot de passe de plus de 1 024 caractères, même juste", () => {
+    const long = "a".repeat(1025);
+    expect(auth.roleForPassword(long, { DASHBOARD_PASSWORD: long })).toBeNull();
+    const limite = "b".repeat(1024);
+    expect(auth.roleForPassword(limite, { DASHBOARD_PASSWORD: limite })).toBe("admin");
+  });
+
   it("l'admin l'emporte si un même mot de passe ouvre les deux", () => {
     expect(auth.roleForPassword("x", { DASHBOARD_PASSWORD: "x", DASHBOARD_PASSWORD_VIEWER: "x" })).toBe("admin");
   });

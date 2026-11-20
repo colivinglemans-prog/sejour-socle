@@ -1722,11 +1722,17 @@ toucher son code, et rien ne bouge tant qu'il ne branche pas `tokenStore`.
     Crypto) — **jamais le refresh token** ; la valeur est un access token, le magasin reste privé ;
   - ordre : mémoire (marge 60 s, inchangée) → magasin (marge **10 min**, TTL posé = `expiresIn` −
     600 s) → échange, publié ensuite dans le magasin ; `refresh()` / `keepAlive` publient aussi ;
-  - **un 401 efface la mémoire et le magasin**, puis retente une fois la même voie avec un échange
-    neuf avant tout repli `whenRefused` (un jeton partagé périmé n'est pas un refresh token mort) ;
-    `invalidate()` efface aussi le magasin (en arrière-plan, signature synchrone inchangée) ;
-  - **magasin en panne ou muet (> 1,5 s) = magasin absent** : avertissement en console, échange
-    direct, jamais d'erreur remontée ;
+  - **un 401 sur un jeton relu du magasin, ou obtenu il y a plus de 5 min, l'efface de la mémoire
+    et du magasin**, puis retente une fois la même voie avant tout repli `whenRefused` (un jeton
+    partagé périmé n'est pas un refresh token mort). Si ce nouvel essai ne peut pas échanger
+    (refresh mort, 429), on tombe dans le repli au lieu de lever. **Un jeton tout juste échangé
+    et refusé ne relance rien** : refus systématique, sinon un échange par appel. Même règle sur
+    les écritures (`postQuiet`, `updateCalendar`), sans nouvel essai (relecture Fable) ;
+  - `invalidate()` efface aussi le magasin, en arrière-plan (signature synchrone inchangée) ;
+    **`invalidateShared(route): Promise<void>`** (nouveau) attend la suppression et ne lève jamais ;
+  - **magasin en panne ou muet (> 1,5 s) = magasin absent** : avertissement en console qui ne
+    porte que le **nom** de l'erreur — @upstash/redis recopie la commande (« command was: [...] »)
+    dans ses messages, donc l'access token d'un `set` raté ; échange direct, jamais d'erreur ;
   - appels simultanés d'une même instance : un seul échange. Deux instances froides au même
     instant échangent encore chacune une fois : pas de verrou réparti (un aller-retour et un cas
     de panne de plus pour une fenêtre de quelques centaines de millisecondes) ;
@@ -2000,7 +2006,14 @@ durcissements de `lib/auth.ts` et le contrôle d'origine de `guard.deny`, tous s
   - **un magasin en panne ne bloque jamais la connexion** : repli en mémoire, un seul
     avertissement ;
   - `notify` (typiquement `sendNtfy`) : **une seule alerte au franchissement** (`count === max`),
-    jamais une par refus ; une erreur du notificateur est avalée.
+    jamais une par refus ; une erreur du notificateur est avalée ;
+  - **limite connue, non corrigée en v3.31.0** : `check` puis `failure` sont deux allers-retours
+    distincts, et `recordFailure` Redis enchaîne quatre commandes sans `MULTI`. Des essais
+    parallèles depuis une même IP passent tous `check` avant que leurs échecs ne soient comptés,
+    et l'alerte au franchissement (`===`) peut sauter ou doubler. Un `INCR` + `EXPIRE` ne
+    suffirait pas : il faut fusionner contrôle et comptage en un seul appel atomique (script Lua
+    ou `INCR` d'abord, refus si le résultat dépasse la limite), ce qui change le contrat de
+    `LoginAttemptStore` et la fenêtre glissante. Reporté à un tag ultérieur (relecture Fable).
 - `lib/login-route.ts` — `createLoginRoute({ auth, passwordField, limiter?, setCookie? })` rend
   `{ POST }`. Réponses aux clés des deux sites (`ok`/`success`, `erreur`/`error`) : 200 + cookie,
   401 au message unique, 429. `limiter: null` désactive la limite.
@@ -2009,7 +2022,8 @@ durcissements de `lib/auth.ts` et le contrôle d'origine de `guard.deny`, tous s
     autrement (test : un jeton émis reste valide, un HS512 au même secret est refusé) ;
   - `roleForPassword` compare `sha256Hex(donné)` à `sha256Hex(attendu)` par `constantTimeEqual`
     (`cron-auth`), **sans court-circuit** entre les variables ; un mot de passe non-chaîne vaut
-    `null` ;
+    `null`, un mot de passe de plus de **1 024 caractères** (`MAX_PASSWORD_LENGTH`) aussi, refusé
+    **avant** toute empreinte (le SHA-256 est écrit à la main, donc lent sur un gros corps) ;
   - `DASHBOARD_SECRET` de moins de 32 caractères : `console.warn` une fois, **jamais d'erreur**
     (ce serait couper la production). Audience, `sub` et révocation : volontairement absents,
     ils déconnecteraient tout le monde.
