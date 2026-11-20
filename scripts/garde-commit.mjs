@@ -277,9 +277,12 @@ export function controlerIndex({ racine, secrets } = {}) {
     const ignorer = git(["config", "--get-all", "garde-commit.ignorer"], opts).stdout?.split(/\r?\n/).filter(Boolean) ?? [];
     // Un réglage local, permanent et invisible dans le dépôt : on le rappelle à chaque commit.
     if (ignorer.length) avertissements.push(`variables exclues par garde-commit.ignorer : ${ignorer.join(", ")}`);
-    duPoste = secretsDesFichiers(fichiersEnvDuDepot(top), ignorer);
-    if (duPoste.length === 0) {
+    const fichiersEnv = fichiersEnvDuDepot(top);
+    duPoste = secretsDesFichiers(fichiersEnv, ignorer);
+    if (!fichiersEnv.some((f) => existsSync(f))) {
       avertissements.push("aucun fichier d'environnement trouvé : le contrôle des valeurs de secrets est inactif");
+    } else if (duPoste.length === 0) {
+      avertissements.push("aucun secret retenu dans les fichiers d'environnement : le contrôle des valeurs de secrets est inactif");
     }
   }
 

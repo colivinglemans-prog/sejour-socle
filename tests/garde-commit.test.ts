@@ -290,7 +290,10 @@ describe("controlerIndex sur un dépôt jetable", () => {
     git("config", "garde-commit.ignorer", "INDEXNOW_KEY");
     expect(controlerIndex({ racine })).toEqual({
       refus: [],
-      avertissements: ["variables exclues par garde-commit.ignorer : INDEXNOW_KEY"],
+      avertissements: [
+        "variables exclues par garde-commit.ignorer : INDEXNOW_KEY",
+        "aucun secret retenu dans les fichiers d'environnement : le contrôle des valeurs de secrets est inactif",
+      ],
     });
   });
 
