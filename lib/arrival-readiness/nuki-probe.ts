@@ -8,8 +8,10 @@
 
 import {
   accessWindow,
+  agreedHour,
   managedBookingId,
   missedArrivals,
+  stayAccessHours,
   type AccessCodePolicy,
 } from "../access-codes";
 import { getLockHealth, KEYPAD_CODE_TYPE, listAuths, listLogSince, type NukiConfig, type NukiLockHealth } from "../nuki";
@@ -166,14 +168,17 @@ async function codeFinding(config: NukiProbeConfig, booking: ReadinessBooking, s
       status: "ko",
     };
   }
+  // Mêmes heures que la synchronisation, horaires convenus du séjour compris (v3.26.0) : sans
+  // ça, un départ tardif accordé ferait sonner « plage à recaler » sur un code juste.
   const want = accessWindow(booking, config.access);
+  const hours = stayAccessHours(booking, config.access);
   const same = (a: string | null | undefined, b: string) => a != null && Date.parse(a) === Date.parse(b);
   if (!same(code.allowedFromDate, want.allowedFromDate) || !same(code.allowedUntilDate, want.allowedUntilDate)) {
     return {
       id,
       severity: sev,
       blocking: true,
-      action: `Plage du code de la résa ${booking.bookingId} à recaler : du ${booking.arrival} ${config.access.validFromHour}h au ${booking.departure} ${config.access.validUntilHour}h`,
+      action: `Plage du code de la résa ${booking.bookingId} à recaler : du ${booking.arrival} ${hours.fromHour}h au ${booking.departure} ${hours.untilHour}h`,
       status: "ko",
     };
   }
@@ -197,7 +202,9 @@ export function createNukiArrivalProbe(config: NukiArrivalProbeConfig): Readines
     async check(pass: ReadinessPass, booking) {
       if (pass.kind !== "noShow" || booking === null) return [];
       const id = `presence:${booking.bookingId}`;
-      const from = parisInstant(booking.arrival, config.access.validFromHour);
+      // Une arrivée anticipée convenue ouvre le code plus tôt : l'entrée compte dès cette heure.
+      const fromHour = agreedHour(booking.validFromHour, config.access.validFromHour);
+      const from = parisInstant(booking.arrival, fromHour);
       let log = null;
       try {
         log = await listLogSince(config.nuki, from);
@@ -223,7 +230,7 @@ export function createNukiArrivalProbe(config: NukiArrivalProbeConfig): Readines
           id,
           severity: config.missingSeverity,
           blocking: true,
-          action: `Aucune entrée avec le code depuis ${config.access.validFromHour}h : appeler ${first || "le voyageur"}`,
+          action: `Aucune entrée avec le code depuis ${fromHour}h : appeler ${first || "le voyageur"}`,
           status: "ko",
         },
       ];

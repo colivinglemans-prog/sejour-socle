@@ -80,4 +80,69 @@ describe("passesAt", () => {
     expect(kinds(at("2031-03-14", 11), [old])).toEqual([]);
     expect(kinds(at("2031-03-14", 16), [booking({ status: "provisional" })])).toEqual([]);
   });
+
+  describe("arrivée anticipée annoncée (v3.26.0)", () => {
+    const EARLY = { ...SCHEDULE, earliestCheckIn: "10:00" };
+    const kindsEarly = (now: Date, list: Parameters<typeof passesAt>[1]) =>
+      passesAt(now, list, EARLY).map((p) => p.kind);
+
+    it("sans `earliestCheckIn`, une arrivée annoncée à 14h garde l'horaire standard (comportement v3.24)", () => {
+      const early = booking({ arrivalTime: "14:00" });
+      expect(kinds(at("2031-03-14", 12), [early])).toEqual(["noon"]);
+      expect(kinds(at("2031-03-14", 15), [early])).toEqual(["preheat"]);
+      expect(kinds(at("2031-03-14", 16), [early])).toEqual(["final"]);
+      expect(passesAt(at("2031-03-14", 16), [early], SCHEDULE)[0].arrivalMinutes).toBe(17 * 60);
+    });
+
+    it("arrivée à 14h : les passages du jour J avancent de 3h, le dernier tombe avant 14h", () => {
+      const early = booking({ arrivalTime: "14:00" });
+      expect(kindsEarly(at("2031-03-14", 9), [early])).toEqual(["noon", "daily"]); // 9h30
+      expect(kindsEarly(at("2031-03-14", 12), [early])).toEqual(["preheat"]); // 12h30
+      const [final] = passesAt(at("2031-03-14", 13), [early], EARLY); // 13h30
+      expect(final).toMatchObject({ kind: "final", label: "13h30", arrivalMinutes: 14 * 60 });
+      expect(final.probes).toEqual(["lock", "heating", "waterHeater"]);
+      expect(final.at.getTime()).toBeLessThan(at("2031-03-14", 14).getTime());
+      // Plus aucun passage aux heures standard.
+      for (const h of [15, 16]) expect(kindsEarly(at("2031-03-14", h), [early])).toEqual([]);
+      // La veille et le lendemain ne bougent pas.
+      expect(kindsEarly(at("2031-03-13", 19), [early])).toEqual(["eve"]);
+      expect(kindsEarly(at("2031-03-15", 9), [early]).sort()).toEqual(["daily", "noShow"]);
+    });
+
+    it("arrivée annoncée avant `earliestCheckIn` (« 01:00 ») : horaire standard", () => {
+      const odd = booking({ arrivalTime: "01:00" });
+      expect(kindsEarly(at("2031-03-14", 16), [odd])).toEqual(["final"]);
+      expect(passesAt(at("2031-03-14", 16), [odd], EARLY)[0].arrivalMinutes).toBe(17 * 60);
+    });
+
+    it("arrivée à l'heure standard ou tardive : rien ne change avec `earliestCheckIn`", () => {
+      for (const h of [12, 15, 16, 20]) {
+        expect(kindsEarly(at("2031-03-14", h), [booking({ arrivalTime: "17:00" })])).toEqual(kinds(at("2031-03-14", h)));
+        expect(kindsEarly(at("2031-03-14", h), [booking({ arrivalTime: "21:00" })])).toEqual(
+          kinds(at("2031-03-14", h), [booking({ arrivalTime: "21:00" })]),
+        );
+      }
+    });
+
+    it("un passage avancé ne recule jamais avant minuit du jour J", () => {
+      const dawn = booking({ arrivalTime: "02:00" });
+      const passes = passesAt(at("2031-03-14", 0), [dawn], { ...SCHEDULE, earliestCheckIn: "00:00" });
+      // noon (12h30 − 15h) ramené à 0h ; preheat 0h30 dans la même fenêtre de tolérance.
+      expect(passes.map((p) => p.kind)).toEqual(["noon", "preheat"]);
+      expect(passes[0].label).toBe("0h");
+    });
+
+    it("rattrapage de dernière minute : avant l'arrivée anticipée seulement", () => {
+      const early = booking({ arrivalTime: "14:00", bookedAt: at("2031-03-14", 11, 10).toISOString() });
+      expect(kindsEarly(at("2031-03-14", 11, 30), [early])).toContain("eve");
+      const tooLate = booking({ arrivalTime: "14:00", bookedAt: at("2031-03-14", 14, 10).toISOString() });
+      expect(kindsEarly(at("2031-03-14", 14, 30), [tooLate])).not.toContain("eve");
+    });
+
+    it("`earliestCheckIn` illisible : erreur explicite, comme toute heure du site", () => {
+      expect(() => passesAt(at("2031-03-14", 12), [booking()], { ...SCHEDULE, earliestCheckIn: "midi" })).toThrow(
+        "earliestCheckIn",
+      );
+    });
+  });
 });

@@ -1,6 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  QUOTE_FALLBACK,
+  calendarGuestLabels,
+  formatDay,
+  formatEuro,
+  interpretQuote,
+  quoteKey,
+  type CalendarQuoteLabels,
+  type CalendarQuoteState,
+  type CalendarStay,
+} from "../lib/calendar-quote";
 import {
   addDays,
   addMonths,
@@ -38,6 +49,11 @@ import {
  * vivent sur la page Beds24, ouverte dans la modale. C'est ce qui permet de n'afficher aucun
  * tarif en dur — la tarification bouge tous les jours, et un prix recopié dans le code serait
  * faux dès le lendemain.
+ *
+ * Depuis la v3.29.0, un site peut ajouter le **bloc prix** (`quote`) : une fois les dates
+ * choisies, le calendrier interroge la route de devis du site — le prix Beds24 du jour, jamais
+ * un prix en dur — et affiche « Disponible » et le total avant la modale. Une panne n'y bloque
+ * jamais la réservation (voir `lib/calendar-quote`).
  *
  * Ce qui reste paramétrable, et pourquoi :
  *
@@ -131,7 +147,33 @@ export interface ReservationCalendarProps {
    * ici, l'appelant ne peut pas retrouver cette fenêtre seul.
    */
   overlayLegend?: (from: string, to: string) => ReactNode;
+  /**
+   * Bloc prix (v3.29.0) : « Disponible » et le total exact avant la page de paiement. Absent, le
+   * calendrier se comporte exactement comme avant. Voir `lib/calendar-quote`.
+   *
+   * - `url` — la route de devis du site pour ce séjour (`/api/agent/quote?…`) ;
+   * - `labels` — `calendarQuoteLabels(lang)` ;
+   * - `included` — ce que le total comprend, propre au site (« draps, serviettes, ménage et taxe
+   *   de séjour compris », « linge en option »…).
+   *
+   * **Ne bloque jamais la réservation** : une panne affiche « prix sur la page de paiement » et
+   * le bouton Réserver reste actif.
+   */
+  quote?: {
+    url: (stay: CalendarStay) => string;
+    labels: CalendarQuoteLabels;
+    included?: string;
+  };
 }
+
+/** Attente après le dernier changement de sélection ou de voyageurs avant d'interroger le devis. */
+const QUOTE_DEBOUNCE_MS = 600;
+/** Au-delà, le devis est abandonné : « prix sur la page de paiement ». */
+const QUOTE_TIMEOUT_MS = 8000;
+/** Durée de vie d'un prix en mémoire, alignée sur le cache CDN de la route de devis. */
+const QUOTE_MEMO_MS = 5 * 60_000;
+/** Pause après un 429 du pare-feu (limite par IP sur `/api/agent`). */
+const QUOTE_PAUSE_MS = 60_000;
 
 type Availability = Record<string, boolean>;
 type MinStays = Record<string, number>;
@@ -163,6 +205,7 @@ export default function ReservationCalendar({
   id = "disponibilite",
   dayOverlayClass,
   overlayLegend,
+  quote,
 }: ReservationCalendarProps) {
   const now = new Date();
   const today = formatDate(now);
@@ -176,9 +219,19 @@ export default function ReservationCalendar({
   const [minStays, setMinStays] = useState<MinStays>({});
   const [noCheckIn, setNoCheckIn] = useState<Closures>({});
   const [noCheckOut, setNoCheckOut] = useState<Closures>({});
-  const [loading, setLoading] = useState(false);
+  /*
+   * Requêtes de disponibilité en vol — un compteur et non un booléen : deux chargements croisés
+   * (mois courant et mois d'un lien `?arrivee`) remettaient sinon `loading` à faux au premier
+   * retour, et le pré-remplissage se jugeait sur un mois pas encore chargé.
+   */
+  const [pending, setPending] = useState(0);
+  const loading = pending > 0;
   const [modalOpen, setModalOpen] = useState(false);
-  const [adults, setAdults] = useState(2);
+  // Aucun adulte au départ : le prix dépend du nombre de voyageurs, il ne s'affiche qu'une fois
+  // celui-ci choisi (demande de l'hôte du 2026-11-20). Un lien `?adultes=` le pose d'emblée.
+  const [adults, setAdults] = useState(0);
+  const guestsChosen = adults >= 1;
+  const guestStep = calendarGuestLabels(lang);
   const [children, setChildren] = useState(0);
 
   const month2 = addMonths(year, month, 1);
@@ -189,7 +242,7 @@ export default function ReservationCalendar({
       const key2 = monthKey(month2.year, month2.month);
       if (!force && avail[key1] && avail[key2]) return;
 
-      setLoading(true);
+      setPending((n) => n + 1);
       try {
         const lastDay = daysInMonth(month2.year, month2.month);
         const res = await fetch(
@@ -224,7 +277,7 @@ export default function ReservationCalendar({
         // Silence volontaire : sans données, toutes les dates restent non sélectionnables.
         // Mieux vaut un calendrier inerte qu'une réservation prise sur une dispo inventée.
       } finally {
-        setLoading(false);
+        setPending((n) => n - 1);
       }
     },
     /*
@@ -241,7 +294,7 @@ export default function ReservationCalendar({
   );
 
   /*
-   * Chargement initial et à chaque changement de mois. `load` pose `setLoading(true)` avant
+   * Chargement initial et à chaque changement de mois. `load` pose `setPending` avant
    * son premier `await`, ce que `react-hooks/set-state-in-effect` signale : la règle vise les
    * états dérivés des props, qui provoquent un rendu en cascade inutile. Ici il s'agit d'aller
    * chercher des données au réseau, et le drapeau de chargement est l'objet même de ce premier
@@ -274,6 +327,7 @@ export default function ReservationCalendar({
 
   function shift(n: number) {
     if (n < 0 && !canGoPrev) return;
+    setPrefill(null);
     const m = addMonths(year, month, n);
     setYear(m.year);
     setMonth(m.month);
@@ -310,7 +364,11 @@ export default function ReservationCalendar({
    * ne sont posées que si le moteur de sélection les accepte : un lien périmé (dates vendues
    * depuis) ouvre le bon mois sans sélection, plutôt qu'un séjour que Beds24 refuserait.
    */
-  const [prefill, setPrefill] = useState<{ checkIn: string; checkOut: string } | null>(null);
+  /**
+   * `trusted` : un séjour de remplacement que l'API de devis vient de chiffrer — Beds24 l'a
+   * accepté, il est posé même si les règles locales (minima décalés d'un jour) hésitent.
+   */
+  const [prefill, setPrefill] = useState<{ checkIn: string; checkOut: string; trusted?: boolean } | null>(null);
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
     const ci = q.get("arrivee") ?? "";
@@ -337,14 +395,17 @@ export default function ReservationCalendar({
   useEffect(() => {
     if (!prefill || loading) return;
     if (!avail[prefill.checkIn.slice(0, 7)]) return;
-    // Départ au-delà des deux mois affichés : on ne sait pas valider, on ouvre le mois sans
-    // sélection. Le jour du départ n'a pas besoin d'être libre, mais les nuits, si.
-    if (!avail[addDays(prefill.checkOut, -1).slice(0, 7)]) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- abandon unique
+    // Le jour du départ n'a pas besoin d'être libre, mais les nuits, si. Dernière nuit au-delà des
+    // deux mois affichés : on ne sait pas valider, on ouvre le mois sans sélection. Dans la
+    // fenêtre mais pas encore chargée (un remplacement qui déborde sur le mois suivant) : on attend.
+    const lastNightMonth = addDays(prefill.checkOut, -1).slice(0, 7);
+    if (lastNightMonth > monthKey(month2.year, month2.month)) {
       setPrefill(null);
       return;
     }
-    if (isValidCheckIn(ctx, prefill.checkIn) && isValidCheckOut(ctx, prefill.checkIn, prefill.checkOut)) {
+    if (!avail[lastNightMonth]) return;
+    if (prefill.trusted || (isValidCheckIn(ctx, prefill.checkIn) && isValidCheckOut(ctx, prefill.checkIn, prefill.checkOut))) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- sélection posée une fois, à l'arrivée des données
       setCheckIn(prefill.checkIn);
       setCheckOut(prefill.checkOut);
     }
@@ -352,13 +413,94 @@ export default function ReservationCalendar({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefill, avail, loading]);
 
+  /*
+   * Bloc prix. L'URL du site passe par une ref : l'enveloppe la recrée à chaque rendu, et la
+   * mettre dans les dépendances relancerait le devis sans que rien n'ait changé.
+   *
+   * Les réponses sont rangées **par séjour** (`quoteKey`) et le rendu lit celle du séjour
+   * sélectionné : une réponse qui arrive pour un autre séjour ne s'affiche jamais, et l'effet
+   * n'a aucun état à poser de façon synchrone. Pas de réponse pour la sélection = « calcul ».
+   */
+  const hasQuote = Boolean(quote);
+  const quoteUrlRef = useRef(quote?.url);
+  useEffect(() => {
+    quoteUrlRef.current = quote?.url;
+  });
+  const [quotes, setQuotes] = useState<Record<string, { at: number; state: CalendarQuoteState }>>({});
+  // La langue fait partie de la clé : le détail et les avertissements arrivent dans la langue demandée.
+  const selectedKey = checkIn && checkOut && guestsChosen ? `${lang}|${quoteKey({ checkIn, checkOut, adults, children })}` : null;
+  const selectedQuote: CalendarQuoteState | "loading" = (selectedKey && quotes[selectedKey]?.state) || "loading";
+  /** Ce qui est en mémoire pour un séjour, et frais : une panne (`at: 0`) ne l'est jamais. */
+  const quotesRef = useRef(quotes);
+  const quotePausedUntil = useRef(0);
+  useEffect(() => {
+    quotesRef.current = quotes;
+  });
+
+  useEffect(() => {
+    const url = quoteUrlRef.current;
+    if (!hasQuote || !url || !checkIn || !checkOut || adults < 1) return;
+    const stay: CalendarStay = { checkIn, checkOut, adults, children };
+    const key = `${lang}|${quoteKey(stay)}`;
+    const known = quotesRef.current[key];
+    if (known && Date.now() - known.at < QUOTE_MEMO_MS) return;
+
+    // Nettoyage au moindre changement de séjour : le délai est annulé et la requête en vol
+    // abandonnée, sa réponse n'est pas rangée.
+    let cancelled = false;
+    const ctrl = new AbortController();
+    const timer = setTimeout(async () => {
+      const deadline = setTimeout(() => ctrl.abort(), QUOTE_TIMEOUT_MS);
+      let next: CalendarQuoteState = QUOTE_FALLBACK;
+      try {
+        // Après un 429 du pare-feu, une minute sans interroger : chaque appel, même servi par le
+        // CDN, compte dans la limite par IP.
+        if (Date.now() >= quotePausedUntil.current) {
+          const res = await fetch(url(stay), { signal: ctrl.signal });
+          if (res.status === 429) quotePausedUntil.current = Date.now() + QUOTE_PAUSE_MS;
+          const body: unknown = await res.json().catch(() => null);
+          next = interpretQuote(res.status, body);
+        }
+      } catch {
+        // Réseau, délai dépassé, abandon : la page de paiement dira le prix.
+      } finally {
+        clearTimeout(deadline);
+      }
+      if (cancelled) return;
+      // Une panne est affichée mais jamais tenue pour fraîche : elle sera retentée au choix suivant.
+      const at = next.kind === "fallback" ? 0 : Date.now();
+      setQuotes((prev) => ({ ...prev, [key]: { at, state: next } }));
+      // Beds24 dit « pris » sur des dates que la grille montrait libres : la grille est périmée.
+      if (next.kind === "refused" && next.reason === "unavailable") load(true);
+    }, QUOTE_DEBOUNCE_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      ctrl.abort();
+    };
+    // `load` et `lang` : `load` ne change qu'avec le mois affiché, `lang` qu'au changement de page.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasQuote, checkIn, checkOut, adults, children, lang]);
+
+  /** Un séjour de remplacement : on ouvre son mois et on le sélectionne s'il passe les règles. */
+  function selectStay(s: CalendarStay) {
+    setCheckIn(null);
+    setCheckOut(null);
+    setHoverDate(null);
+    setYear(Number(s.checkIn.slice(0, 4)));
+    setMonth(Number(s.checkIn.slice(5, 7)) - 1);
+    setPrefill({ checkIn: s.checkIn, checkOut: s.checkOut, trusted: true });
+  }
+
   function clearSelection() {
+    setPrefill(null);
     setCheckIn(null);
     setCheckOut(null);
     setHoverDate(null);
   }
 
   function onDayClick(day: string) {
+    setPrefill(null);
     const next = selectionAfterClick(ctx, { checkIn, checkOut, hoverDate }, day);
     if (!next) return;
     setCheckIn(next.checkIn);
@@ -381,7 +523,7 @@ export default function ReservationCalendar({
   );
 
   const url =
-    checkIn && checkOut
+    checkIn && checkOut && guestsChosen
       ? beds24BookingUrl({ propertyId, lang, checkIn, checkOut, adults, children })
       : null;
 
@@ -410,6 +552,42 @@ export default function ReservationCalendar({
       )}
 
       <div className={`rounded-2xl border border-border p-4 sm:p-6 ${heading ? "mt-6" : ""}`}>
+        {/* 1. Les voyageurs, avant les dates : le prix en dépend. */}
+        <div className="mb-6 flex flex-col items-center gap-2 border-b border-border pb-5">
+          <p id={`${id ?? "calendrier"}-voyageurs`} className="text-sm font-semibold text-foreground">
+            {guestStep.title}
+          </p>
+          <div
+            role="group"
+            aria-labelledby={`${id ?? "calendrier"}-voyageurs`}
+            className="flex flex-col gap-2 sm:flex-row sm:gap-6"
+          >
+            <GuestCounter
+              label={labels.adults}
+              value={adults}
+              min={guestsChosen ? 1 : 0}
+              max={guests.maxTotal}
+              names={guestStep}
+              onChange={(v) => {
+                setAdults(v);
+                // La capacité est un plafond global : on rabote le second compteur plutôt
+                // que de laisser partir vers Beds24 une réservation qu'il refusera.
+                if (v + children > guests.maxTotal) setChildren(guests.maxTotal - v);
+              }}
+            />
+            <GuestCounter
+              label={guests.childrenLabel}
+              value={children}
+              min={0}
+              max={maxChildren}
+              names={guestStep}
+              onChange={setChildren}
+            />
+          </div>
+          <p className="text-xs text-secondary">{guests.note}</p>
+        </div>
+
+        {/* 2. Les dates. */}
         <div className="mb-4 flex items-center justify-between">
           <button
             onClick={() => shift(-1)}
@@ -484,28 +662,21 @@ export default function ReservationCalendar({
               {checkOut}
             </p>
 
-            <div className="flex flex-col gap-2 sm:flex-row sm:gap-6">
-              <GuestCounter
-                label={labels.adults}
-                value={adults}
-                min={1}
-                max={guests.maxTotal}
-                onChange={(v) => {
-                  setAdults(v);
-                  // La capacité est un plafond global : on rabote le second compteur plutôt
-                  // que de laisser partir vers Beds24 une réservation qu'il refusera.
-                  if (v + children > guests.maxTotal) setChildren(guests.maxTotal - v);
-                }}
+            {!guestsChosen && (
+              <p role="status" className="text-center text-sm font-medium text-foreground">
+                {guestStep.prompt}
+              </p>
+            )}
+
+            {quote && guestsChosen && (
+              <QuoteBlock
+                state={selectedQuote}
+                labels={quote.labels}
+                included={quote.included}
+                lang={lang}
+                onSelect={selectStay}
               />
-              <GuestCounter
-                label={guests.childrenLabel}
-                value={children}
-                min={0}
-                max={maxChildren}
-                onChange={setChildren}
-              />
-            </div>
-            <p className="text-xs text-secondary">{guests.note}</p>
+            )}
 
             <div className="flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-50 px-3 py-2 text-center text-xs font-medium text-emerald-700">
               <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -521,12 +692,14 @@ export default function ReservationCalendar({
               >
                 {labels.clear}
               </button>
-              <button
-                onClick={() => setModalOpen(true)}
-                className="rounded-full bg-primary px-6 py-2 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
-              >
-                {labels.bookNow}
-              </button>
+              {guestsChosen && (
+                <button
+                  onClick={() => setModalOpen(true)}
+                  className="rounded-full bg-primary px-6 py-2 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
+                >
+                  {labels.bookNow}
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -585,17 +758,113 @@ export default function ReservationCalendar({
   );
 }
 
+/**
+ * Le bloc prix, dans une zone `aria-live` : le lecteur d'écran annonce « Disponible » et le total
+ * quand ils arrivent, sans que le focus bouge.
+ */
+function QuoteBlock({
+  state,
+  labels,
+  included,
+  lang,
+  onSelect,
+}: {
+  state: CalendarQuoteState | "loading";
+  labels: CalendarQuoteLabels;
+  included?: string;
+  lang: string;
+  onSelect: (s: CalendarStay) => void;
+}) {
+  const loading = state === "loading";
+  return (
+    <div aria-live="polite" aria-busy={loading} className="w-full max-w-md text-center">
+      {loading && (
+        <p className="flex items-center justify-center gap-2 text-sm text-secondary">
+          <span className="h-4 w-4 animate-spin rounded-full border-2 border-secondary/30 border-t-secondary" />
+          {labels.checking}
+        </p>
+      )}
+
+      {!loading && state.kind === "priced" && (
+        <div className="rounded-lg border border-emerald-200 bg-white px-4 py-3">
+          <p className="flex items-center justify-center gap-1.5 text-sm font-semibold text-emerald-700">
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
+            {labels.available}
+          </p>
+          <p className="mt-1 text-sm text-secondary">
+            {labels.total}{" "}
+            <span className="text-xl font-semibold text-foreground">{formatEuro(state.total, lang)}</span>
+          </p>
+          {labels.perPersonPerNight && (
+            <p className="text-xs text-secondary">
+              {labels.perPersonPerNight(formatEuro(state.perPersonPerNight, lang, false))}
+            </p>
+          )}
+          {included && <p className="mt-1 text-xs text-secondary">{included}</p>}
+          {state.lines.length > 0 && (
+            <details className="mt-2 text-left text-xs text-secondary">
+              <summary className="cursor-pointer text-center font-medium text-foreground">{labels.details}</summary>
+              <ul className="mt-2 space-y-1">
+                {state.lines.map((l, i) => (
+                  <li key={`${l.id}-${i}`} className="flex justify-between gap-4">
+                    <span>{l.label}</span>
+                    <span className="whitespace-nowrap">{formatEuro(l.amount, lang)}</span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+          {state.notices.map((n, i) => (
+            <p key={`${i}-${n}`} className="mt-2 rounded-md bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
+              {n}
+            </p>
+          ))}
+        </div>
+      )}
+
+      {!loading && state.kind === "refused" && (
+        <div className="rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <p className="font-medium">{labels.refusal(state.reason, state.minStay)}</p>
+          {state.alternatives.length > 0 && (
+            <>
+              <p className="mt-2 text-xs">{labels.alternatives}</p>
+              <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-center">
+                {state.alternatives.map((a) => (
+                  <button
+                    key={quoteKey(a)}
+                    type="button"
+                    onClick={() => onSelect(a)}
+                    className="w-full rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-light-bg sm:w-auto"
+                  >
+                    {formatDay(a.checkIn, lang)} → {formatDay(a.checkOut, lang)} · {formatEuro(a.total, lang, false)}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {!loading && state.kind === "fallback" && <p className="text-xs text-secondary">{labels.fallback}</p>}
+    </div>
+  );
+}
+
 function GuestCounter({
   label,
   value,
   min,
   max,
+  names,
   onChange,
 }: {
   label: string;
   value: number;
   min: number;
   max: number;
+  names: { remove: (c: string) => string; add: (c: string) => string };
   onChange: (v: number) => void;
 }) {
   return (
@@ -606,19 +875,33 @@ function GuestCounter({
         disabled={value <= min}
         onClick={() => onChange(value - 1)}
         className="flex h-8 w-8 items-center justify-center rounded-full border border-border text-foreground transition-colors hover:bg-light-bg disabled:cursor-default disabled:opacity-30"
-        aria-label="−"
+        aria-label={names.remove(label)}
       >
         <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
         </svg>
       </button>
-      <span className="w-6 text-center text-sm font-semibold text-foreground">{value}</span>
+      {/* Saisie directe : 16 clics sur « + » pour un groupe de 16, c'était trop (chef-de-stand). */}
+      <input
+        type="text"
+        inputMode="numeric"
+        pattern="[0-9]*"
+        aria-label={label}
+        value={value}
+        onFocus={(e) => e.currentTarget.select()}
+        onChange={(e) => {
+          const digits = e.target.value.replace(/\D/g, "").slice(-3);
+          if (digits === "") return;
+          onChange(Math.max(min, Math.min(max, Number(digits))));
+        }}
+        className="w-10 rounded-md border border-border bg-white py-1 text-center text-sm font-semibold text-foreground"
+      />
       <button
         type="button"
         disabled={value >= max}
         onClick={() => onChange(value + 1)}
         className="flex h-8 w-8 items-center justify-center rounded-full border border-border text-foreground transition-colors hover:bg-light-bg disabled:cursor-default disabled:opacity-30"
-        aria-label="+"
+        aria-label={names.add(label)}
       >
         <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />

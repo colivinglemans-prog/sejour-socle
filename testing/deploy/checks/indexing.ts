@@ -607,6 +607,9 @@ export function indexingChecks(): Check[] {
       title: "L'accueil est indexable et porte l'ancre de réservation",
       level: "vital",
       severity: "blocking",
+      // v3.31.0 : Vercel pose `X-Robots-Tag: noindex` sur toute URL qui n'est pas un domaine de
+      // production ; contre une préversion, ce contrôle échouait toujours. Sauté, pas KO.
+      productionOnly: true,
       run: checkHome,
     },
     {
@@ -614,6 +617,8 @@ export function indexingChecks(): Check[] {
       title: "Chaque URL du sitemap répond 200, indexable, bonne langue, canonical juste",
       level: "full",
       severity: "blocking",
+      // Même raison qu'`indexing.home` (v3.31.0) : le noindex de Vercel sur les préversions.
+      productionOnly: true,
       run: checkSitemapUrls,
     },
     {

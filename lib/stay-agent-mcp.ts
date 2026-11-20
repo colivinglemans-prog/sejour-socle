@@ -116,7 +116,7 @@ export function buildMcpServer(cfg: StayAgentConfig, deps: () => StayAgentDeps):
       title: "Nuits libres",
       description:
         `Nuits libres d'une période (${MAX_SEARCH_DAYS} jours au plus), durée minimale réelle de chaque jour d'arrivée possible (minStayByArrival), ` +
-        "jours sans arrivée ou sans départ. Pour un prix, utiliser get_quote.",
+        "jours sans arrivée ou sans départ. Bornée à pricesOpenDaysAhead jours après aujourd'hui (get_property_info). Pour un prix, utiliser get_quote.",
       inputSchema: { from: day("Premier jour"), to: day("Dernier jour, inclus"), lang },
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
@@ -129,7 +129,8 @@ export function buildMcpServer(cfg: StayAgentConfig, deps: () => StayAgentDeps):
       title: "Prix exact d'un séjour",
       description:
         "Prix total exact pour ces dates et ces voyageurs, avec un lien de réservation pré-rempli (bookUrl), " +
-        "le calendrier du site (calendarUrl) et un devis partageable valable 7 jours (quoteUrl). " +
+        "le calendrier du site (calendarUrl), la page du séjour avec son prix à jour (stayUrl, si le site la publie) " +
+        "et un devis partageable valable 7 jours (quoteUrl). " +
         "Si les dates ne conviennent pas, `reason` et `detail` l'expliquent et `alternatives` propose les " +
         "séjours libres les plus proches, déjà chiffrés. " +
         RELAY,

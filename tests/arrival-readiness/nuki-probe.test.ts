@@ -99,6 +99,19 @@ describe("createNukiProbe", () => {
     expect(findings.find((f) => f.id === "lock:code:90000042")).toMatchObject({ status: "ko", blocking: true });
   });
 
+  it("départ tardif convenu (v3.26.0) : un code recalé à 16h est juste, un code resté à 11h est à recaler", async () => {
+    const late = booking({ validUntilHour: 16 });
+    const now = at("2031-03-14", 16);
+    const pass = passesAt(now, [late], SCHEDULE)[0];
+    const check = (auths: NukiAuth[]) =>
+      createNukiProbe(config({ lock: lockState(80), auths })).check(pass, late, { now, bookings: [late] });
+    const agreed = { ...goodCode(), ...accessWindow(late, ACCESS) };
+    expect((await check([agreed])).find((f) => f.id === "lock:code:90000042")?.status).toBe("ok");
+    const stale = (await check([goodCode()])).find((f) => f.id === "lock:code:90000042")!;
+    expect(stale).toMatchObject({ status: "ko", blocking: true });
+    expect(stale.action).toContain("2031-03-16 16h");
+  });
+
   it("serrure injoignable : lecture ratée d'abord, pas d'alerte bloquante", async () => {
     const { findings } = await runLock({ lock: { serverState: 4 }, auths: [goodCode()] }, at("2031-03-14", 16));
     expect(findings.find((f) => f.id === "lock:online")).toMatchObject({ status: "unknown", blocking: false });
@@ -146,6 +159,17 @@ describe("createNukiArrivalProbe", () => {
   it("le code du séjour a ouvert : arrivé", async () => {
     const [f] = await probe({ log: [entry("90000042: Zoé")] }).check(noShow(), b, { now: noShow().at, bookings: [b] });
     expect(f.status).toBe("ok");
+  });
+
+  it("arrivée anticipée convenue (v3.26.0) : une entrée à 12h30 compte dès l'ouverture convenue", async () => {
+    const early = booking({ validFromHour: 12 });
+    const atNoon = { ...entry("90000042: Zoé"), date: at("2031-03-14", 12, 30).toISOString() };
+    const [f] = await probe({ log: [atNoon] }).check(noShow(), early, { now: noShow().at, bookings: [early] });
+    expect(f.status).toBe("ok");
+    // Sans horaire convenu, la même entrée tombe avant 14h et ne compte pas.
+    const [g] = await probe({ log: [atNoon] }).check(noShow(), b, { now: noShow().at, bookings: [b] });
+    expect(g.status).toBe("ko");
+    expect(g.action).toContain("depuis 14h");
   });
 
   it("journal illisible : contrôle impossible, jamais voyageur absent", async () => {

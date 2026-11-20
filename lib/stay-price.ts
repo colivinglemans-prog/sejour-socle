@@ -109,6 +109,8 @@ export async function fetchRoomPrice(
 ): Promise<RoomPrice> {
   const res = await fetchImpl(roomPriceUrl(req), {
     next: { revalidate },
+    // Au-delà de 8 s, Beds24 est tenu pour en panne : le devis et la grille ne restent pas suspendus.
+    signal: AbortSignal.timeout(8000),
   } as RequestInit);
   // Une erreur HTTP est une panne (`service-unavailable`), pas une réponse incohérente :
   // seule une réponse 200 mal formée lève `RoomPriceShapeError` et prévient l'hôte.

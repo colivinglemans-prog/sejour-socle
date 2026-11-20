@@ -14,6 +14,7 @@ import type { CancellationPolicy, PaymentPolicy } from "../config/policies";
 import { bookingUrl } from "./booking-url";
 import { addDays, daysBetween } from "./dates";
 import { signQuote, QUOTE_VALIDITY_DAYS, type QuoteKeys } from "./quote-token";
+import { cleanSrc, stayQuery } from "./stay-page";
 import { isDay, quoteStay, selectionContext, type StayQuote, type StayQuoteConfig, type StayQuoteDeps } from "./stay-quote";
 import { findStays, MAX_SEARCH_DAYS, MAX_STAY_NIGHTS, nearbyStays, shortestStay, type PricedStay } from "./stay-search";
 
@@ -63,6 +64,11 @@ export interface StayAgentConfig {
   facts: (lang: string) => PropertyFacts;
   /** Chemin de la page de devis pour un jeton, ex. `/fr/devis/<jeton>`. */
   quotePagePath?: (lang: string, token: string) => string;
+  /**
+   * Chemin de la page Séjour, ex. `/fr/sejour` : le séjour chiffré rendu côté serveur, lisible par
+   * une IA qui ouvre une URL. Fourni, chaque séjour de l'API et du MCP porte un `stayUrl`.
+   */
+  stayPagePath?: (lang: string) => string;
   /** Chemin du calendrier, que le site pré-remplit depuis la requête (`?arrivee=&depart=…`). */
   calendarPath: (lang: string) => string;
   /** Réservation instantanée (sans validation de l'hôte) sur la page de paiement. */
@@ -103,8 +109,7 @@ function langOf(cfg: StayAgentConfig, p: ToolParams): string {
 
 /** Origine déclarée (`chatgpt`, `claude`…) : mesurer ce que rapportent les IA. Rien d'autre ne passe. */
 function srcOf(p: ToolParams): string | undefined {
-  const s = (p.src ?? "").toLowerCase();
-  return /^[a-z0-9-]{2,24}$/.test(s) ? s : undefined;
+  return cleanSrc(p.src);
 }
 
 const WEEKDAYS: Record<string, number> = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
@@ -201,9 +206,27 @@ export function propertyInfo(cfg: StayAgentConfig, p: ToolParams): ToolResult {
 export async function availability(cfg: StayAgentConfig, deps: StayQuoteDeps, p: ToolParams): Promise<ToolResult> {
   if (!isDay(p.from) || !isDay(p.to)) return bad("Paramètres from et to attendus au format AAAA-MM-JJ.");
   const from = p.from < deps.today ? deps.today : p.from;
-  const to = p.to;
-  const span = daysBetween(from, to);
+  const span = daysBetween(from, p.to);
   if (span < 0 || span > MAX_SEARCH_DAYS) return bad(`Plage de ${MAX_SEARCH_DAYS} jours au plus, from avant to.`);
+  // v3.31.0 — borné vers le futur comme le devis et la recherche (`maxHorizonDays`) : chaque mois
+  // lointain coûtait une URL Beds24 de plus, et un paramètre aléatoire contournait le cache CDN.
+  // Un début au-delà de l'horizon est refusé ; une fin au-delà est ramenée à l'horizon.
+  const horizon = addDays(deps.today, cfg.quote.maxHorizonDays);
+  if (from > horizon) {
+    return {
+      status: 400,
+      body: {
+        ok: false,
+        reason: "too-far",
+        detail: `Les tarifs ne sont ouverts que ${cfg.quote.maxHorizonDays} jours à l'avance (jusqu'au ${horizon}).`,
+      },
+    };
+  }
+  const to = p.to > horizon ? horizon : p.to;
+  const truncated =
+    to !== p.to
+      ? { truncated: { requestedTo: p.to, detail: `Plage ramenée au ${horizon} : tarifs ouverts ${cfg.quote.maxHorizonDays} jours à l'avance.` } }
+      : {};
   try {
     // Lu au-delà de `to` : la durée minimale d'une arrivée en fin de plage dépend des jours
     // suivants (nuits libres, premier départ ouvert). La profondeur se **calcule** : le plus
@@ -241,6 +264,7 @@ export async function availability(cfg: StayAgentConfig, deps: StayQuoteDeps, p:
         ok: true,
         from,
         to,
+        ...truncated,
         freeNights: nights,
         minStayByArrival,
         noArrival: (a.sansArrivee ?? []).filter(inRange),
@@ -296,7 +320,15 @@ async function links(cfg: StayAgentConfig, deps: StayAgentDeps, q: PricedStay, l
       // Secret absent ou trop court : le devis reste valable, sans lien partageable.
     }
   }
-  return { bookUrl, calendarUrl, ...(quoteUrl ? { quoteUrl, quoteValidDays: QUOTE_VALIDITY_DAYS } : {}) };
+  // Pas de page Séjour pour un séjour avec suppléments : elle affiche le prix sans eux (le linge
+  // d'Albiez se coche sur la page de paiement) et contredirait `total` et `quoteUrl`.
+  const stayUrl = cfg.stayPagePath && extras.length === 0 ? `${cfg.siteUrl}${cfg.stayPagePath(lang)}?${stayQuery({ ...q, src })}` : undefined;
+  return {
+    bookUrl,
+    calendarUrl,
+    ...(stayUrl ? { stayUrl } : {}),
+    ...(quoteUrl ? { quoteUrl, quoteValidDays: QUOTE_VALIDITY_DAYS } : {}),
+  };
 }
 
 function stayRequestOf(cfg: StayAgentConfig, p: ToolParams) {

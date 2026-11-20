@@ -103,20 +103,62 @@ describe("mode test", () => {
     const bookings = Array.from({ length: 3 }, (_, i) => booking({ id: 3000 + i }));
     const h = harness(bookings[0]!);
     h.deps.reload = async (id) => bookings.find((b) => b.id === id) ?? null;
+    h.deps.test!.record = async (b, t, e) => {
+      const i = bookings.findIndex((x) => x.id === b.id);
+      bookings[i] = { ...bookings[i]!, testLedger: [{ templateId: t.id, state: "sent", source: "ledger", ...e }] };
+    };
     const r = await sendPlanned(planByMode(bookings, [access], NOW, TEST), [access], h.deps, { now: NOW, cap: 2, modes: TEST });
     expect(r.aborted).toBeUndefined();
     expect(r.results.map((x) => x.outcome)).toEqual(["tested", "tested", "skipped"]);
   });
 
   it("registre de test : code à part, jamais lu comme un envoi", () => {
-    expect(testLedgerCode("arrivee")).toBe("MSG_ARRIVEE_TEST");
-    const items = [{ code: "MSG_ARRIVEE_TEST", text: "at=2026-12-05T15:30:00.000Z;v=3" }];
+    expect(testLedgerCode("arrivee")).toBe("MSG_ARRIVEE_T");
+    const items = [{ code: "MSG_ARRIVEE_T", text: "at=2026-12-05T15:30:00.000Z;v=3" }];
     expect(ledgerFromInfoItems(items, ["arrivee"])).toEqual([]);
     expect(testLedgerFromInfoItems(items, ["arrivee"]).map((e) => e.templateId)).toEqual(["arrivee"]);
   });
 
-  it("un identifiant en -test est refusé", () => {
-    expect(validateTemplates([{ ...departure, id: "depart-test" }]).some((f) => f.code === "id-reserved")).toBe(true);
+  it("registre de test : les traces écrites avant v3.26.1 sont relues, complètes ou tronquées par Beds24", () => {
+    const items = [
+      { code: "MSG_ARRIVEE_TEST", text: "at=2026-12-05T15:30:00.000Z" },
+      // `MSG_ARRIVEE_CODES_TEST` (22) tel que Beds24 le rend : coupé à 20 caractères.
+      { code: "MSG_ARRIVEE_CODES_TE", text: "at=2026-12-05T15:31:00.000Z" },
+      // Nouvelle forme du même modèle.
+      { code: "MSG_ARRIVEE_CODES_T", text: "at=2026-12-05T15:32:00.000Z" },
+    ];
+    const ids = ["arrivee", "arrivee-codes"];
+    expect(testLedgerFromInfoItems(items, ids).map((e) => e.templateId)).toEqual(["arrivee", "arrivee-codes", "arrivee-codes"]);
+    expect(ledgerFromInfoItems(items, ids)).toEqual([]);
+  });
+
+  it("un identifiant en -test, -t ou -p est refusé", () => {
+    for (const id of ["depart-test", "depart-t", "depart-p"]) {
+      expect(validateTemplates([{ ...departure, id }]).some((f) => f.code === "id-reserved"), id).toBe(true);
+    }
+  });
+
+  it("un identifiant dont un code dépasserait 20 caractères est refusé, et ledgerCode lève", async () => {
+    const { ledgerCode } = await import("../../lib/guest-messaging/ledger");
+    const id = "un-identifiant-beaucoup-trop-long";
+    expect(validateTemplates([{ ...departure, id }]).some((f) => f.code === "id-too-long")).toBe(true);
+    expect(() => ledgerCode(id, "sent")).toThrow(/trop long/);
+    expect(() => testLedgerCode("abcdefghijklmnop")).toThrow(/trop long/); // MSG_ + 16 + _T = 22
+    expect(testLedgerCode("abcdefghijklmn")).toHaveLength(20);
+  });
+
+  it("le code « envoyé » ne change pas avec v3.26.1", async () => {
+    const { ledgerCode } = await import("../../lib/guest-messaging/ledger");
+    expect(ledgerCode("arrivee-code", "sent")).toBe("MSG_ARRIVEE_CODE");
+    expect(ledgerCode("bien-installe", "sent")).toBe("MSG_BIEN_INSTALLE");
+  });
+
+  it("une trace de test qui ne se relit pas bloque la copie : jamais de boucle", async () => {
+    const h = harness(booking());
+    h.deps.test!.record = async () => {}; // écrite, mais jamais relue (code tronqué)
+    const r = await sendNow(1001, access, h.deps, { now: NOW, modes: TEST });
+    expect(r).toMatchObject({ outcome: "blocked", reason: "ledger-unreadable" });
+    expect(h.send).not.toHaveBeenCalled();
   });
 
   it("l'écran de suivi montre la copie reçue", () => {
@@ -199,7 +241,7 @@ describe("réglages lus dans l'environnement", () => {
 });
 
 describe("relecture cerbere / douanier", () => {
-  it("trace de test impossible à écrire : la copie compte comme partie (pas de renvoi en boucle)", async () => {
+  it("trace de test impossible à écrire : rien ne part (la trace précède la copie, v3.26.1)", async () => {
     const { sendNow } = await import("../../lib/guest-messaging/dispatch");
     const { booking, access } = await import("./fixtures");
     const send = vi.fn(async () => {});
@@ -214,8 +256,8 @@ describe("relecture cerbere / douanier", () => {
       log: () => {},
       test: { to: "hote@exemple.fr", record: async () => { throw new Error("beds24"); } },
     }, { now: new Date("2026-12-05T15:30:00Z"), modes: { arrivee: "test" } });
-    expect(r).toMatchObject({ outcome: "tested", reason: "record" });
-    expect(send).toHaveBeenCalledTimes(1);
+    expect(r).toMatchObject({ outcome: "failed", reason: "record" });
+    expect(send).not.toHaveBeenCalled();
   });
   it("copie redemandée : pas de nouvelle trace", async () => {
     const { sendNow } = await import("../../lib/guest-messaging/dispatch");

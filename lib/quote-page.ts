@@ -18,11 +18,18 @@
  */
 import { bookingUrl } from "./booking-url";
 import { verifyQuote, type QuoteKeys, type QuotePayload } from "./quote-token";
-import { quoteStay, type StayQuote, type StayQuoteConfig, type StayQuoteDeps } from "./stay-quote";
-import { nearbyStays, type PricedStay } from "./stay-search";
+import type { StayQuoteConfig, StayQuoteDeps } from "./stay-quote";
+import { quoteWithAlternatives, type PricedStay } from "./stay-search";
 
 export type QuotePageState =
-  | { status: "invalid" }
+  /** `reason` : motif déjà traduit (page Séjour) ; absent, le texte `invalid` du site. */
+  | { status: "invalid"; reason?: string }
+  /**
+   * Page Séjour (`lib/stay-page`) : un séjour chiffré à l'instant, sans jeton ni date de validité.
+   * Sans `current`, le prix n'a pas pu être vérifié : la réservation reste possible, le montant
+   * exact s'affiche sur la page de paiement.
+   */
+  | { status: "live"; quote: QuotePayload; current?: PricedStay; bookUrl: string }
   | { status: "expired"; quote: QuotePayload }
   | { status: "valid" | "price-changed" | "unchecked"; quote: QuotePayload; current?: PricedStay; bookUrl: string; expiresAt: number }
   | { status: "unavailable"; quote: QuotePayload; reason: string; alternatives: PricedStay[] };
@@ -56,13 +63,12 @@ export async function loadQuotePage(
     children: q.children,
   });
   const req = { checkIn: q.checkIn, checkOut: q.checkOut, adults: q.adults, children: q.children, extras: q.extras, lang: q.lang };
-  const now: StayQuote = await quoteStay(cfg, deps, req);
+  const { quote: now, alternatives } = await quoteWithAlternatives(cfg, deps, req);
   if (now.ok) {
     const same = Math.abs(now.total - q.total) < 0.01;
     return { status: same ? "valid" : "price-changed", quote: q, current: now, bookUrl, expiresAt: v.expiresAt };
   }
   if (["unavailable", "min-stay", "no-check-in", "no-check-out", "invalid-request"].includes(now.reason)) {
-    const alternatives = now.reason === "invalid-request" ? [] : await nearbyStays(cfg, deps, req, now).catch(() => []);
     return { status: "unavailable", quote: q, reason: now.detail, alternatives };
   }
   // Panne, prix bloqué, pas de tarif : on ne contredit pas le devis signé, on prévient.

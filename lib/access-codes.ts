@@ -33,6 +33,11 @@
  * les codes d'un coup). Pour révoquer : annuler la réservation, ou **désactiver** le code
  * sur la serrure — un code désactivé n'est jamais réactivé, seulement signalé.
  *
+ * **Horaires convenus (v3.26.0).** Un séjour peut porter sa propre heure d'ouverture
+ * (arrivée anticipée) et de fin (départ tardif), qui priment sur la politique du site. Une
+ * heure qui change d'un passage à l'autre recale le code existant (`update`, motif `window`),
+ * sans nouveau PIN. Sans ces champs, rien ne change.
+ *
  * Seuls les séjours `confirmed` reçoivent un code. Un séjour `provisional` (option, demande
  * pas encore acceptée) n'en reçoit pas et ne déclenche aucune alerte.
  *
@@ -68,6 +73,17 @@ export interface AccessStay {
   pin: string | null;
   /** Téléphone du voyageur, pour un PIN qu'il retient (`pinFromPhone`). Jamais journalisé. */
   phone?: string | null;
+  /**
+   * Arrivée anticipée convenue pour **ce** séjour : heure de Paris (entier 0-23) à partir de
+   * laquelle le code ouvre le jour d'arrivée. Prime sur `AccessCodePolicy.validFromHour`.
+   * Absente, ou hors 0-23, ou non entière : ignorée, la politique s'applique (`stayAccessHours`).
+   */
+  validFromHour?: number | null;
+  /**
+   * Départ tardif convenu pour **ce** séjour : heure de Paris (entier 0-23) à laquelle le code
+   * cesse d'ouvrir le jour du départ. Prime sur `AccessCodePolicy.validUntilHour`. Même repli.
+   */
+  validUntilHour?: number | null;
 }
 
 /** Données du site (règle 2) : heures de Paris et seuils d'alerte. */
@@ -197,15 +213,45 @@ export function pinFromPhone(phone: string | null | undefined, taken: ReadonlySe
   return null;
 }
 
-/** Plage de validité d'un séjour, en instants UTC ISO pour l'API de la serrure. */
+/**
+ * Une heure convenue si elle est exploitable (entier de 0 à 23), sinon `fallback`. Tout le
+ * reste (`null`, `undefined`, `NaN`, `16.5`, `24`, une chaîne) est ignoré, sans exception.
+ */
+export function agreedHour(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 23 ? value : fallback;
+}
+
+/**
+ * Heures d'ouverture et de fin du code pour un séjour (v3.26.0) : celles convenues pour lui
+ * (`validFromHour` / `validUntilHour` du séjour) si elles sont valides, sinon celles de la
+ * politique. Une heure convenue invalide (hors 0-23, non entière, `NaN`) est **ignorée** et
+ * jamais levée : un passage de synchronisation qui plante laisse tous les autres séjours sans
+ * code, alors qu'un repli sur l'heure standard n'en pénalise qu'un.
+ */
+export function stayAccessHours(
+  stay: Pick<AccessStay, "validFromHour" | "validUntilHour">,
+  policy: Pick<AccessCodePolicy, "validFromHour" | "validUntilHour">,
+): { fromHour: number; untilHour: number } {
+  return {
+    fromHour: agreedHour(stay.validFromHour, policy.validFromHour),
+    untilHour: agreedHour(stay.validUntilHour, policy.validUntilHour),
+  };
+}
+
+/**
+ * Plage de validité d'un séjour, en instants UTC ISO pour l'API de la serrure. Les heures
+ * convenues pour le séjour priment sur la politique (`stayAccessHours`) ; sans elles, la plage
+ * est exactement celle d'avant v3.26.0.
+ */
 export function accessWindow(
-  stay: Pick<AccessStay, "arrival" | "departure">,
+  stay: Pick<AccessStay, "arrival" | "departure" | "validFromHour" | "validUntilHour">,
   policy: Pick<AccessCodePolicy, "validFromHour" | "validUntilHour">,
 ): { allowedFromDate: string; allowedUntilDate: string } {
+  const { fromHour, untilHour } = stayAccessHours(stay, policy);
   // `toISOString` est juste ici : on veut un instant UTC, pas un jour calendaire.
   return {
-    allowedFromDate: parisInstant(stay.arrival, policy.validFromHour).toISOString(),
-    allowedUntilDate: parisInstant(stay.departure, policy.validUntilHour).toISOString(),
+    allowedFromDate: parisInstant(stay.arrival, fromHour).toISOString(),
+    allowedUntilDate: parisInstant(stay.departure, untilHour).toISOString(),
   };
 }
 

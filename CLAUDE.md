@@ -179,6 +179,13 @@ deux validations.
 | — | Contrôles — `llms.policies` exige l'unité (« 30 jours », « J-30 », « 50 % », « 48 h ») : un nombre nu donnait de faux verts | `le-dahu` | `v3.10.2` |
 | — | Référencement — **Google Search Console dans le dashboard** (`google-auth`, `search-console`, `SearchConsoleDashboard`) | `le-douanier`, `le-dahu`, `chef-de-stand` | `v3.16.0` |
 | — | Blog / guide — **pastilles de filtre** `FilterChips` (purement visuelles ; modèle d'article, prédicat et carte restent dans chaque site) | `le-douanier`, `le-dahu`, `chef-de-stand` | `v3.17.0` |
+| — | Référencement — **Bing Webmaster dans le dashboard** (`bing-webmaster`, `BingWebmasterPanel`, prop `bingEndpoint`) | `le-douanier`, `cerbere`, `chef-de-stand`, `le-dahu` | `v3.23.0` |
+| — | Référencement — **indexation automatique quotidienne** (`indexing`, `getBingUrlQuota`, `submitBingUrls`) ; Pricing décalé en v3.25.0 | `le-douanier`, `cerbere`, `le-dahu`, `chef-de-stand` | `v3.24.0` |
+| — | Serrure — **horaires convenus par séjour** (`AccessStay.validFromHour` / `validUntilHour`, `stayAccessHours`, `agreedHour`) et **arrivée anticipée** dans la préparation d'arrivée (`ReadinessSchedule.earliestCheckIn`) ; v3.25.0 reste réservée au Pricing | `le-douanier`, `chef-de-stand`, `le-dahu` | `v3.26.0` |
+| — | Messages — **Beds24 tronque les codes d'`infoItem` à 20 caractères** : suffixes `_P` / `_T`, lecture des anciennes formes, toute trace relue avant l'envoi | `le-douanier`, `chef-de-stand`, `le-dahu` | `v3.26.1` |
+| — | Référencement — **grille de prix publiée en HTML** (`price-grid` : `buildPriceGrid`, générateurs, `priceGridOffer` ; composant `PriceGrid`) pour les pages « Tarifs » | relu : `le-douanier`, `cerbere`, `poisson-babel`, `le-dahu`, `chef-de-stand` (corrections intégrées) | `v3.27.0` |
+| — | Robustesse — **jeton Beds24 partagé** (`tokenStore`, fin des 429 sur `/authentication/token`), `check_availability` borné à `maxHorizonDays`, contrôles de déploiement sur préversion (`indexing.home` / `indexing.sitemapUrls` sautés, pas d'issue ni de priorité 5), portes `DELETE` | `le-douanier`, `le-dahu`, `chef-de-stand` | `v3.31.0` |
+| — | Sécurité — **garde-fou avant commit** des dépôts publics (`scripts/garde-commit.mjs` : fichiers exclus, valeurs de secrets du poste, exports de réservations) | `le-douanier`, `cerbere`, `le-dahu`, `chef-de-stand` | `v3.32.0` |
 | — | Veille des dates d'événements (`lib/events-watch.ts`) | — | `v0.7.0` |
 
 Plan détaillé : `C:\Users\alexa\.claude\plans\cheerful-toasting-rivest.md`.
@@ -260,7 +267,7 @@ Mesure sur `/api/dashboard/bookings?arrivalFrom=2025-01-01&arrivalTo=2026-06-30`
 |---|---|---|
 | `lib/booking.ts` | `Booking`, `BookingSource`, `nightsBetween`. **Le type canonique du domaine.** | Albiez (`Sejour`), renommé en anglais technique |
 | `lib/beds24-types.ts` | `Beds24Booking`, `Beds24InfoItem`, `Beds24InvoiceItem`, `Beds24Property`, `Beds24CalendarSpan`, `Beds24CalendarRoom`, `Beds24AvailabilityRoom`. Le **format de transport**. | Barbusse (déclaration en production), + `commission` et `apiReference` d'Albiez |
-| `lib/beds24-client.ts` | `createBeds24Client` — jetons par voie, cache d'access tokens, replis, `keepAlive`, `updateNotes`, `expandSpans`, `eachDay`. | les deux, écrits deux fois |
+| `lib/beds24-client.ts` | `createBeds24Client` — jetons par voie, cache d'access tokens (mémoire, plus `tokenStore` partagé facultatif depuis v3.31.0), replis, `keepAlive`, `updateNotes`, `updateCalendar`, `compressSpans`, `expandSpans`, `eachDay`, `beds24TokenStoreKey`. | les deux, écrits deux fois |
 | `lib/archive.ts` | `createArchive<T>` — filtrage répliquant celui de l'API, dédoublonnage où le live gagne, `origin` exposé. | Albiez pour la forme, les deux pour le mécanisme |
 
 **Deux types, et ce n'est pas une contradiction.** `Booking` est le modèle du domaine ;
@@ -1191,7 +1198,7 @@ passent (le rapport s'écrit sur `process.stdout`).
 
 ### v3.11.0 — réservation par IA (devis, recherche, API des agents)
 
-Plan : `C:\Users\alexa\.claude\plans\curried-mapping-stallman.md`. Une IA vérifie une
+Plan : `curried-mapping-stallman` (plan de la session). Une IA vérifie une
 disponibilité, chiffre au centime, trouve des dates floues, produit un devis partageable et
 amène à la page de paiement Beds24. **Rien n'est réservé ni payé par le socle.**
 
@@ -1204,6 +1211,9 @@ amène à la page de paiement Beds24. **Rien n'est réservé ni payé par le soc
 | `lib/stay-agent.ts` | Les quatre outils (`propertyInfo`, `availability`, `quote`, `find`) sur des paramètres en chaînes : validation unique, politiques lues dans `CancellationPolicy` / `PaymentPolicy` (les constantes que contrôle `llms.policies`), liens `bookUrl` / `calendarUrl` / `quoteUrl`. Secret de devis absent ⇒ devis chiffré sans lien. |
 | `lib/stay-agent-http.ts` | `createAgentRoute(cfg, depsFactory)` pour `app/api/agent/[tool]/route.ts` : GET seulement (une IA qui navigue ne sait pas faire de POST), CORS ouvert, `s-maxage` court, **jamais de cache sur un 5xx**. `runTool` sera repris tel quel par le serveur MCP. `openApi(cfg)`. |
 | `lib/quote-page.ts`, `components/QuoteSummary.tsx`, `lib/quote-labels.ts` | `loadQuotePage` revérifie à chaque affichage : `valid`, `price-changed` (nouveau prix affiché), `unavailable` (+ alternatives), `expired`, `invalid` (autre site ou falsifié), `unchecked` (panne : on montre le devis signé). Textes en 5 langues sauf `included`, propre au site. |
+| `lib/calendar-quote.ts` (+ prop `quote` de `ReservationCalendar`) | Bloc prix du calendrier (v3.29.0) : `interpretQuote` range la réponse de `/api/agent/quote` en `priced` / `refused` (refus **confirmés** seulement : unavailable, min-stay, no-check-in, no-check-out, capacity) / `fallback` (tout le reste : « prix sur la page de paiement », Réserver reste actif). Libellés 5 langues ; `formatEuro` (source unique, aussi pour `QuoteSummary`) ; texte du séjour minimum = `minStayText`. `included` et l'URL restent au site. |
+| `lib/go-to-anchor.ts` | `goToAnchor` (v3.30.1) : lien vers une ancre de la page affichée — défile au lieu du `<Link>` muet quand l'adresse porte déjà l'ancre ; garde la requête. |
+| `lib/stay-page.ts` | Page Séjour (v3.30.0) : `parseStayParams` (forme canonique unique `checkin, checkout, adults, children, src`, alias français acceptés puis 308 ; idempotent ; valeur illisible laissée à `validateRequest`), `loadStayPage` → `QuotePageState` (`invalid` avec motif traduit **sans appel Beds24**, `unavailable` traduit + remplacements, `live` avec ou sans `current`), `stayJsonLd` (`Offer` seulement pour un `live` chiffré, sérialisé par `jsonLdText`), `cleanSrc` (règle `src` unique, partagée avec l'API et le MCP), `stayQuery`. Rendu par `QuoteSummary`. |
 | `components/ReservationCalendar.tsx` | Pré-remplissage par `?arrivee=&depart=&adultes=&enfants=` : voyageurs tout de suite, dates **seulement** si le moteur de sélection les accepte une fois le mois chargé. |
 
 **Route publique, donc protections** (relecture cerbère) : `monthlyAvailability(read)`
@@ -1267,6 +1277,7 @@ Retours des tests voyageur du 2026-11-08.
 | `lib/stay-agent.ts` | `check_availability` rend `minStayByArrival` = séjour minimum **effectif** de chaque jour d'arrivée possible (6 nuits Beds24 + départ le samedi ⇒ 7) ; un jour absent n'accepte pas d'arrivée. Plus de `defaultMinStayNights` : `info.booking.minStay` dit que le minimum varie et renvoie à `check_availability` (`fallbackNights` n'est qu'un repli). |
 | `components/QuoteSummary.tsx`, `lib/quote-page.ts` | Détail ligne par ligne (`stayLines`, puis suppléments) ; `notes` (rappels du site, ex. accueil des jeunes enfants) ; `included` peut être une fonction des suppléments retenus ; `withSrc` garde l'origine (`src`) sur les liens du calendrier. |
 | `lib/indexnow.mjs`, `scripts/indexnow.mjs` | IndexNow (Bing, donc ChatGPT Search ; Yandex…) : `submitIndexNow`, `indexNowBody`, `sitemapUrls`, en JavaScript (Node n'enlève pas les types dans `node_modules`) ; le script n'est qu'un appelant. Clé publique par construction, une par site. |
+| `scripts/garde-commit.mjs` | Garde-fou avant commit des trois dépôts publics : fichier ignoré ajouté de force, valeur d'un secret du poste, export de réservations, secret de format connu. Appelé par le `.githooks/pre-commit` de chaque dépôt ; détail en v3.32.0. |
 
 **Note de version** (mineure, mais à lire avant de monter) :
 - `defaultMinStayNights` disparaît des réponses `info` et `availability` : `info.booking.minStay`
@@ -1367,7 +1378,7 @@ dépôt de chaque site, et le socle décide quand et par où chacun part. Deux c
   variable, chiffres/e-mails écrits en dur, rendu à blanc, liens vers un canal qui les filtre,
   longueur, empreintes trop courtes ou qui reconnaissent un autre modèle. Chaque site l'appelle
   dans un test qui bloque le build.
-- `ledger.ts` — registre dans les `infoItems` : `MSG_<ID>_PENDING` avant l'envoi, `MSG_<ID>`
+- `ledger.ts` — registre dans les `infoItems` : `MSG_<ID>_P` avant l'envoi (`_PENDING` jusqu'à v3.26.0, voir v3.26.1), `MSG_<ID>`
   après ; texte = métadonnées seules (`at`, `v`, `anchor`). `ledgerFromThread` reconnaît les
   messages de l'hôte par leurs empreintes (auto-actions Beds24 encore actives, envois manuels).
 - `dispatch.ts` — `sendPlanned` (cron, plafond par passage : au-delà **rien** ne part) et
@@ -1423,7 +1434,7 @@ dépôt de chaque site, et le socle décide quand et par où chacun part. Deux c
 **Mode `test`** (demandé par l'hôte le 2026-11-08, avant de remplacer les auto-actions) : quatre
 modes par modèle, `off` / `shadow` / `test` / `live`. En `test`, au moment où le message
 partirait, il part **à l'hôte** par e-mail (`deps.test.to`), précédé d'un bandeau « COPIE DE
-TEST », et la copie est notée dans `MSG_<ID>_TEST` (registre de test, `testLedgerFromInfoItems`),
+TEST », et la copie est notée dans `MSG_<ID>_T` (`_TEST` jusqu'à v3.26.0 ; registre de test, `testLedgerFromInfoItems`),
 jamais lu comme un envoi au voyageur. Le cron calcule son plan avec `planByMode` ; un modèle en
 `test` n'est dû que dans les 2 h qui suivent son échéance (`testFreshHours`) — sans quoi
 l'activation rattraperait tout ce que Beds24 a déjà envoyé. Plafond à part, sans arrêt du
@@ -1456,6 +1467,44 @@ texte. `SearchConsoleDashboard` le renseigne ; la position compte « up » quand
 Une variation qui s'arrondit à zéro s'écrit « = période précédente », sans flèche ni couleur.
 `StatsDashboard` (pages montrables à un banquier) n'en met pas : la carte reste sans couleur.
 
+### v3.20.0 — chemins courts dans le tableau des pages Search Console (2026-11-10)
+
+`lib/search-console-pages.ts` : `searchConsolePageLabel(siteUrl, pageUrl)` rend le chemin seul,
+décodé. Propriété « Domaine » (`sc-domain:x`) : l'apex et `www.` disparaissent, un autre
+sous-domaine garde son hôte ; propriété « préfixe d'URL » : son préfixe disparaît. Module à part,
+sans dépendance serveur, parce que `SearchConsoleDashboard` (client) l'importe et que
+`search-console.ts` charge la signature des jetons. Avant, une propriété Domaine affichait
+`www.site.fr/fr/…`, illisible sur mobile.
+
+### v3.21.0 — alertes confirmées sur deux passages (2026-11-10)
+
+Demandé par l'exploitant de Barbusse : trop d'alertes, dont une « serrure hors ligne » reçue
+alors que la serrure était déjà revenue. Une alerte qu'on cesse de lire ne protège plus rien.
+
+- `lib/alert-state.ts` — `nextAlertState(prev, results, now, { confirmAfter })`. Avec
+  `confirmAfter: 2`, un identifiant n'entre dans `failing` qu'au deuxième passage KO
+  **consécutif** et attend dans `state.pending` (compteur par identifiant) ; un passage vert
+  remet le compteur à zéro. Un KO isolé ne produit **rien** — ni ouverture, ni rétablissement.
+  Un identifiant déjà confirmé reste KO sans nouvelle attente, et sa gravité qui monte escalade
+  aussitôt. Par défaut (1), le comportement est celui de v3.9.0 : aucun appelant du socle ne
+  change. Un état écrit avant (sans `pending`) se relit tel quel.
+  **Limites à connaître** : un appelant qui perd son état (magasin injoignable) doit repasser à
+  `confirmAfter: 1`, sinon le compteur repart de zéro à chaque passage et l'alerte ne part
+  jamais. Et les reports d'échecs non revus (`alertInputs`, `readinessAlertInputs`) ne reprennent
+  que `failing`, pas `pending` : les combiner avec `confirmAfter > 1` remettrait le compteur à
+  zéro à chaque passage qui ne relance pas la sonde (aucun appelant aujourd'hui).
+- `testing/deploy/checks/heartbeat.ts` — deux contrôles au lieu d'un : `heartbeat.reachable`
+  (la route répond de façon lisible, **toujours bloquant** : une route en 500 est le cas où le
+  site ne peut pas alerter lui-même) et `heartbeat.crons` (tâches en retard), dont la sévérité
+  vient de `config/deploy-site.ts` `heartbeat.severity?` (`blocking` par défaut ; `warning`
+  quand le site envoie déjà l'alerte nommant les tâches — montré en `warn`, sans seconde alerte).
+  La route est lue **une fois par passage** (mémorisée par contexte) : elle peut avoir des effets
+  de bord chez le site (état d'alerte, ntfy), et deux lectures parallèles doubleraient l'alerte.
+- `.github/workflows/deploy-checks.yml` — « rétabli » part en **priorité 1** (sans son ni
+  vibration), plus 3. Effet seulement pour un site qui appelle le workflow par le SHA de ce tag.
+
+Version mineure : une option, un champ facultatif d'état, un champ facultatif de configuration.
+
 ### Comment une application s'y branche
 
 ```jsonc
@@ -1486,3 +1535,575 @@ dossier situé **hors** de la racine du projet, et Turbopack refuse de résoudre
 cette racine : `tsc --noEmit` passe, `next build` échoue en `Module not found`. Le
 contournement local, jamais commité, est `turbopack: { root: "<parent commun>" }` dans
 `next.config.ts` — ou plus simplement travailler sur le paquet installé depuis son tag.
+
+### v3.22.0 — écriture du calendrier Beds24 (2026-11-14)
+
+Premier pas de la sortie de Beyond Pricing (plan Barbusse du 2026-11-14) : **transport seulement**,
+le moteur de prix reste dans le site.
+
+- `updateCalendar(roomId, spans, route)` : `POST /inventory/rooms/calendar` en un seul appel, la voie
+  doit porter `write:inventory`. **Seuls `price1` et `minStay` passent** ; `numAvail`, `override` et
+  les `priceN` liés sont refusés avant l'envoi (`validateCalendarSpans`) — condition du dahu : la
+  rotation du samedi d'Albiez vit dans `override`, et une fermeture de dates ne s'écrit jamais par ce
+  chemin. Tous les éléments de la réponse `multiplePostResponse` sont lus (`parseCalendarWriteResponse`) :
+  un `success: false` lève avec les champs en cause, les `warnings` sont rendus à l'appelant.
+- `compressSpans(days)` : l'inverse d'`expandSpans`, jours consécutifs identiques fondus en tranches
+  inclusives, en UTC (quota d'environ 100 crédits / 5 min partagé par tout le compte).
+- **Une réponse acceptée ne prouve pas l'écriture** : l'appelant relit (`get(..., { fresh: true })`).
+- Aucun appelant chez Albiez : il peut rester sur sa version. Tests : `tests/beds24-calendar-write.test.ts`.
+
+### v3.23.0 — Bing Webmaster dans la page Référencement (2026-11-14)
+
+ChatGPT Search et Copilot répondent à partir de l'index de Bing : les tests voyageur du 14/11 ont
+montré deux sites absents des recherches. La page Référencement affiche donc aussi ce que Bing en sait.
+
+- `lib/bing-webmaster.ts` : `getBingWebmasterReport({ apiKey, siteUrl })` — quatre appels GET
+  parallèles (`GetCrawlStats`, `GetRankAndTrafficStats`, `GetQueryStats`, `GetPageStats`). Aucune
+  variable d'environnement lue (règle 1) : la clé (`BING_WEBMASTER_API_KEY` chez les sites) et la
+  propriété arrivent du site. La propriété Bing est le **domaine nu** (`https://exemple.fr/`).
+- **La clé voyage dans l'URL** (exigence de Bing) : aucune URL d'appel n'entre dans une erreur ;
+  `BingWebmasterError` porte méthode, propriété, statut et code Bing (`3` = clé invalide, `14` =
+  propriété non autorisée), le texte de Bing est tronqué et la clé y est masquée. Une erreur réseau
+  ne reprend pas le message d'origine. `bingWebmasterErrorResponse(e)` donne le message de la route.
+- Dates `/Date(ms)/` lues en **UTC** (`parseBingDate`) ; requêtes et pages cumulées par clé (Bing
+  rend une ligne par semaine), position pondérée par les impressions comme Search Console.
+- `hasData` faux tant que Bing ne rend que des zéros : `BingWebmasterPanel` l'écrit en une phrase
+  au lieu de cartes à zéro ou d'un graphique plat. Erreur = bandeau, jamais des zéros.
+- `SearchConsoleDashboard` prend `bingEndpoint?` : la section Bing s'affiche sous Google, chargée
+  à part (une panne de l'un n'éteint pas l'autre). Sans la prop, rien ne change.
+- Tests : `tests/bing-webmaster.test.ts` (réponses à zéro enregistrées le 14/11, clé jamais citée).
+- Base : v3.22.0 (branche `pricing-transport`), pour que Barbusse ne régresse pas ; la v3.24.0 (devenue v3.25.0 le 15/11) du
+  moteur de prix partira de ce tag. Albiez monte de v3.18.0 : 3.19–3.22 n'ont aucun appelant
+  obligatoire chez lui (couleurs de variation, chemins courts, alertes confirmées, écriture calendrier).
+
+### v3.24.0 — Indexation automatique quotidienne (2026-11-15)
+
+Chaque jour, signaler aux moteurs les pages **nouvelles ou modifiées**, et seulement elles. Remplace
+le `npm run indexnow` manuel après chaque déploiement de contenu (le script reste pour l'usage
+manuel). La v3.24.0 réservée par la session Pricing (moteur de prix pur, non commencé) passe en
+**v3.25.0**.
+
+- `lib/indexing.ts` :
+  - `planIndexing` (**pur**) : sitemap (`lastmod`) + état + quota Bing → lot IndexNow (tout ce qui
+    a changé, sans quota) et lot Bing (`SubmitUrlBatch`) : le modifié d'abord, puis le **reliquat
+    jamais soumis** dans l'ordre `byIndexingPriority` (accueils → pages de la langue principale →
+    autres pages → articles de la langue principale → autres articles), plafonné au quota du jour
+    moins `BING_QUOTA_MARGIN` (2, pour une demande manuelle). **Jamais une page inchangée.**
+  - Pages hors sitemap (`extraPaths`, ex. `/llms.txt`) suivies par **empreinte de contenu**
+    (`contentFingerprint`, SHA-256 tronqué).
+  - `applyIndexing` : l'état n'avance **que pour ce qui a été accepté** (un IndexNow refusé repart
+    le lendemain) ; les URL sorties du sitemap sont oubliées.
+  - `bootstrapIndexingState` : magasin vide ⇒ tout le sitemap réputé connu d'IndexNow, et les
+    `bingAlreadySubmitted` premières URL (hors sitemap d'abord, puis l'ordre de priorité) réputées
+    soumises à Bing — c'est la soumission manuelle du 14/11 (98 Albiez, 96 Barbusse).
+  - `runIndexing(cfg, deps)` : fait les appels, enregistre l'état dans le **magasin injecté**
+    (`HeartbeatStore` : Upstash chez Barbusse), tient l'alerte sous `<stateKey>:alert` avec
+    `nextAlertState` et `confirmAfter: 2` (règle des deux relevés : jamais répétée, rétablissement
+    en priorité 1 ; un envoi raté remet l'état d'alerte). Constats : `sitemap`, `indexnow` (refus
+    autre que 429), `bing-key`, `bing`, `bing-quota` (quota épuisé avec du reliquat). `dry` :
+    rend le plan sans rien envoyer ni écrire (seule la lecture du quota Bing, gratuite, est faite).
+- `lib/bing-webmaster.ts` : `requestBingWebmaster` (GET ou POST, champ `d` brut),
+  `getBingUrlQuota` (`GetUrlSubmissionQuota`), `submitBingUrls` (`SubmitUrlBatch`, 500 URL au plus,
+  refuse une liste vide). Même règle : la clé ne sort jamais de l'URL d'appel.
+- **Limite du `lastmod`** : « modifié » ne se voit que si le sitemap le dit. Une page **sans
+  `lastmod`** n'est soumise qu'une fois, puis jamais re-signalée même si elle change ; seuls les
+  articles (date de publication) et les pages hors sitemap comme `llms.txt` (empreinte de contenu)
+  sont vraiment suivis. **Ne jamais mettre `lastModified: new Date()` dans un sitemap** : toutes les
+  pages changeraient à chaque déploiement et tout serait re-soumis. Pour une page modifiée sans
+  `lastmod`, le script manuel `npm run indexnow` reste disponible.
+- Robustesse : une page hors sitemap illisible un jour garde sa version (`applyIndexing(…, keepUrls)`),
+  sans quoi elle repartirait le lendemain sans avoir changé ; quota Bing = `min(quotidien, mensuel)` ;
+  IndexNow injoignable compte comme un refus (constat `indexnow`) ; un envoi d'alerte raté ne fait
+  pas échouer le passage (envois et état déjà écrits) : le rapport porte `alertError` et l'alerte
+  repart au passage suivant.
+- Google : rien — il relit le sitemap seul et n'a pas d'API d'indexation pour ces pages.
+- Tests : `tests/indexing.test.ts` (jamais d'inchangé, ordre, plafond, amorçage, état sur refus,
+  alerte confirmée, clé jamais dans le rapport ni le magasin).
+
+### v3.26.0 — horaires convenus par séjour : arrivée anticipée, départ tardif (2026-11-16)
+
+Barbusse accorde des départs tardifs (premier cas : séjour du 04 au 06/12/2026, départ à 16 h) ;
+le code cessait d'ouvrir à `validUntilHour` (14 h) le jour du départ, et un voyageur sorti après
+14 h ne pouvait plus rentrer. Plan : `C:\Users\alexa\.claude\plans\nested-purring-acorn.md`.
+
+> **Numérotation.** La **v3.25.0 reste réservée au chantier Pricing** (moteur de prix pur) et
+> n'est attribuée à rien d'autre. Ce lot, urgent, prend donc **v3.26.0**, parti de `v3.24.0`.
+> Tranché : le Pricing, s'il sort après ce tag, **part de v3.26.1** (sinon Barbusse perdrait les
+> horaires convenus en montant) et prend **le prochain numéro libre** (v3.27.0 ou suivant) ; on ne
+> pose jamais `v3.25.0` après `v3.26.0` — un tag inférieur qui contient plus de code tromperait
+> l'épinglage des sites. Le numéro v3.25.0 restera alors un trou assumé.
+
+- `lib/access-codes.ts` :
+  - `AccessStay.validFromHour?` / `validUntilHour?` (heure de Paris, entier 0-23, `null` accepté) :
+    **priment sur la politique pour ce séjour**. Une valeur hors 0-23, non entière ou non numérique
+    est **ignorée** (repli sur la politique), jamais levée : un passage de synchro qui plante prive
+    de code tous les autres séjours.
+  - `agreedHour(value, fallback)` et `stayAccessHours(stay, policy)` exposent ce repli ;
+    `accessWindow` les lit. Sans les champs, la plage est **identique** à v3.24.0.
+  - Rien d'autre à faire dans le planificateur : une heure qui change d'un passage à l'autre
+    produit un `update` motif `window` sur le code existant, **sans nouveau PIN** ; la suppression
+    `ended` attend l'heure de fin convenue.
+- `lib/arrival-readiness/` :
+  - `ReadinessBooking.validFromHour?` / `validUntilHour?` : la sonde serrure compare le code à la
+    plage **convenue** (sans ça, un départ tardif ferait sonner « plage à recaler », bloquant, en
+    priorité 5 au passage `final`) ; la sonde de présence compte les entrées dès l'ouverture
+    convenue.
+  - **Arrivée anticipée** : jusqu'ici une `arrivalTime` antérieure à `checkIn` était ramenée à
+    `checkIn` (seule l'arrivée tardive était traitée). Nouveau `ReadinessSchedule.earliestCheckIn?`
+    (« HH:MM ») : une arrivée annoncée avant `checkIn` mais à partir de cette heure **avance
+    d'autant les passages `noon`, `preheat`, `final`** (jamais avant minuit) ; `eve` et `noShow`
+    ne bougent pas, le rattrapage de dernière minute s'arrête à l'heure annoncée. Plus tôt que
+    `earliestCheckIn` (« 01:00 ») : saisie douteuse, horaire standard. **Absent : aucune avance**
+    (comportement v3.24.0) — un site ne le pose que si son chauffage avance aussi, sinon le
+    passage `preheat` avancé constaterait un préchauffage pas encore commencé. C'est une donnée
+    (une heure), pas un drapeau (règle 2).
+- `package.json` : `npm run verifier` recopie `lib/indexnow.mjs` dans `.verif/lib/` (tsc ne copie
+  pas les `.mjs`) ; la vérification échouait depuis v3.24.0 sur `Cannot find module`.
+- Tests : `tests/access-codes-hours.test.ts` (fenêtre standard inchangée, départ à 17 h, arrivée à
+  12 h, bornes invalides, changements d'heure, `update` motif `window` sans PIN, suppression à
+  l'heure convenue) ; `tests/arrival-readiness/schedule.test.ts` (arrivée anticipée) ;
+  `tests/arrival-readiness/nuki-probe.test.ts` (plage convenue, entrée dès l'ouverture convenue).
+- **Albiez : montée sans effet.** Il n'importe ni `access-codes` ni `arrival-readiness` (boîte à
+  clés) ; tous les champs ajoutés sont facultatifs. Il peut rester sur son tag.
+- **Barbusse** : passe les heures convenues dans `AccessStay` (`lib/access-sync.ts`) et dans
+  `ReadinessBooking` ; pose `earliestCheckIn` seulement quand le chauffage suit l'arrivée anticipée.
+
+### v3.26.1 — registre des messages : Beds24 tronque les codes à 20 caractères (2026-11-16)
+
+Constaté en production chez Barbusse le 2026-11-16 : sur une réservation de dernière minute, les
+copies de test `confirmation` et `arrivee-code` sont parties **16 fois chacune**, toutes les
+10 minutes et à chaque rappel du webhook. **Beds24 tronque sans erreur le code d'un `infoItem` à
+20 caractères** : `MSG_CONFIRMATION_TEST` (21) était relu `MSG_CONFIRMATION_TES`, jamais reconnu,
+et la copie restait due jusqu'à la fin de `testFreshHours`. Le texte (64 caractères, aléa `n=`
+compris) n'est pas tronqué, vérifié sur les mêmes traces. Touchés : les `_TEST` et `_PENDING` de
+tout identifiant de plus de 10 / 7 caractères — chez Albiez comme chez Barbusse. En `live`, les
+`_PENDING` illisibles auraient rendu le départage aveugle (aucun modèle n'y était encore).
+
+- `ledger.ts` :
+  - suffixes écrits `_P` (en cours) et `_T` (copie de test) ; le code « envoyé » `MSG_<ID>` ne
+    change pas ;
+  - `ledgerCode` / `testLedgerCode` **lèvent** au-delà de `LEDGER_CODE_MAX` (20) : un échec franc à
+    l'exécution, qui ne dépend pas de la CI (un push sur `main` déploie sans l'attendre) ;
+  - la lecture reconnaît aussi les formes écrites jusqu'à v3.26.0, `_PENDING` / `_TEST` complets
+    et tronqués à 20 caractères ; une table de codes ambiguë lève au lieu d'écraser en silence
+    (`readableCodes`, `@internal`).
+- `dispatch.ts` — **toute trace doit se relire avant l'envoi** :
+  - envoi réel : après `reserve`, la relecture doit contenir **notre** trace (`nonce`), sinon
+    `failed` / `ledger-unreadable`, rien ne part ;
+  - copie de test : la trace est désormais posée **avant** l'e-mail puis relue ; illisible ⇒
+    `blocked` / `ledger-unreadable`, écriture ratée ⇒ `failed` / `record`. Au pire une copie
+    manquée, jamais une boucle. (Avant : copie puis trace, et `tested` même si la trace échouait.)
+- `validate.ts` : identifiants en `-p` / `-t` réservés (comme `-pending` / `-test`), `id-too-long`
+  si un code dépasserait 20 caractères, `ledger-collision` si un code relu (écrit ou hérité, réel ou
+  de test) désignerait deux couples (modèle, état).
+- **Ne jamais redescendre sous v3.26.1** une fois monté : un socle antérieur ne relit pas `_P` /
+  `_T`, la boucle des copies de test reviendrait et le départage redeviendrait aveugle.
+- Correctif : aucune signature publique ne change. Les deux sites montent sans modification de code
+  (ils n'écrivent aucun code `MSG_` en dur) ; leur `validateTemplates` couvre leurs identifiants.
+
+### v3.32.0 — Garde-fou avant commit des dépôts publics (2026-11-20)
+
+Base : `v3.31.0`. Un script ajouté, rien de modifié : un site monte sans rien changer, et le
+garde ne s'exécute que là où un dépôt l'appelle depuis son propre hook. Relu par `le-douanier`
+et `cerbere` (corrections intégrées).
+
+- **`deploy-checks.yml` sur préversion** (branche `workflow-preview`, fusionnée ici) : ce que
+  v3.31.0 annonçait côté workflow est désormais en place — un rapport `production: false`
+  n'ouvre aucune issue, ne touche pas l'état d'alerte, et n'envoie qu'un ntfy priorité 2
+  « [Préversion] » s'il y a des KO. Les sites doivent remonter la référence du workflow
+  réutilisable dans `post-deploy.yml` et `surveillance.yml` pour en profiter.
+
+- **`scripts/garde-commit.mjs`** (audit de sécurité du 2026-11-20). Les trois dépôts sont
+  **publics**, et la violation du 24/07/2026 (deux sauvegardes Beds24 commitées faute de
+  `.gitignore`) montre qu'un `.gitignore` seul ne suffit pas. Il contrôle le **contenu indexé**
+  (`git cat-file blob :fichier`, filtre `ACMRT` : `commit -a` et `commit <chemin>` compris) et
+  refuse :
+  1. un fichier que le `.gitignore` exclut (`git add -f`), ou un `.env` / `.env.<x>` (hors
+     `.example`, `.sample`, `.template`). **Le `.gitignore` reste la seule source de vérité** :
+     pour versionner un fichier de `data/`, on l'ajoute à la liste blanche du `.gitignore` du
+     site, jamais au script ;
+  2. la **valeur** d'un secret du poste. Fichiers lus : `.env.local`, `.env.protocole`, `.env`
+     à la racine du worktree courant **et du worktree principal** (un worktree n'a pas de
+     `.env.local` : 31 sur 36 le 2026-11-20), plus `git config --get-all garde-commit.envFile`
+     (le clone du socle y liste les `.env.local` des deux sites). Grammaire de `dotenv` (celle
+     de Next) : guillemets, `\n`, multi-lignes, `#` qui coupe une valeur nue — la ligne entière
+     est alors aussi cherchée. Retenues : les variables au nom de secret (`SECRET`, `TOKEN`,
+     `PASSWORD`, `_PASS`, `_KEY`, `TOPIC`, `CODE`, `IBAN`…) d'au moins 8 caractères, ni booléen,
+     ni nombre, ni URL publique, ni adresse e-mail ; une URL à identifiants toujours ; un topic
+     ntfy et son dernier segment seul. **Codes courts** (`CODE`/`PIN`, 4 chiffres ou plus : boîte
+     à clés) cherchés bornés, dans les fichiers de données seulement. Faux positif sur une valeur
+     publique (une clé IndexNow, par exemple) : `git config garde-commit.ignorer <NOM>`, **décision
+     de l'hôte seulement** — réglage local et permanent, donc rappelé en avertissement à chaque
+     commit ; le message de refus ne le propose pas ;
+  3. un **export de réservations** dans un fichier de données (tout sauf code et Markdown, quelle
+     que soit l'extension, `.json.bak` compris ; UTF-16 à BOM décodé) : ≥ 5 clés personnelles JSON
+     (Beds24 v1 et v2), ou un en-tête CSV/TSV à ≥ 2 colonnes personnelles suivi de ≥ 5 lignes ;
+     et partout, un infoItem de serrure `NUKI_PIN` suivi de sa valeur chiffrée ;
+  4. un **secret de format connu**, absent du poste : clé privée PEM, clé de compte de service
+     Google, clé Stripe live, vidage d'environnement (≥ 3 lignes `…SECRET|TOKEN|PASSWORD…=`).
+- Le refus nomme le fichier et la variable, **jamais la valeur**. Tout échec de git refuse le
+  commit ; un fichier de plus de 20 Mo est refusé (rien ne dépasse 1 Mo dans les dépôts) ; sans
+  aucun fichier d'environnement, un avertissement dit que le contrôle 2 est inactif.
+- Point d'entrée résolu par `realpathSync` : il s'exécute aussi à travers une jonction
+  (`npm link`, dépendance `file:`), cas où il sortait à 0 sans rien contrôler.
+- Contournement : `git commit --no-verify`, **réservé à l'hôte**. Un agent corrige ou signale.
+- **Toujours pas de `prepare` ni de `postinstall`** : le hook s'active dans chaque clone par
+  `git config core.hooksPath .githooks` (config locale, partagée par les worktrees).
+- Branchement côté site — `.githooks/pre-commit` **en LF** (`.gitattributes` :
+  `.githooks/* text eol=lf`, le poste est en `core.autocrlf=true` et `#!/bin/sh\r` casse) et
+  exécutable (`git update-index --chmod=+x .githooks/pre-commit`) :
+
+  ```sh
+  #!/bin/sh
+  garde=node_modules/@sejour/socle/scripts/garde-commit.mjs
+  [ -f "$garde" ] || { echo "garde-commit absent : lancer npm ci dans ce dossier, puis recommencer le commit" >&2; exit 1; }
+  exec node "$garde"
+  ```
+
+  Le socle appelle `scripts/garde-commit.mjs` directement (même `.githooks/`, même `.gitattributes`).
+- Calibré le jour même sur les trois dépôts : 1 134 fichiers suivis, **aucun faux positif**.
+- Tests : `tests/garde-commit.test.ts` — fonctions pures, `controlerIndex` sur un dépôt jetable
+  (worktree, `envFile`, `ignorer`, renommage, UTF-16, accents), et le hook déclenché par un vrai
+  `git commit -a` / `git commit <chemin>`. Aucun appel réseau.
+
+### v3.31.0 — Jeton Beds24 partagé, agent borné, contrôles sur préversion (2026-11-20)
+
+Base : `v3.30.1`. Aucune signature ne change, tout est facultatif ou additif : un site monte sans
+toucher son code, et rien ne bouge tant qu'il ne branche pas `tokenStore`.
+
+- **`lib/beds24-client.ts` — `tokenStore` (fin des 429).** L'access token (24 h) ne vivait que
+  dans la mémoire de l'instance : chaque démarrage à froid refaisait `/authentication/token`. Le
+  2026-11-16 au soir, deux post-déploiements Barbusse ont échoué sur un 429 de cet échange.
+  `Beds24ClientConfig.tokenStore?: Beds24TokenStore` :
+
+  ```ts
+  interface Beds24StoredToken { token: string; expiresAt: number } // ms depuis l'époque
+  interface Beds24TokenStore {
+    get(key: string): Promise<Beds24StoredToken | null>;
+    set(key: string, value: Beds24StoredToken, ttlSeconds: number): Promise<void>;
+    delete(key: string): Promise<void>;
+  }
+  ```
+
+  - clé `beds24:access:<32 hex>` = SHA-256 tronqué du refresh token (`beds24TokenStoreKey`, Web
+    Crypto) — **jamais le refresh token** ; la valeur est un access token, le magasin reste privé ;
+  - ordre : mémoire (marge 60 s, inchangée) → magasin (marge **10 min**, TTL posé = `expiresIn` −
+    600 s) → échange, publié ensuite dans le magasin ; `refresh()` / `keepAlive` publient aussi ;
+  - **un 401 sur un jeton relu du magasin, ou obtenu il y a plus de 5 min, l'efface de la mémoire
+    et du magasin**, puis retente une fois la même voie avant tout repli `whenRefused` (un jeton
+    partagé périmé n'est pas un refresh token mort). Si ce nouvel essai ne peut pas échanger
+    (refresh mort, 429), on tombe dans le repli au lieu de lever. **Un jeton tout juste échangé
+    et refusé ne relance rien** : refus systématique, sinon un échange par appel. Même règle sur
+    les écritures (`postQuiet`, `updateCalendar`), sans nouvel essai (relecture Fable) ;
+  - `invalidate()` efface aussi le magasin, en arrière-plan (signature synchrone inchangée) ;
+    **`invalidateShared(route): Promise<void>`** (nouveau) attend la suppression et ne lève jamais ;
+  - **magasin en panne ou muet (> 1,5 s) = magasin absent** : avertissement en console qui ne
+    porte que le **nom** de l'erreur — @upstash/redis recopie la commande (« command was: [...] »)
+    dans ses messages, donc l'access token d'un `set` raté ; échange direct, jamais d'erreur ;
+  - appels simultanés d'une même instance : un seul échange. Deux instances froides au même
+    instant échangent encore chacune une fois : pas de verrou réparti (un aller-retour et un cas
+    de panne de plus pour une fenêtre de quelques centaines de millisecondes) ;
+  - **sans `tokenStore`, comportement strictement identique** (y compris : pas de nouvel essai
+    sur 401 hors repli).
+- **`lib/stay-agent.ts` — `check_availability` borné.** `from` au-delà de `today + maxHorizonDays`
+  ⇒ 400 `too-far` sans lire le calendrier ; `to` au-delà ⇒ ramené à l'horizon, réponse
+  `truncated: { requestedTo, detail }`. La plage de 120 jours se contrôle sur la demande, avant
+  bornage. Chaque mois lointain coûtait une URL Beds24, et un paramètre aléatoire contournait le
+  cache CDN. Descriptions OpenAPI et MCP mises à jour.
+- **Contrôles de déploiement sur préversion.** La production se reconnaît à l'origine de
+  `canonicalUrl` (`isProductionTarget`, exposée depuis `testing/deploy/run.ts`, déjà la règle de
+  `ctx.isProduction`) :
+  - `indexing.home` et `indexing.sitemapUrls` passent `productionOnly` : **SAUTÉS** hors
+    production (Vercel y pose `X-Robots-Tag: noindex`). Contrepartie : l'ancre de réservation de
+    l'accueil n'est plus vérifiée sur une préversion ;
+  - le rapport porte `production` ; hors production, `DEPLOY_ALERT_PREV` est ignoré (l'état
+    d'alerte n'avance pas) et `deploy-checks.yml` **n'ouvre ni ne commente aucune issue**,
+    n'envoie jamais de priorité 5 : un ntfy priorité 2 « [Préversion] » seulement s'il y a des KO.
+    Rapport d'un socle antérieur (sans `production`) = production, comme avant ;
+  - `doors[].method` accepte `"DELETE"` (sans corps ni en-tête JSON).
+- Tests : `tests/beds24-token-store.test.ts`, `tests/stay-agent-availability-horizon.test.ts`,
+  `tests/testing-deploy/preview.test.ts`, porte `DELETE` dans `tests/testing-deploy/security.test.ts`.
+  Aucun appel réseau.
+
+**Brancher `tokenStore` (Upstash, comme `lib/redis.ts` de Barbusse)** — dans le `lib/beds24.ts`
+du site ; `hasRedis()` faux ⇒ pas de magasin, comportement d'avant :
+
+```ts
+import type { Beds24StoredToken, Beds24TokenStore } from "@sejour/socle/lib/beds24-client";
+import { getRedis, hasRedis, redisKey } from "@/lib/redis";
+
+const tokenStore: Beds24TokenStore | undefined = hasRedis()
+  ? {
+      get: (k) => getRedis().get<Beds24StoredToken>(redisKey(k)),
+      set: async (k, v, ttl) => { await getRedis().set(redisKey(k), v, { ex: ttl }); },
+      delete: async (k) => { await getRedis().del(redisKey(k)); },
+    }
+  : undefined;
+
+const client = createBeds24Client({ routes, defaultRoute: "public", tokenStore });
+```
+
+Albiez n'a pas de Redis aujourd'hui : il monte sans rien brancher, ou pose le même adaptateur le
+jour où il en a un.
+
+### v3.30.1 — Liens « Réserver » vers une ancre déjà affichée (2026-11-20)
+
+- `lib/go-to-anchor.ts` (nouveau) : `goToAnchor(event, ancre)`, à brancher sur l'`onClick` des liens
+  « Réserver » vers le calendrier. Un `<Link>` de Next vers l'adresse déjà affichée, ancre comprise,
+  ne fait rien : dans l'appli mobile, après « Voir le calendrier », la barre du bas restait sans
+  effet (relevé par l'hôte). Si l'ancre est sur la page, on y défile en gardant la requête
+  (pré-remplissage) ; sinon `<Link>` navigue normalement. Correctif, aucune signature ne change.
+
+### v3.30.0 — Page Séjour : le séjour chiffré en HTML, lisible sans JavaScript (2026-11-20)
+
+Lot 2b du plan `curried-mapping-stallman`. Base : `release-v3.29.0`. Pré-relecture `le-douanier`
+(6 conditions, toutes appliquées).
+
+- **`lib/stay-page.ts`** (nouveau) : voir le tableau des modules. Une URL `/xx/sejour?checkin=&
+  checkout=&adults=&children=` rendue côté serveur : « Disponible » et le total Beds24 au centime,
+  ou le refus **traduit** (jamais le `detail`) avec les séjours libres les plus proches, chacun
+  lié à sa propre page Séjour. Trop de voyageurs → `unavailable` sans remplacement ; forme,
+  passé, horizon, durée → `invalid` avec motif ; aucun des deux n'interroge Beds24. Une panne
+  n'est jamais « complet » : `live` sans `current`, « prix sur la page de paiement », Réserver actif.
+- `QuotePageState` gagne `live` et un `reason?` facultatif sur `invalid` (ajouts : les sites ne
+  testent pas `status`). `QuoteSummary` : `perPersonPerNight` devient **facultatif** (absent = ligne
+  masquée), props facultatives `alternativeUrl` et `fallbackUrl` (absentes = comportement du devis
+  inchangé), « valable jusqu'au » seulement quand il y a un jeton. `stayPageLabels` dans
+  `quote-labels` (titre, refus, « Voir ce séjour »).
+- `quoteWithAlternatives` (dans `stay-search`, sans texte) : devis + `nearbyStays` sur refus,
+  partagé par `loadQuotePage` et `loadStayPage`.
+- `StayAgentConfig.stayPagePath?` : fourni, chaque séjour de l'API et du MCP porte un `stayUrl`.
+- **Changement de comportement de l'API et du MCP** : `validateRequest` refuse désormais un séjour
+  de plus de `MAX_STAY_NIGHTS` (60) nuits en `invalid-request`, sans appel Beds24. La constante
+  vit dans `stay-quote` (réexportée par `stay-search`, même borne que le paramètre `nights`).
+- **Calendrier : les voyageurs avant les dates** (demande de l'hôte du 20/11 : « jamais de prix
+  avant le nombre de voyageurs », le prix en dépend). Les compteurs passent en tête de la carte
+  (« Combien de voyageurs ? », `calendarGuestLabels`, 5 langues), **adultes à 0** au départ (sauf
+  `?adultes=` dans l'URL). Tant qu'il n'y a pas au moins un adulte : aucun appel de prix, ni bloc
+  prix, ni bouton Réserver, une invite à la place. Pas de valeur par défaut par site (un défaut à 10
+  afficherait un prix pour 10 avant le choix). Le nombre se **tape** aussi (champ numérique entre
+  « − » et « + », borné) : 16 clics pour un groupe de 16, c'était trop. Accessibilité : compteurs en
+  `role="group"` nommé par le titre, boutons nommés (« Ajouter : Adultes »), invite en `role="status"`.
+  Un lien vers le calendrier qui doit montrer un prix porte **toujours** `adultes`.
+  Validé par `le-dahu` et `chef-de-stand`.
+- `stayUrl` absent quand le devis porte des suppléments (le linge d'Albiez) : la page les ignore et
+  contredirait `total`. Le nombre de voyageurs canonique accepte `1.0`, `+4`, `1e1` (→ `1`, `4`, `10`).
+  Les paramètres inconnus (`utm_*`…) sont retirés par la redirection, assumé. Un devis signé invalide
+  reste neutre (l'en-tête n'apparaît que sur la page Séjour).
+- Pare-feu Vercel (avis `cerbere`) : `^/[a-z]{2}/sejour$` ajouté à la règle « Limite API IA »
+  (20/min/IP, compteur partagé avec l'API) sur les deux projets — une règle séparée à 10/min est
+  refusée par le plan Vercel (402). Au pire 7 `getroomprice` par requête (refus + remplacements).
+- Côté sites : la page, `headers()` dans `next.config` (`Vercel-CDN-Cache-Control: s-maxage=60`,
+  `X-Robots-Tag: noindex, nofollow`), `noindex, nofollow` en balise, pas de canonical ni d'entrée
+  au sitemap, `/xx/sejour` sans paramètre → 308 vers `/xx/tarifs`. **Pas** de redirection de
+  `/?arrivee=` vers `/sejour` (écart au plan) : `calendarUrl` est aussi le lien « Voir le
+  calendrier » de la page Séjour, qui bouclerait.
+
+### v3.29.0 — Calendrier : « Disponible » et le prix avant la page de paiement (2026-11-20)
+
+Lot 2a du plan `curried-mapping-stallman` : demande de l'hôte du 19/11 (le voyageur ne voyait un
+prix qu'une fois la modale Beds24 ouverte). Base : `release-v3.28.0`.
+
+- `ReservationCalendar` reçoit une prop **facultative** `quote: { url, labels, included? }`. Sans
+  elle, rien ne change (mineure). Le site passe l'URL de sa route de devis (`/api/agent/quote?…
+  &src=calendrier`) : même calcul, mêmes garde-fous, même cache CDN de 5 min que pour les IA.
+- Appel **seulement** quand la sélection est complète, après 600 ms sans changement ; réponses
+  rangées par séjour **et par langue** (le rendu lit celle de la sélection : jamais un ancien prix
+  affiché sous un nouveau compteur) ; requête en vol abandonnée au changement, délai de 8 s ; une
+  panne n'est jamais tenue pour fraîche. Après un **429** du pare-feu (`/api/agent`, 20/min/IP),
+  une minute sans interroger.
+- Rendu `aria-live` : « Disponible », total au centime, « soit X € par personne et par nuit »
+  (facultatif dans les libellés), `included` du site, détail dans `<details>` (lignes du séjour
+  **puis suppléments** : la somme retombe sur le total affiché), avertissements de dernière minute.
+- Refus confirmé : message traduit (jamais le `detail` de l'API) et jusqu'à 3 séjours de
+  remplacement en boutons ; un remplacement est posé même si les règles locales hésitent (Beds24
+  l'a chiffré, il fait foi). Un refus « unavailable » recharge la disponibilité affichée.
+- Pré-remplissage corrigé au passage : compteur de requêtes en vol (`pending`) au lieu d'un
+  booléen `loading` partagé ; un séjour dont la dernière nuit tombe dans le mois suivant attend son
+  chargement au lieu d'être abandonné ; un clic, un changement de mois ou « Effacer » annulent un
+  pré-remplissage en attente.
+- `QuoteSummary` formate ses montants par `formatEuro` (`useGrouping: "always"` : « 1.119,42 € »
+  en espagnol et en italien, là où CLDR écrivait « 1119,42 € »).
+- Relecture : `le-douanier`, `monsieur-loyal`, `poisson-babel` (corrections appliquées) ; sites :
+  `le-dahu`, `chef-de-stand`.
+
+### v3.28.0 — Grille : semaines réservées visibles, durées de cache étalées (2026-11-20)
+
+Demande de l'hôte du 20/11 : à Albiez, afficher les semaines réservées comme à Barbusse ; à
+Barbusse, ajouter les séjours du lundi au vendredi (côté site : `weekendStays` avec
+`startWeekday: 1, nights: 4`).
+
+- `chainedStays` suit les **règles** du calendrier (arrivées et départs ouverts, séjours minimum)
+  mais **plus l'occupation** : une semaine réservée reste dans la suite et `buildPriceGrid` la
+  résout « complet » (aucun appel de prix). Auparavant elle disparaissait (l'arrivée avançait d'un
+  jour). Aucune règle de calendrier n'est écrite chez le site : une rotation du mardi est suivie.
+  Une semaine **en partie** prise garde le comportement de `resolveWindow` (plus long séjour libre
+  contenu, s'il respecte les règles ; sinon « complet »).
+- `spreadTtl(key, base, spread)` : durée de cache d'un prix étalée sur `[base, base + spread[`,
+  déterministe par séjour. Les prix d'une grille calculée d'un coup n'expirent plus tous ensemble
+  (12 h plus tard), ce qui imposait plusieurs passages « incomplete » de suite.
+- Au-delà de la **dernière nuit libre lue**, une ligne « complet » n’est pas montrée : on ne distingue pas « réservé » de « pas encore ouvert à la vente » (horizon Beds24). Évite le « Réservé » à tort sur l’hiver suivant ou le Noël de l’an prochain.
+- `PriceGridJobConfig.maxIncompleteStreak` (6 par défaut, 3 auparavant, codé en dur) : une grille
+  d'une centaine de prix se remplit à froid en ~4 passages de 22 s ; 3 donnait une fausse alerte.
+- Relecture : à faire (`le-douanier`, `le-dahu`, `chef-de-stand`).
+
+### v3.27.0 — Grille de prix publiée en HTML : la page « Tarifs » (2026-11-19)
+
+Tests réels des 18-19/11/2026 dans ChatGPT, Gemini, Copilot et Perplexity : au mieux, ils trouvent
+le logement, mais aucun ne donne de prix (« tarif non publié », « calendrier limité au rendu
+statique »). Ils ne lisent que du HTML sans JavaScript : ni le calendrier, ni `llms.txt`, ni
+`/api/agent/quote`. Les concurrents cités avec un prix publient une **grille en texte**
+(« Décembre : à partir de 1750 € pour 2 nuits »). Plan :
+`curried-mapping-stallman` (plan de la session) (lot 1). Base : `release-v3.26.1`
+(`main` est resté en v3.19.0) ; v3.25.0 reste un trou réservé au Pricing.
+
+**Architecture (côté sites, relecture de cerbere)** : le calcul ne passe **jamais** par une page
+visitée. Une route de cron par site (`/api/cron/price-grid`, cron-job.org toutes les heures)
+appelle `buildPriceGrid` (`maxDuration = 60`, `timeBudgetMs` d'environ 22 s : cron-job.org coupe à 30 s par défaut) et range `{ grid, generatedAt, composition }` dans Upstash. La page
+`/xx/tarifs` ne fait que lire Upstash. Si le calcul échoue, la grille précédente reste en place.
+
+- `lib/price-grid.ts` :
+  - **Signature** : `buildPriceGrid(cfg, deps, { sources, parties, enabled?, priceLang?,
+    maxFailureRatio?, pauseMs?, sleep?, timeBudgetMs?, clock?, now? })` renvoie
+    `PriceGrid { columns, rows, generatedAt, pricesShown }`.
+    - Les colonnes au même prix sont **toujours** réunies (`mergeColumns`).
+    - `sleep`, `clock` et `now` sont injectés pour les tests.
+    - `timeBudgetMs` : temps accordé (le cron a 60 s sur le plan Hobby de Vercel). Une fois
+      dépassé, `IncompleteGridError` est levée : rien d'anormal, les prix déjà demandés restent
+      dans le cache de données et le passage suivant va plus loin. Le job rend `incomplete`,
+      garde la grille précédente, sans marque d'échec ni alerte.
+  - **Disponibilité** :
+    - une lecture **par période** (`readSpans` : fenêtres à plus d'un mois d'écart lues
+      séparément, l'une après l'autre, sans les mois creux entre l'hiver et l'été) ;
+    - marge de 14 jours après chaque fenêtre ; esquisse filtrée par `maxHorizonDays` **avant** la
+      lecture ;
+    - chaque plage passe **en un seul appel** au lecteur du site : le site fournit un lecteur sur
+      une seule plage, **pas** `monthlyAvailability`, qui lirait chaque mois en parallèle (environ
+      22 appels v2 d'un coup chez Barbusse).
+  - **Prix** :
+    - une ligne prise ne coûte **aucun** appel de prix ;
+    - les prix sont demandés **un par un**, dans une langue fixe (`priceLang`, `fr`) : une seule
+      entrée de cache par séjour, et le `warn` « réservation minimum 3 Nuits » est reconnu ;
+    - les dépendances sont passées **sans `onAnomaly`**, pour ne pas répéter l'alerte à chaque
+      passage du cron ;
+    - `pauseMs` : pause après chaque appel de prix **réel**. `getroomprice.php` répond 403 à une
+      suite d'appels rapprochés (mesuré le 19/11/2026 : environ 20 appels enchaînés, puis 403 en
+      alternance ; aucun avec 700 ms d'écart). `CACHE_HIT_MS` (50 ms) est une **heuristique** :
+      un appel plus court est supposé venir du cache de données de Next.
+  - **Pannes** :
+    - `DegradedGridError` est levée **dès que** les pannes dépassent `maxFailureRatio` (20 %) des
+      cellules prévues ;
+    - pas de nouvel essai : des 403 en alternance ne font jamais trois échecs de suite, et
+      insister aggrave la limitation ;
+    - `fetchRoomPrice` abandonne au bout de 8 s (`AbortSignal.timeout`).
+  - **Cellules** : `available` (total Beds24 au centime, `lines`), `taken`, `on-request`
+    (`disabled`, `service-unavailable`, `price-blocked`, `no-price`, `capacity`, `rule`). Un refus
+    `unavailable` de Beds24 vaut `taken` : il a le dernier mot.
+  - **Lignes** :
+    - dédoublonnées par dates, qu'elles soient prises ou à vendre (l'intitulé l'emporte) ;
+    - une ligne « complet » sans intitulé, couverte par une ligne « complet » intitulée,
+      disparaît (le week-end du 25 au 27 dans « Noël », du 23 au 27).
+  - **Interrupteur** : `enabled: false` correspond à `PRIX_PUBLICS=off/0/false` côté site. Aucun
+    appel de prix n'est fait, la disponibilité reste affichée.
+  - **Générateurs** (`WindowSource = (ctx) => StayWindow[]`, rejoués sur la disponibilité lue) :
+    - `chainedStays(span, { minNights })` enchaîne des séjours à partir de la première arrivée
+      autorisée, chacun du plus court séjour accepté d'au moins `minNights` nuits. Il préfère,
+      dans les six jours, une arrivée donnant exactement `minNights`. Il **suit la rotation de
+      Beds24, quelle qu'elle soit** (testé sur un mardi) ;
+    - `weekendStays(span, { startWeekday, nights })` ;
+    - `eventStays(LocalEvent[], { before, after, label })` : **événements `confirmed`
+      seulement**. La ligne porte le **séjour minimum accepté par Beds24 qui se termine `after`
+      jours après le dernier jour** : 24 Heures Moto, 3 nuits du 9 au 12 avril, et non 5 nuits.
+      `readFrom` fait lire la fenêtre complète (nuits d'approche `before`) ;
+    - `fixedStays(periods)`.
+  - **Autres fonctions** :
+    - `resolveWindow` : la fenêtre telle quelle, ou allongée si seule la durée bloque, ou le plus
+      long séjour libre qu'elle contient ; sinon, ligne « complet » ;
+    - `lowestTotal` : base d'un « à partir de » ;
+    - `priceGridOffer` : un `AggregateOffer` seul, sans résultat enrichi Google attendu ;
+    - `jsonLdText` : sérialisation avec `<` échappé.
+- `lib/price-grid-job.ts` (le cron et la page) :
+  - `runPriceGridJob({ key, composition, retryAfterMinutes?, staleHours? }, { store, build, notify?, dry?, now? })` :
+    calcule la grille et range `{ grid, generatedAt, composition }` sous `key`. En cas d’**échec**
+    (`DegradedGridError` ou autre), **la grille précédente reste intacte** et `lastFailureAt`
+    (sous `…:job`) suspend les essais pendant 15 min. L’alerte (sous `…:alert`) utilise
+    `nextAlertState` avec `confirmAfter: 2` : priorité 4 au 2e échec, jamais répétée, priorité 1 au
+    retour. `dry` calcule et rend la grille sans rien écrire.
+  - `readPriceGrid(store, key, composition, { today, now?, staleHours? })` (page) : la grille ou
+    `null` (magasin vide ou illisible, **composition différente**, jamais une erreur). Les lignes
+    déjà commencées sont retirées ; plus de 24 h : `stale` (la page n’émet plus de JSON-LD).
+  - **« incomplete » qui dure** : `incompleteStreak` (sous `…:job`). Au 3e passage `incomplete` de
+    suite, ou si le dernier succès date de plus de `staleHours` (24 h), le passage compte comme un
+    relevé KO pour l’alerte (`stalled: true` dans le rapport, à compter en erreur par le battement de
+    cœur du site), sans pause de 15 min : le passage suivant doit pouvoir avancer.
+  - **Verrou** : `setIfAbsent(<clé>:lock, …, 90 s)` avant tout calcul, `dry` compris ; s’il est pris,
+    `skipped`. Libéré en fin de passage (`del`), sinon par l’expiration.
+  - Le magasin est injecté (`PriceGridStore` : `get`, `set`, `setIfAbsent`, `del`) : Upstash reste un
+    choix de site. Le motif `skipped` cite la valeur effective de `retryAfterMinutes`.
+  - Tests : `tests/price-grid-job.test.ts`.
+- `components/PriceGrid.tsx` :
+  - composant serveur, `<table>` sémantique (`caption`, `scope`), `PriceGridLabels`, sans
+    aucune chaîne en dur ;
+  - montants au centime ; séjours en `formatRange` UTC ; heure de mise à jour en heure de Paris ;
+  - un espace après l'intitulé, pour une lecture sans CSS ;
+  - **pas de lien** sur une ligne prise ou « sur demande » ; les autres liens sont en
+    `rel="nofollow"`. Jamais de lien de devis signé.
+- Tests : `tests/price-grid.test.ts` (15 tests) :
+  - lecture comptée, aucun appel sur une ligne prise, rotation du mardi, lecture par saison ;
+  - aucune alerte, arrêt anticipé, pause sans nouvel essai, interrupteur ;
+  - fusion, dédoublonnage des lignes « complet » ;
+  - événement au séjour minimum finissant le lendemain, semaine en partie prise, `warn` français,
+    JSON-LD.
+- Additif : rien ne change pour un site qui ne l'importe pas, hormis le délai de 8 s de
+  `fetchRoomPrice`.
+
+### Connexion : tentatives limitées, comparaison en temps constant, origine des écritures
+
+Branche `auth-tentatives`. Additif : un site qui ne branche rien ne voit changer que les trois
+durcissements de `lib/auth.ts` et le contrôle d'origine de `guard.deny`, tous sans rupture.
+
+- `lib/login-attempts.ts` — `createLoginLimiter({ store?, maxFailures = 5, windowMs = 15 min, notify?, now? })` :
+  - fenêtre **glissante par IP** (`clientIp` : 1re valeur de `x-forwarded-for`, réécrit par
+    Vercel) ; au-delà de 5 échecs, 429 + `Retry-After` jusqu'à ce que le plus ancien sorte de la
+    fenêtre, **même avec le bon mot de passe** ; un succès remet l'adresse à zéro ;
+  - magasin injectable (`LoginAttemptStore`) : `createRedisLoginAttemptStore(redis, prefix)` sur
+    un ensemble trié Upstash (le client `@upstash/redis` satisfait l'interface structurelle
+    `RedisSortedSetClient`, vérifié par tsc) ; sans magasin, `createMemoryLoginAttemptStore`
+    (mémoire de l'instance, 10 000 adresses au plus) ;
+  - **un magasin en panne ne bloque jamais la connexion** : repli en mémoire, un seul
+    avertissement ;
+  - `notify` (typiquement `sendNtfy`) : **une seule alerte au franchissement** (`count === max`),
+    jamais une par refus ; une erreur du notificateur est avalée ;
+  - **limite connue, non corrigée en v3.31.0** : `check` puis `failure` sont deux allers-retours
+    distincts, et `recordFailure` Redis enchaîne quatre commandes sans `MULTI`. Des essais
+    parallèles depuis une même IP passent tous `check` avant que leurs échecs ne soient comptés,
+    et l'alerte au franchissement (`===`) peut sauter ou doubler. Un `INCR` + `EXPIRE` ne
+    suffirait pas : il faut fusionner contrôle et comptage en un seul appel atomique (script Lua
+    ou `INCR` d'abord, refus si le résultat dépasse la limite), ce qui change le contrat de
+    `LoginAttemptStore` et la fenêtre glissante. Reporté à un tag ultérieur (relecture Fable).
+- `lib/login-route.ts` — `createLoginRoute({ auth, passwordField, limiter?, setCookie? })` rend
+  `{ POST }`. Réponses aux clés des deux sites (`ok`/`success`, `erreur`/`error`) : 200 + cookie,
+  401 au message unique, 429. `limiter: null` désactive la limite.
+- `lib/auth.ts` :
+  - `jwtVerify(…, { algorithms: ["HS256"] })` — sans rupture, `createToken` n'a jamais signé
+    autrement (test : un jeton émis reste valide, un HS512 au même secret est refusé) ;
+  - `roleForPassword` compare `sha256Hex(donné)` à `sha256Hex(attendu)` par `constantTimeEqual`
+    (`cron-auth`), **sans court-circuit** entre les variables ; un mot de passe non-chaîne vaut
+    `null`, un mot de passe de plus de **1 024 caractères** (`MAX_PASSWORD_LENGTH`) aussi, refusé
+    **avant** toute empreinte (le SHA-256 est écrit à la main, donc lent sur un gros corps) ;
+  - `DASHBOARD_SECRET` de moins de 32 caractères : `console.warn` une fois, **jamais d'erreur**
+    (ce serait couper la production). Audience, `sub` et révocation : volontairement absents,
+    ils déconnecteraient tout le monde.
+- `lib/sha256.ts` — SHA-256 synchrone écrit à la main : `roleForPassword` reste synchrone et le
+  module reste importable par le proxy, quel que soit son runtime. Testé contre `node:crypto`.
+- `lib/auth-guard.ts` — `isCrossOrigin(request)` : toute méthode hors GET/HEAD/OPTIONS dont
+  l'`Origin` n'est pas l'hôte de la requête (ou vaut `null`), ou dont `Sec-Fetch-Site` vaut
+  `cross-site`, reçoit **403 après le contrôle du cookie** (un anonyme garde son 401). Sans
+  `Origin` ni `Sec-Fetch-Site` (client hors navigateur : contrôles post-déploiement, protocole),
+  la requête passe. Vérifié avant de l'écrire : tous les POST/DELETE du dashboard des deux sites
+  sont des `fetch` relatifs, et aucun cron ni webhook ne passe par `guard.deny`.
+- **À savoir pour les contrôles post-déploiement** : `security.badLogin` fait un échec par
+  passage depuis l'IP du runner. Cinq passages en moins de 15 min depuis la même IP, et le
+  sixième recevrait 429 au lieu de 401 — sans conséquence au rythme actuel, à garder en tête si
+  un site branche la limite et relance les contrôles en rafale.
+- Tests : `tests/auth.test.ts`.

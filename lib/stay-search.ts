@@ -15,7 +15,9 @@ import type { SelectionContext } from "./stay-selection";
 import {
   checkStayRules,
   isDay,
+  MAX_STAY_NIGHTS,
   priceStay,
+  quoteStay,
   selectionContext,
   validateRequest,
   type StayQuote,
@@ -51,8 +53,8 @@ export interface StaySearch {
   maxExtraNights?: number;
 }
 
-/** Durée maximale d'un séjour chiffré — la même borne que le paramètre `nights` de l'API. */
-export const MAX_STAY_NIGHTS = 60;
+/** Durée maximale d'un séjour chiffré : définie dans `stay-quote`, réexportée pour les appelants existants. */
+export { MAX_STAY_NIGHTS };
 
 export type PricedStay = Extract<StayQuote, { ok: true }>;
 
@@ -283,4 +285,21 @@ export async function nearbyStays(
     maxExtraNights: 7,
   });
   return stays;
+}
+
+/**
+ * Le devis d'un séjour et, s'il est refusé pour ses dates, les séjours libres les plus proches.
+ * Aucun texte ici : chaque appelant décide comment dire le refus (le devis signé garde le
+ * `detail` Beds24, la page Séjour le traduit). Une panne de la recherche ne donne aucune
+ * alternative, jamais une erreur.
+ */
+export async function quoteWithAlternatives(
+  cfg: StayQuoteConfig,
+  deps: StayQuoteDeps,
+  req: StayRequest,
+): Promise<{ quote: StayQuote; alternatives: PricedStay[] }> {
+  const quote = await quoteStay(cfg, deps, req);
+  if (quote.ok) return { quote, alternatives: [] };
+  const alternatives = await nearbyStays(cfg, deps, req, quote).catch((): PricedStay[] => []);
+  return { quote, alternatives };
 }

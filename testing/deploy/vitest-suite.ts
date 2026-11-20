@@ -19,7 +19,9 @@
  * - `DEPLOY_REPORT` — chemin d'un rapport JSON (résultats seulement, aucun corps de réponse) ;
  * - `DEPLOY_ALERT_PREV` — chemin de l'état d'alerte précédent (JSON) : s'il est fourni, la
  *   décision d'alerte est calculée et écrite dans le rapport, pour que le job d'alerte n'ait
- *   plus qu'à l'exécuter.
+ *   plus qu'à l'exécuter. **Ignoré quand la cible n'est pas la production** (v3.31.0) : un
+ *   passage contre une préversion ne fait avancer ni l'état d'alerte ni l'issue publique, et
+ *   le rapport porte `production: false`.
  *
  * Un échec n'imprime que l'identifiant, la phrase écrite à la main et les compteurs : jamais
  * un `expect(objet).toEqual(…)`, dont le diff afficherait une réponse dans un log public.
@@ -29,7 +31,7 @@ import { afterAll, beforeAll, describe, it } from "vitest";
 import type { DeploySite } from "../../config/deploy-site";
 import { nextAlertState } from "../../lib/alert-state";
 import { formatReport } from "./report";
-import { alertInputs, isFailing, runChecks, selectChecks } from "./run";
+import { alertInputs, isFailing, isProductionTarget, runChecks, selectChecks } from "./run";
 import type { CheckLevel, CheckResult } from "./types";
 
 const SUITE_TIMEOUT_MS = 15 * 60_000;
@@ -50,6 +52,8 @@ export interface DeployReport {
   site: string;
   level: CheckLevel;
   baseUrl: string;
+  /** `false` pour une préversion (v3.31.0) : le workflow n'ouvre alors aucune issue. */
+  production: boolean;
   failingIds: string[];
   results: CheckResult[];
   alert?: ReturnType<typeof nextAlertState>;
@@ -110,11 +114,12 @@ export function defineDeploySuite(site: DeploySite): void {
       site: site.name,
       level,
       baseUrl,
+      production: isProductionTarget(baseUrl, site.canonicalUrl),
       failingIds: all.filter(isFailing).map((r) => r.id),
       results: all,
     };
     const prevPath = env("DEPLOY_ALERT_PREV");
-    if (prevPath) {
+    if (prevPath && report.production) {
       let prev = null;
       if (existsSync(prevPath)) {
         try {

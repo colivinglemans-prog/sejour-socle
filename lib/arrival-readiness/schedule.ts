@@ -31,6 +31,19 @@ export interface ReadinessSchedule {
   daily: string;
   /** Une arrivée annoncée plus tard que `checkIn` déplace les contrôles serrure et eau à cette avance. */
   lateLeadMinutes: number;
+  /**
+   * Arrivée la plus précoce prise en compte (v3.26.0). Une arrivée annoncée **avant**
+   * `checkIn` mais à partir de cette heure avance d'autant les passages du jour J (`noon`,
+   * `preheat`, `final`) : une arrivée à 14h est contrôlée comme une arrivée à 17h, trois heures
+   * plus tôt. Une heure annoncée plus tôt encore se lit comme une saisie douteuse (« 01:00 »
+   * pour une arrivée dans la nuit) et garde l'horaire standard.
+   *
+   * **Absente : aucune avance**, comportement d'avant v3.26.0 — une arrivée annoncée avant
+   * `checkIn` est contrôlée à l'heure standard. Un site ne la pose que lorsque le reste de sa
+   * préparation (le chauffage, typiquement) avance aussi : sinon le passage `preheat` avancé
+   * constaterait un préchauffage qui n'a pas encore commencé.
+   */
+  earliestCheckIn?: string;
   /** Écart toléré entre le cron et l'heure nominale, en minutes. */
   toleranceMinutes: number;
   /**
@@ -120,6 +133,10 @@ export interface PassesOptions {
  *
  * Cas traités :
  * - **départ et arrivée le même jour** : `turnover` est levé, les sondes en tiennent compte ;
+ * - **arrivée anticipée annoncée** (`arrivalTime` avant `checkIn`, à partir de
+ *   `earliestCheckIn` s'il est fourni) : les passages `noon`, `preheat` et `final` avancent de
+ *   l'écart à `checkIn` (jamais avant minuit), la maison est contrôlée pour l'heure annoncée ;
+ *   `eve` et `noShow` ne bougent pas ;
  * - **arrivée tardive annoncée** (`arrivalTime` après `checkIn`) : un passage `late` à
  *   l'heure annoncée moins `lateLeadMinutes` contrôle serrure et eau ; l'eau sort du passage
  *   `final`, la serrure y reste (rien de ce qu'on vérifie sur elle ne dépend de l'heure
@@ -139,6 +156,7 @@ export function passesAt(
   const tol = schedule.toleranceMinutes * MINUTE;
   const due = (at: Date) => t >= at.getTime() - tol && t < at.getTime() + tol;
   const checkIn = clock(schedule.checkIn, "checkIn");
+  const earliest = schedule.earliestCheckIn !== undefined ? clock(schedule.earliestCheckIn, "earliestCheckIn") : null;
   const quietFrom = clock(schedule.quietFrom, "quietFrom");
   const quietUntil = clock(schedule.quietUntil, "quietUntil");
   const eveMin = clock(schedule.eve, "eve");
@@ -165,7 +183,7 @@ export function passesAt(
     label: clockLabel(minutes),
     bookingId: booking?.bookingId ?? null,
     day,
-    arrivalMinutes: booking ? arrivalMinutesOf(booking, checkIn) : null,
+    arrivalMinutes: booking ? arrivalMinutesOf(booking, checkIn, earliest) : null,
     probes: [...PROBES[kind]],
     notify: kind === "eve" || kind === "late" || !isQuiet(minutes, quietFrom, quietUntil),
     turnover: booking
@@ -179,12 +197,15 @@ export function passesAt(
 
   for (const b of bookings) {
     if (!isActive(b)) continue;
-    const arrivalMin = arrivalMinutesOf(b, checkIn);
+    const arrivalMin = arrivalMinutesOf(b, checkIn, earliest);
+    // Arrivée anticipée : les passages du jour J avancent d'autant (0 sinon).
+    const advance = Math.max(0, checkIn - arrivalMin);
     const lateMin = arrivalMin - schedule.lateLeadMinutes;
     const isLate = arrivalMin > checkIn && lateMin > finalMin;
     let eveDue = false;
 
-    for (const [kind, offset, minutes] of nominal) {
+    for (const [kind, offset, nominalMin] of nominal) {
+      const minutes = offset === 0 ? Math.max(0, nominalMin - advance) : nominalMin;
       const day = addDays(b.arrival, offset);
       const at = parisAt(day, minutes);
       if (!due(at)) continue;
@@ -229,7 +250,14 @@ function isActive(b: ReadinessBooking): boolean {
   return b.status === undefined || b.status === "confirmed";
 }
 
-function arrivalMinutesOf(b: ReadinessBooking, checkIn: number): number {
+/**
+ * Heure d'arrivée retenue : l'annoncée si elle est après `checkIn`, ou avant mais à partir de
+ * `earliest` (arrivée anticipée, v3.26.0) ; `checkIn` sinon.
+ */
+function arrivalMinutesOf(b: ReadinessBooking, checkIn: number, earliest: number | null): number {
   const announced = parseClock(b.arrivalTime);
-  return announced !== null && announced > checkIn ? announced : checkIn;
+  if (announced === null) return checkIn;
+  if (announced > checkIn) return announced;
+  if (earliest !== null && announced >= earliest && announced < checkIn) return announced;
+  return checkIn;
 }

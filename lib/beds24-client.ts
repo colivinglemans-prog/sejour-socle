@@ -46,6 +46,24 @@ const DEFAULT_REVALIDATE = 60;
 /** Marge sur l'expiration : un jeton qui meurt pendant la requête coûte un 401 inexplicable. */
 const EXPIRY_MARGIN_MS = 60_000;
 
+/**
+ * Marge du magasin partagé (v3.31.0) : un jeton relu par une autre instance doit encore vivre
+ * toute la durée d'une fonction serverless, d'où 10 min au lieu de 60 s.
+ */
+const STORE_MARGIN_MS = 10 * 60_000;
+
+/** Au-delà, un magasin qui ne répond pas est réputé en panne : on échange comme avant. */
+const STORE_TIMEOUT_MS = 1_500;
+
+/**
+ * Un jeton obtenu par échange il y a moins de 5 min et pourtant refusé n'est pas « périmé » :
+ * le refus est systématique (scope, révocation). Le relancer ferait un échange par appel.
+ */
+const FRESH_TOKEN_GRACE_MS = 5 * 60_000;
+
+/** Préfixe des clés du magasin, suivi de l'empreinte du refresh token. */
+const STORE_KEY_PREFIX = "beds24:access:";
+
 export interface Beds24Route {
   /** Variable d'environnement portant le refresh token de cette voie. */
   env: string;
@@ -77,6 +95,48 @@ export interface Beds24ClientConfig {
   defaultRoute: string;
   baseUrl?: string;
   revalidate?: number;
+  /**
+   * Magasin partagé des access tokens (v3.31.0), branché par le site sur son Redis. Facultatif :
+   * omis, le client ne garde ses jetons qu'en mémoire, exactement comme avant.
+   *
+   * Pourquoi : un access token vit 24 h, mais chaque démarrage à froid d'une fonction serverless
+   * repartait d'une mémoire vide et refaisait `/authentication/token`. Le 2026-11-16, deux
+   * post-déploiements ont échoué sur un 429 de cet échange. Avec un magasin, une instance
+   * échange et les autres relisent.
+   */
+  tokenStore?: Beds24TokenStore;
+}
+
+/** Entrée du cache mémoire : d'où vient le jeton, et depuis quand on l'a (pour juger un 401). */
+interface CachedToken {
+  token: string;
+  expiresAt: number;
+  obtainedAt: number;
+  fromStore: boolean;
+}
+
+/** Access token tel que gardé dans le magasin. `expiresAt` en millisecondes depuis l'époque. */
+export interface Beds24StoredToken {
+  token: string;
+  expiresAt: number;
+}
+
+/**
+ * Contrat minimal d'un magasin partagé — trois méthodes, de quoi le poser sur n'importe quel
+ * clé-valeur (Upstash, Vercel KV, `Map` de test).
+ *
+ * La clé est `beds24:access:` suivi d'une **empreinte SHA-256 tronquée** du refresh token
+ * (`beds24TokenStoreKey`) : le refresh token n'est jamais écrit dans le magasin. La valeur, elle,
+ * est un access token valide jusqu'à 24 h : le magasin doit rester privé au site.
+ *
+ * Aucune méthode ne peut casser un appel Beds24 : une erreur, ou un délai au-delà de 1,5 s, est
+ * avalé et le client retombe sur l'échange direct.
+ */
+export interface Beds24TokenStore {
+  get(key: string): Promise<Beds24StoredToken | null>;
+  /** `ttlSeconds` : durée de vie à poser sur la clé, déjà amputée de la marge de 10 min. */
+  set(key: string, value: Beds24StoredToken, ttlSeconds: number): Promise<void>;
+  delete(key: string): Promise<void>;
 }
 
 export interface Beds24GetOptions {
@@ -154,13 +214,56 @@ export interface Beds24Client {
   /** Ajoute des `infoItems` à une réservation (ajout seul). La voie doit porter `write:bookings`. */
   addInfoItems(bookingId: number, items: readonly { code: string; text: string }[], route: string): Promise<void>;
   /**
+   * Écrit des valeurs de calendrier (`price1`, `minStay`) sur une room, par tranches `[from, to]`
+   * inclusives — `POST /inventory/rooms/calendar`. La voie doit porter `write:inventory`.
+   *
+   * **Seuls `price1` et `minStay` passent** : ni `numAvail`, ni `override`, ni `price2…`. Une
+   * fermeture de dates ou une règle d'arrivée (la rotation du samedi d'Albiez vit dans
+   * `override`) ne s'écrit jamais par ce chemin — condition du dahu, 2026-11-14. Les tranches
+   * sont validées **avant** l'appel ; une seule invalide et rien n'est envoyé.
+   *
+   * Tous les éléments de la réponse sont lus, pas seulement le premier comme `postQuiet` : un
+   * élément `success: false` lève une `Beds24Error` qui nomme les champs en cause, et les
+   * `warnings` (valeur ignorée, plage tronquée…) sont rendus à l'appelant, qui doit les
+   * traiter comme un écart. Une réponse acceptée ne prouve pas l'écriture : relire ensuite.
+   */
+  updateCalendar(
+    roomId: number,
+    spans: readonly Beds24CalendarWrite[],
+    route: string,
+  ): Promise<Beds24CalendarWriteResult>;
+  /**
    * Derniers crédits lus dans les en-têtes Beds24 (`x-five-min-limit-remaining`), ou `null`
    * avant tout appel. Le quota (~100 crédits / 5 min) est **partagé par tout le compte** : une
    * tâche planifiée qui l'épuise coupe aussi le dashboard et la vitrine.
    */
   quota(): Beds24Quota | null;
-  /** Oublie l'access token d'une voie, pour que l'appel suivant en redemande un. */
+  /**
+   * Oublie l'access token d'une voie, pour que l'appel suivant en redemande un. La mémoire est
+   * vidée tout de suite ; avec un `tokenStore`, la suppression partagée part en arrière-plan :
+   * préférer alors `invalidateShared`.
+   */
   invalidate(route: string): void;
+  /**
+   * Comme `invalidate`, mais **attend** aussi la suppression dans le `tokenStore` (v3.31.0). Ne
+   * lève jamais, même magasin en panne. Sans magasin, équivaut à `invalidate`.
+   */
+  invalidateShared(route: string): Promise<void>;
+}
+
+/** Une tranche de calendrier à écrire : `from` et `to` inclus, au format `YYYY-MM-DD`. */
+export interface Beds24CalendarWrite {
+  from: string;
+  to: string;
+  /** Prix de base de la nuit (palier d'occupation 1 en mode « Occupancy Prices »). */
+  price1?: number;
+  /** Séjour minimum, entier de 1 à 365 (bornes de la spec Beds24). */
+  minStay?: number;
+}
+
+export interface Beds24CalendarWriteResult {
+  /** Avertissements renvoyés par Beds24 (`champ: message`). Vide si tout a été pris tel quel. */
+  warnings: string[];
 }
 
 export interface Beds24Quota {
@@ -181,7 +284,10 @@ export function createBeds24Client(config: Beds24ClientConfig): Beds24Client {
    * les indexer par leur nom entretiendrait deux entrées pour un seul jeton, et la marge
    * d'expiration serait à corriger à deux endroits le jour où elle s'avère mal choisie.
    */
-  const cache = new Map<string, { token: string; expiresAt: number }>();
+  const cache = new Map<string, CachedToken>();
+  const store = config.tokenStore;
+  /** Avec un magasin : échanges en cours par refresh token, pour que des appels simultanés n'en fassent qu'un. */
+  const inflight = new Map<string, Promise<string>>();
 
   function route(name: string): Beds24Route {
     const r = config.routes[name];
@@ -206,7 +312,12 @@ export function createBeds24Client(config: Beds24ClientConfig): Beds24Client {
     if (!data.token) throw new Error(`Beds24 authentication/token (${usage}) : token manquant`);
 
     const expiresIn = data.expiresIn ?? 86_400;
-    cache.set(refreshToken, { token: data.token, expiresAt: Date.now() + expiresIn * 1000 });
+    cache.set(refreshToken, {
+      token: data.token,
+      expiresAt: Date.now() + expiresIn * 1000,
+      obtainedAt: Date.now(),
+      fromStore: false,
+    });
     return { token: data.token, expiresIn };
   }
 
@@ -230,19 +341,102 @@ export function createBeds24Client(config: Beds24ClientConfig): Beds24Client {
     return resolve(whenMissing, [...seen, name]);
   }
 
+  /** Échange, puis publie le jeton dans le magasin s'il y en a un (sans jamais lever pour lui). */
+  async function exchangeAndShare(refreshToken: string, usage: string): Promise<Beds24TokenExchange> {
+    const result = await exchange(refreshToken, usage);
+    const entry = cache.get(refreshToken);
+    if (store && entry) {
+      const ttl = Math.floor(result.expiresIn - STORE_MARGIN_MS / 1000);
+      if (ttl > 0) {
+        const value: Beds24StoredToken = { token: entry.token, expiresAt: entry.expiresAt };
+        await quietly("écriture", async () => store.set(await beds24TokenStoreKey(refreshToken), value, ttl));
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Relit le magasin. Un jeton trop près de sa fin, mal formé, ou un magasin en panne valent
+   * « rien » : l'appelant échange alors comme sans magasin.
+   */
+  async function fromStore(refreshToken: string): Promise<string | null> {
+    if (!store) return null;
+    const hit = await quietly("lecture", async () => store.get(await beds24TokenStoreKey(refreshToken)));
+    if (
+      !hit ||
+      typeof hit.token !== "string" ||
+      !hit.token ||
+      typeof hit.expiresAt !== "number" ||
+      hit.expiresAt <= Date.now() + STORE_MARGIN_MS
+    ) {
+      return null;
+    }
+    cache.set(refreshToken, { token: hit.token, expiresAt: hit.expiresAt, obtainedAt: Date.now(), fromStore: true });
+    return hit.token;
+  }
+
+  /**
+   * Que faire d'un access token refusé (401), avec un magasin ?
+   * - `replaced` : un autre appel l'a déjà remplacé en mémoire — on retente, sans rien effacer ;
+   * - `stale` : relu du magasin, ou obtenu il y a plus de 5 min — on l'efface partout et on retente ;
+   * - `fresh` : tout juste échangé ici et déjà refusé — refus systématique, **ni effacement ni
+   *   nouvel échange** (sinon un échange par appel, et le quota y passe).
+   */
+  function refusal(refreshToken: string, used: string): "replaced" | "stale" | "fresh" {
+    const e = cache.get(refreshToken);
+    if (e && e.token !== used) return "replaced";
+    if (!e || e.fromStore || Date.now() - e.obtainedAt > FRESH_TOKEN_GRACE_MS) return "stale";
+    return "fresh";
+  }
+
+  /** Après un 401 sur une écriture (sans nouvel essai) : n'efface que ce qui mérite de l'être. */
+  async function onWriteRefused(name: string, used: string): Promise<void> {
+    const rt = refreshTokenOf(name);
+    if (!rt) return;
+    if (!store) return invalidate(name);
+    if (refusal(rt, used) === "stale") await forget(rt);
+  }
+
+  /** Oublie un jeton en mémoire **et** dans le magasin. N'échoue jamais. */
+  async function forget(refreshToken: string): Promise<void> {
+    cache.delete(refreshToken);
+    if (store) await quietly("suppression", async () => store.delete(await beds24TokenStoreKey(refreshToken)));
+  }
+
   async function token(name = config.defaultRoute): Promise<string> {
     const { name: actual, refreshToken } = resolve(name);
     const hit = cache.get(refreshToken);
     if (hit && hit.expiresAt > Date.now() + EXPIRY_MARGIN_MS) return hit.token;
-    const { token: fresh } = await exchange(refreshToken, actual);
-    return fresh;
+    if (!store) {
+      const { token: fresh } = await exchange(refreshToken, actual);
+      return fresh;
+    }
+    /*
+     * Avec un magasin : relire avant d'échanger, et un seul échange par instance quand plusieurs
+     * appels arrivent ensemble. Deux instances froides au même instant échangent encore chacune
+     * une fois : un verrou réparti coûterait un aller-retour et un cas de panne de plus, pour
+     * une fenêtre de quelques centaines de millisecondes.
+     */
+    const pending = inflight.get(refreshToken);
+    if (pending) return pending;
+    const p = (async () => {
+      const shared = await fromStore(refreshToken);
+      if (shared) return shared;
+      return (await exchangeAndShare(refreshToken, actual)).token;
+    })();
+    inflight.set(refreshToken, p);
+    try {
+      return await p;
+    } finally {
+      inflight.delete(refreshToken);
+    }
   }
 
   async function refresh(name: string): Promise<Beds24TokenExchange> {
     const rt = refreshTokenOf(name);
     if (!rt) throw new Error(`${route(name).env} n'est pas défini`);
     cache.delete(rt);
-    return exchange(rt, name);
+    return exchangeAndShare(rt, name);
   }
 
   async function keepAlive(
@@ -260,9 +454,18 @@ export function createBeds24Client(config: Beds24ClientConfig): Beds24Client {
     return states;
   }
 
+  /**
+   * La mémoire est vidée tout de suite ; la suppression dans le magasin part en arrière-plan
+   * (la signature reste synchrone). `invalidateShared` l'attend.
+   */
   function invalidate(name: string): void {
     const rt = refreshTokenOf(name);
-    if (rt) cache.delete(rt);
+    if (rt) void forget(rt);
+  }
+
+  async function invalidateShared(name: string): Promise<void> {
+    const rt = refreshTokenOf(name);
+    if (rt) await forget(rt);
   }
 
   async function get<T>(path: string, options: Beds24GetOptions = {}): Promise<T> {
@@ -299,18 +502,45 @@ export function createBeds24Client(config: Beds24ClientConfig): Beds24Client {
       );
 
     let res: Response;
+    let used: string | null = null;
     try {
-      res = await call(await token(name));
+      used = await token(name);
+      res = await call(used);
     } catch (e) {
       if (!refused) throw e;
+      used = null;
       degrade(`injoignable (${e instanceof Error ? e.message : String(e)})`);
       res = await call(await token(refused));
     }
 
+    /*
+     * Avec un magasin, un 401 peut venir d'un jeton partagé périmé et non d'un refresh token
+     * mort : on l'oublie partout (mémoire et magasin — sinon toutes les instances le reliraient
+     * jusqu'à 24 h), puis on retente une fois la même voie avant tout repli. Pas pour un jeton
+     * tout juste échangé (`refusal` = `fresh`) : le refus est alors systématique. Si le nouvel
+     * essai lève (refresh token mort, 429), on garde le 401 et on tombe dans le repli.
+     * Sans magasin, ce bloc ne s'exécute pas et rien ne change.
+     */
+    const rt = refreshTokenOf(actual);
+    if (res.status === 401 && store && used !== null && rt) {
+      const verdict = refusal(rt, used);
+      if (verdict !== "fresh") {
+        if (verdict === "stale") await forget(rt);
+        try {
+          res = await call(await token(name));
+        } catch (e) {
+          if (!refused) throw e;
+        }
+      }
+    }
+
     if (res.status === 401 && refused) {
-      invalidate(actual);
+      if (!store) invalidate(actual);
       degrade("refusée (401) — révoquée ?");
-      res = await call(await token(refused));
+      const fallback = await token(refused);
+      res = await call(fallback);
+      const frt = refreshTokenOf(resolve(refused).name);
+      if (res.status === 401 && store && frt && refusal(frt, fallback) === "stale") await forget(frt);
     }
 
     noteQuota(res);
@@ -349,7 +579,7 @@ export function createBeds24Client(config: Beds24ClientConfig): Beds24Client {
     const body = await res.text();
     if (!res.ok) {
       // On invalide la voie réellement empruntée, pas celle demandée (elles diffèrent après un repli).
-      if (res.status === 401) invalidate(actual);
+      if (res.status === 401) await onWriteRefused(actual, t);
       throw new Beds24Error(res.status, `${path} (POST)`, "");
     }
     let refusal: string | null = null;
@@ -382,6 +612,32 @@ export function createBeds24Client(config: Beds24ClientConfig): Beds24Client {
     return postQuiet("/bookings", [{ id: bookingId, infoItems: items.map(({ code, text }) => ({ code, text })) }], name);
   }
 
+  async function updateCalendar(
+    roomId: number,
+    spans: readonly Beds24CalendarWrite[],
+    name: string,
+  ): Promise<Beds24CalendarWriteResult> {
+    const calendar = validateCalendarSpans(spans);
+    if (calendar.length === 0) return { warnings: [] };
+    const { name: actual } = resolve(name);
+    const t = await token(name);
+    const res = await fetch(`${baseUrl}/inventory/rooms/calendar`, {
+      method: "POST",
+      headers: { token: t, "Content-Type": "application/json" },
+      body: JSON.stringify([{ roomId, calendar }]),
+      cache: "no-store",
+      signal: AbortSignal.timeout(20_000),
+    });
+    noteQuota(res);
+    const body = await res.text();
+    if (!res.ok) {
+      if (res.status === 401) await onWriteRefused(actual, t);
+      // Le calendrier n'a rien de personnel : les 200 premiers caractères aident à diagnostiquer.
+      throw new Beds24Error(res.status, "/inventory/rooms/calendar (POST)", body);
+    }
+    return parseCalendarWriteResponse(body);
+  }
+
   /*
    * Passe par `postQuiet` (2026-11-08, cerbere) : l'ancienne version recopiait dans l'erreur le
    * corps de la réponse, qui contient la note écrite.
@@ -399,9 +655,45 @@ export function createBeds24Client(config: Beds24ClientConfig): Beds24Client {
     getMessages,
     sendMessage,
     addInfoItems,
+    updateCalendar,
     quota: () => lastQuota,
     invalidate,
+    invalidateShared,
   };
+}
+
+/**
+ * Clé du magasin pour un refresh token : `beds24:access:` + 32 caractères hexadécimaux de son
+ * SHA-256. Web Crypto plutôt que `node:crypto` : le client peut tourner sur le runtime edge.
+ */
+export async function beds24TokenStoreKey(refreshToken: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(refreshToken));
+  const hex = Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+  return STORE_KEY_PREFIX + hex.slice(0, 32);
+}
+
+/**
+ * Exécute une opération du magasin sans jamais la laisser casser l'appel Beds24 : erreur ou
+ * délai dépassé ⇒ `null` et un avertissement, sans clé ni jeton dans le message.
+ */
+async function quietly<T>(what: string, op: () => Promise<T>): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      op(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`délai de ${STORE_TIMEOUT_MS} ms dépassé`)), STORE_TIMEOUT_MS);
+      }),
+    ]);
+  } catch (e) {
+    // Le nom seul, jamais le message : @upstash/redis y recopie la commande (« command was:
+    // [...] »), donc l'access token d'un `set` raté finirait dans les journaux.
+    const kind = e instanceof Error ? e.name : typeof e;
+    console.warn(`Beds24 : magasin de jetons indisponible (${what}, ${kind}), échange direct.`);
+    return null;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /**
@@ -446,4 +738,105 @@ export function eachDay(from: string, to: string): string[] {
     day = d.toISOString().slice(0, 10);
   }
   return days;
+}
+
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Lendemain d'un jour « YYYY-MM-DD », en UTC (même arithmétique qu'`eachDay`). */
+function nextDay(day: string): string {
+  const d = new Date(`${day}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * L'inverse d'`expandSpans` : des valeurs jour par jour vers les tranches `[from, to]` inclusives
+ * qu'attend `POST /inventory/rooms/calendar`. Deux jours consécutifs se fondent dans la même
+ * tranche s'ils portent exactement les mêmes champs. Un jour manquant coupe la tranche.
+ *
+ * Le regroupement compte pour le quota (~100 crédits / 5 min, partagé par tout le compte) : un
+ * calendrier de 365 jours tient d'ordinaire en quelques dizaines de tranches, en un seul appel.
+ */
+export function compressSpans(
+  days: Readonly<Record<string, Omit<Beds24CalendarWrite, "from" | "to">>>,
+): Beds24CalendarWrite[] {
+  const spans: Beds24CalendarWrite[] = [];
+  for (const day of Object.keys(days).sort()) {
+    const value = days[day];
+    const last = spans.at(-1);
+    if (
+      last &&
+      nextDay(last.to) === day &&
+      last.price1 === value.price1 &&
+      last.minStay === value.minStay
+    ) {
+      last.to = day;
+    } else {
+      spans.push({ from: day, to: day, ...pickCalendarFields(value) });
+    }
+  }
+  return spans;
+}
+
+function pickCalendarFields(v: Omit<Beds24CalendarWrite, "from" | "to">): Omit<Beds24CalendarWrite, "from" | "to"> {
+  const out: Omit<Beds24CalendarWrite, "from" | "to"> = {};
+  if (v.price1 !== undefined) out.price1 = v.price1;
+  if (v.minStay !== undefined) out.minStay = v.minStay;
+  return out;
+}
+
+/**
+ * Valide les tranches avant tout envoi et les réduit aux seuls champs autorisés. **Lève** au
+ * premier défaut : une écriture de prix à moitié valide ne part pas à moitié.
+ */
+export function validateCalendarSpans(spans: readonly Beds24CalendarWrite[]): Beds24CalendarWrite[] {
+  return spans.map((s, i) => {
+    const where = `tranche ${i} (${s.from} → ${s.to})`;
+    if (!ISO_DAY.test(s.from) || !ISO_DAY.test(s.to)) throw new Error(`${where} : date invalide`);
+    if (s.to < s.from) throw new Error(`${where} : fin avant le début`);
+    const extra = Object.keys(s).filter((k) => !["from", "to", "price1", "minStay"].includes(k));
+    if (extra.length) throw new Error(`${where} : champ interdit (${extra.join(", ")})`);
+    if (s.price1 === undefined && s.minStay === undefined) throw new Error(`${where} : rien à écrire`);
+    if (s.price1 !== undefined && !(Number.isFinite(s.price1) && s.price1 > 0)) {
+      throw new Error(`${where} : price1 invalide (${s.price1})`);
+    }
+    if (s.minStay !== undefined && !(Number.isInteger(s.minStay) && s.minStay >= 1 && s.minStay <= 365)) {
+      throw new Error(`${where} : minStay invalide (${s.minStay})`);
+    }
+    return { from: s.from, to: s.to, ...pickCalendarFields(s) };
+  });
+}
+
+interface Beds24PostItem {
+  success?: boolean;
+  errors?: { action?: string; field?: string; message?: string }[];
+  warnings?: { action?: string; field?: string; message?: string }[];
+}
+
+/**
+ * Lit **tous** les éléments d'une réponse `multiplePostResponse`. Un seul élément sans `success: true` lève
+ * (avec les champs et messages en cause) ; les `warnings` de tous les éléments sont rendus.
+ * Un corps illisible sur un statut 2xx lève aussi : pour des prix, « on ne sait pas » n'est
+ * pas un succès.
+ */
+export function parseCalendarWriteResponse(body: string): Beds24CalendarWriteResult {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    throw new Beds24Error(200, "/inventory/rooms/calendar (POST : réponse illisible)", body);
+  }
+  const items: Beds24PostItem[] = Array.isArray(parsed) ? parsed : [parsed as Beds24PostItem];
+  const describe = (e: { action?: string; field?: string; message?: string }) =>
+    [e.field ?? e.action ?? "?", e.message].filter(Boolean).join(": ");
+  // Une réponse vide ou sans `success: true` explicite n'est pas un succès (relecture Fable).
+  if (items.length === 0) {
+    throw new Beds24Error(200, "/inventory/rooms/calendar (POST : réponse vide)", body);
+  }
+  const refused = items.filter((it) => it.success !== true);
+  if (refused.length) {
+    const why = refused.flatMap((it) => (it.errors ?? []).map(describe)).join(" ; ") || "sans motif";
+    throw new Beds24Error(200, `/inventory/rooms/calendar (POST refusé : ${why})`, "");
+  }
+  return { warnings: items.flatMap((it) => (it.warnings ?? []).map(describe)) };
 }

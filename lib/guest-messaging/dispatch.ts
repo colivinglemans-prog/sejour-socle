@@ -18,7 +18,7 @@
  * fenêtre de dates fausse, un registre illisible), pas d'une journée chargée.
  *
  * Mode `test` : au moment où le message partirait, il part **à l'hôte** par e-mail (`deps.test`),
- * précédé d'un bandeau, et la copie est notée dans le registre de test (`MSG_<ID>_TEST`). Le
+ * précédé d'un bandeau, et la copie est notée dans le registre de test (`MSG_<ID>_T`). Le
  * voyageur ne reçoit rien et le registre réel n'est pas touché : le vrai envoi reste dû.
  */
 import type { Channel } from "../channels";
@@ -102,7 +102,7 @@ export interface DispatchDeps {
   /** Journal. Défaut : `logGuestMessage` (console, sans donnée personnelle). */
   log?(entry: GuestMessageLog): void;
   /**
-   * Mode `test` : adresse de l'hôte et écriture de la trace `MSG_<ID>_TEST`. Absent, un modèle
+   * Mode `test` : adresse de l'hôte et écriture de la trace `MSG_<ID>_T`. Absent, un modèle
    * en `test` est bloqué (`no-test-transport`). Exige aussi `email`.
    */
   test?: {
@@ -208,9 +208,8 @@ export function sendNow(
 const MANUAL_TEST: readonly MessageState["kind"][] = [...MANUAL, "sent"];
 
 /**
- * Copie de test : mêmes relecture, vérification et rendu qu'un vrai envoi, puis e-mail à l'hôte
- * et trace `MSG_<ID>_TEST`. Pas de réservation ni de départage : une copie en double ne gêne
- * personne.
+ * Copie de test : mêmes relecture, vérification et rendu qu'un vrai envoi, puis trace `MSG_<ID>_T`
+ * (relue) et e-mail à l'hôte. Pas de départage : une copie en double ne gêne personne.
  */
 async function deliverTest(
   bookingId: number,
@@ -256,20 +255,35 @@ async function deliverTest(
     "─────────────────────────────",
     "",
   ].join("\n");
+  const meta = { transport: rendered.transport, version: t.version, channel: booking.channel } as const;
+  /*
+   * La trace **avant** l'envoi, puis relue (v3.26.1). Avant, la copie partait puis la trace était
+   * écrite : une trace illisible (code tronqué par Beds24, 2026-11-16) laissait le message dû et
+   * la copie repartait à chaque passage. Désormais une trace qui ne se relit pas bloque la copie :
+   * au pire une copie manquée, jamais une boucle. Une copie redemandée à la main (`sent`) n'empile
+   * pas de trace.
+   */
+  if (state.kind !== "sent") {
+    const nonce = (options.nonce ?? randomNonce)();
+    try {
+      await deps.test.record(booking, t, { at: options.now.toISOString(), anchorDay: anchorDayOf(booking, t), nonce });
+    } catch (e) {
+      return done("failed", "record", errorMeta(e));
+    }
+    try {
+      const again = await deps.reload(booking.id);
+      if (!(again?.testLedger ?? []).some((e) => e.templateId === t.id && e.nonce === nonce)) {
+        return done("blocked", "ledger-unreadable");
+      }
+    } catch (e) {
+      return done("failed", "recheck", errorMeta(e));
+    }
+  }
   try {
     await deps.email.send({ to: deps.test.to, subject: `[TEST] ${rendered.subject} — résa ${booking.id}`, text: banner + rendered.text });
   } catch (e) {
+    // La trace est posée : pas de nouvel essai automatique (c'est une copie pour l'hôte).
     return done("failed", "send", { ...errorMeta(e), transport: "email" });
-  }
-  const meta = { transport: rendered.transport, version: t.version, channel: booking.channel } as const;
-  // Copie redemandée à la main : la trace existe déjà, on n'en empile pas une de plus.
-  if (state.kind === "sent") return done("tested", undefined, meta);
-  try {
-    await deps.test.record(booking, t, { at: options.now.toISOString(), anchorDay: anchorDayOf(booking, t), nonce: (options.nonce ?? randomNonce)() });
-  } catch (e) {
-    // La copie est partie : on le dit (`tested`), avec le motif. Rendre `failed` laisserait le
-    // message dû, et le cron renverrait la copie — code compris — à chaque passage.
-    return done("tested", "record", { ...meta, ...errorMeta(e) });
   }
   return done("tested", undefined, meta);
 }
@@ -360,6 +374,10 @@ async function deliver(
    */
   try {
     const again = await deps.reload(booking.id);
+    // Notre propre trace doit se relire (v3.26.1) : une trace écrite mais illisible — code tronqué
+    // par Beds24, registre mal branché — rendrait le départage aveugle et l'envoi rejouable.
+    const mine = (again?.ledger ?? []).some((e) => e.templateId === t.id && e.state === "pending" && e.nonce === nonce);
+    if (!mine) return done("failed", "ledger-unreadable");
     const rivals = (again?.ledger ?? []).filter(
       (e) =>
         e.templateId === t.id &&

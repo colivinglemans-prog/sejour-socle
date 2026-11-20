@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { withSrc, type QuotePageState } from "../lib/quote-page";
 import type { PricedStay } from "../lib/stay-search";
+import { calendarQuoteLabels, formatEuro } from "../lib/calendar-quote";
 
 /**
  * L'affichage d'un devis partagé — composant serveur, sans état. Le site fournit les textes
@@ -14,7 +15,10 @@ export interface QuoteSummaryLabels {
   total: string;
   /** Ligne du détail : le séjour tel que Beds24 le facture (nuits, frais, taxe). */
   stay: string;
-  perPersonPerNight: string;
+  /** « par personne et par nuit » ; absent, la ligne n'est pas affichée (Albiez : même prix de 1 à 4). */
+  perPersonPerNight?: string;
+  /** Lien d'un séjour de remplacement quand `alternativeUrl` est fourni ; à défaut, `openCalendar`. */
+  seeStay?: string;
   /**
    * « Taxe de séjour, ménage, draps compris » — propre à chaque site. Une fonction reçoit les
    * suppléments retenus dans le devis : « linge en option » ne doit pas s'afficher sous une
@@ -55,6 +59,13 @@ export interface QuoteSummaryProps {
   notes?: string[];
   /** Encart du site au-dessus du devis (photo, nom du logement). */
   header?: ReactNode;
+  /**
+   * Lien de chaque séjour de remplacement (page Séjour). Absent : le calendrier pré-rempli,
+   * comme sur le devis signé.
+   */
+  alternativeUrl?: (stay: { checkIn: string; checkOut: string; adults: number; children: number }) => string;
+  /** Lien `openCalendar` sous le message d'une entrée invalide. Absent : le message seul, comme sur le devis. */
+  fallbackUrl?: string;
 }
 
 const LOCALE_TAG: Record<string, string> = { fr: "fr-FR", en: "en-GB", de: "de-DE", es: "es-ES", it: "it-IT" };
@@ -62,10 +73,9 @@ const LOCALE_TAG: Record<string, string> = { fr: "fr-FR", en: "en-GB", de: "de-D
 function fmt(lang: string) {
   const tag = LOCALE_TAG[lang] ?? "fr-FR";
   return {
-    money: (n: number) => new Intl.NumberFormat(tag, { style: "currency", currency: "EUR" }).format(n),
+    money: (n: number) => formatEuro(n, lang),
     /** Un repère arrondi à l'euro ne s'affiche pas avec des centimes : ce serait une fausse précision. */
-    euros: (n: number) =>
-      new Intl.NumberFormat(tag, { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n),
+    euros: (n: number) => formatEuro(n, lang, false),
     day: (d: string) =>
       new Intl.DateTimeFormat(tag, { weekday: "short", day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }).format(
         new Date(`${d}T00:00:00Z`),
@@ -95,14 +105,26 @@ function Stay({ s, lang, labels }: { s: { checkIn: string; checkOut: string; adu
   );
 }
 
-function Alternative({ a, lang, labels, calendarUrl }: { a: PricedStay; lang: string; labels: QuoteSummaryLabels; calendarUrl: QuoteSummaryProps["calendarUrl"] }) {
+function Alternative({
+  a,
+  lang,
+  labels,
+  calendarUrl,
+  alternativeUrl,
+}: {
+  a: PricedStay;
+  lang: string;
+  labels: QuoteSummaryLabels;
+  calendarUrl: QuoteSummaryProps["calendarUrl"];
+  alternativeUrl?: QuoteSummaryProps["alternativeUrl"];
+}) {
   const f = fmt(lang);
   return (
     <li className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 p-4">
       <Stay s={a} lang={lang} labels={labels} />
       <span className="font-semibold">{f.money(a.total)}</span>
-      <a className={link} href={calendarUrl(a)}>
-        {labels.openCalendar}
+      <a className={link} href={alternativeUrl ? alternativeUrl(a) : calendarUrl(a)}>
+        {alternativeUrl ? (labels.seeStay ?? labels.openCalendar) : labels.openCalendar}
       </a>
     </li>
   );
@@ -118,14 +140,23 @@ export default function QuoteSummary({
   cancellation,
   notes = [],
   header,
+  alternativeUrl,
+  fallbackUrl,
 }: QuoteSummaryProps) {
   const f = fmt(lang);
   const src = state.status === "invalid" ? undefined : state.quote.src;
   const calendar = (s: Parameters<QuoteSummaryProps["calendarUrl"]>[0]) => withSrc(calendarUrl(s), src);
   if (state.status === "invalid") {
     return (
-      <section className="mx-auto max-w-2xl px-4 py-16 text-center">
-        <p>{labels.invalid}</p>
+      <section className="mx-auto max-w-2xl space-y-6 px-4 py-16 text-center">
+        {/* L'en-tête seulement sur la page Séjour : le devis invalide garde sa page neutre. */}
+        {fallbackUrl && header}
+        <p>{state.reason ?? labels.invalid}</p>
+        {fallbackUrl && (
+          <a className={button} href={fallbackUrl}>
+            {labels.openCalendar}
+          </a>
+        )}
       </section>
     );
   }
@@ -154,17 +185,55 @@ export default function QuoteSummary({
               <h2 className="text-xl font-semibold">{labels.alternatives}</h2>
               <ul className="space-y-3">
                 {state.alternatives.map((a) => (
-                  <Alternative key={a.checkIn} a={a} lang={lang} labels={labels} calendarUrl={calendar} />
+                  <Alternative key={a.checkIn} a={a} lang={lang} labels={labels} calendarUrl={calendar} alternativeUrl={alternativeUrl} />
                 ))}
               </ul>
             </>
           )}
+          {/* Page Séjour : toujours une sortie, même sans remplacement (trop de voyageurs). */}
+          {alternativeUrl && (
+            <p>
+              <a className={link} href={calendar(q)}>
+                {labels.openCalendar}
+              </a>
+            </p>
+          )}
         </div>
       )}
 
-      {(state.status === "valid" || state.status === "price-changed" || state.status === "unchecked") && (
+      {state.status === "live" && !state.current && (
+        <div className="space-y-4">
+          <p>{calendarQuoteLabels(lang).fallback}</p>
+          {[...new Set(notes)].map((n) => (
+            <p key={n} className="text-sm text-secondary">
+              {n}
+            </p>
+          ))}
+          <div className="flex flex-wrap items-center gap-4">
+            <a className={button} href={state.bookUrl} rel="nofollow">
+              {labels.book}
+            </a>
+            <a className={link} href={calendar(q)}>
+              {labels.openCalendar}
+            </a>
+          </div>
+        </div>
+      )}
+
+      {(state.status === "valid" ||
+        state.status === "price-changed" ||
+        state.status === "unchecked" ||
+        (state.status === "live" && state.current)) && (
         <div className="space-y-4">
           <div className="rounded-2xl bg-light-bg p-6">
+            {state.status === "live" && (
+              <p className="mb-2 flex items-center gap-1.5 font-semibold text-emerald-700">
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+                {calendarQuoteLabels(lang).available}
+              </p>
+            )}
             <p className="text-sm uppercase tracking-wide text-secondary">{labels.total}</p>
             <p className="text-4xl font-bold">
               {state.status === "price-changed" && state.current ? (
@@ -176,10 +245,12 @@ export default function QuoteSummary({
                 f.money(q.total)
               )}
             </p>
-            <p className="mt-1 text-secondary">
-              {f.euros(state.current?.perPersonPerNight ?? Math.round(q.total / (q.adults + q.children) / Math.max(1, Math.round((Date.parse(q.checkOut) - Date.parse(q.checkIn)) / 86_400_000))))}{" "}
-              {labels.perPersonPerNight}
-            </p>
+            {labels.perPersonPerNight && (
+              <p className="mt-1 text-secondary">
+                {f.euros(state.current?.perPersonPerNight ?? Math.round(q.total / (q.adults + q.children) / Math.max(1, Math.round((Date.parse(q.checkOut) - Date.parse(q.checkIn)) / 86_400_000))))}{" "}
+                {labels.perPersonPerNight}
+              </p>
+            )}
             {/* Le détail n'existe que revérifié : nuits, frais et taxe quand le site les décompose,
                 et chaque supplément choisi (le linge) en clair. */}
             {state.current && (state.current.stayLines?.length || state.current.extras.length > 0) && (
@@ -224,7 +295,7 @@ export default function QuoteSummary({
             </a>
           </div>
           <p className="text-sm text-secondary">
-            {labels.validUntil(f.instant(state.expiresAt))} ·{" "}
+            {"expiresAt" in state && <>{labels.validUntil(f.instant(state.expiresAt))} · </>}
             <a className={link} href={conditionsUrl}>
               {labels.conditions}
             </a>
