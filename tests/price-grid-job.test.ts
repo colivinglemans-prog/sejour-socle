@@ -12,6 +12,14 @@ function memory() {
       set: async (k: string, v: string) => {
         data.set(k, v);
       },
+      setIfAbsent: async (k: string, v: string) => {
+        if (data.has(k)) return false;
+        data.set(k, v);
+        return true;
+      },
+      del: async (k: string) => {
+        data.delete(k);
+      },
     },
   };
 }
@@ -86,6 +94,46 @@ describe("runPriceGridJob : temps épuisé", () => {
   });
 });
 
+describe("runPriceGridJob : verrou et « incomplete » qui dure", () => {
+  it("un calcul déjà en cours rend « skipped », dry compris ; le verrou est libéré après", async () => {
+    const m = memory();
+    m.data.set(`${CFG.key}:lock`, "x");
+    const r = await runPriceGridJob(CFG, { store: m.store, build: async () => GRID(T0.toISOString()), dry: true, now: T0 });
+    expect(r.outcome).toBe("skipped");
+    m.data.delete(`${CFG.key}:lock`);
+    await runPriceGridJob(CFG, { store: m.store, build: async () => GRID(T0.toISOString()), now: T0 });
+    expect(m.data.has(`${CFG.key}:lock`)).toBe(false);
+  });
+
+  it("au 3e « incomplete » de suite, relevé KO ; alerte au 2e relevé KO", async () => {
+    const m = memory();
+    const sent: PriceGridNotification[] = [];
+    const notify = (n: PriceGridNotification) => {
+      sent.push(n);
+    };
+    const slow = async () => {
+      throw new IncompleteGridError(10, 60);
+    };
+    const runs = [];
+    for (let i = 1; i <= 4; i++) runs.push(await runPriceGridJob(CFG, { store: m.store, build: slow, now: at(60 * i), notify }));
+    expect(runs.map((r) => Boolean(r.stalled))).toEqual([false, false, true, true]);
+    expect(sent.map((n) => n.priority)).toEqual([4]); // ouverte au 4e passage (2e relevé KO)
+  });
+
+  it("dernier succès trop ancien : un seul « incomplete » compte comme KO", async () => {
+    const m = memory();
+    await runPriceGridJob(CFG, { store: m.store, build: async () => GRID(T0.toISOString()), now: T0 });
+    const r = await runPriceGridJob(CFG, {
+      store: m.store,
+      build: async () => {
+        throw new IncompleteGridError(10, 60);
+      },
+      now: at(25 * 60),
+    });
+    expect(r.stalled).toBe(true);
+  });
+});
+
 describe("readPriceGrid", () => {
   it("rien quand la composition a changé ; lignes passées retirées ; vieille de plus de 24 h = périmée", async () => {
     const m = memory();
@@ -102,7 +150,12 @@ describe("readPriceGrid", () => {
   });
 
   it("magasin illisible : rien, jamais d'erreur", async () => {
-    const broken = { get: async () => { throw new Error("Upstash"); }, set: async () => {} };
+    const broken = {
+      get: async () => {
+        throw new Error("Upstash");
+      },
+      set: async () => {},
+    };
     expect(await readPriceGrid(broken, CFG.key, "v1", { today: "2026-11-19" })).toBeNull();
   });
 });

@@ -1707,7 +1707,7 @@ statique »). Ils ne lisent que du HTML sans JavaScript : ni le calendrier, ni `
 
 **Architecture (côté sites, relecture de cerbere)** : le calcul ne passe **jamais** par une page
 visitée. Une route de cron par site (`/api/cron/price-grid`, cron-job.org toutes les heures)
-appelle `buildPriceGrid` (`maxDuration = 60`, `timeBudgetMs` d'environ 45 s) et range `{ grid, generatedAt, composition }` dans Upstash. La page
+appelle `buildPriceGrid` (`maxDuration = 60`, `timeBudgetMs` d'environ 22 s : cron-job.org coupe à 30 s par défaut) et range `{ grid, generatedAt, composition }` dans Upstash. La page
 `/xx/tarifs` ne fait que lire Upstash. Si le calcul échoue, la grille précédente reste en place.
 
 - `lib/price-grid.ts` :
@@ -1771,7 +1771,7 @@ appelle `buildPriceGrid` (`maxDuration = 60`, `timeBudgetMs` d'environ 45 s) et 
     - `priceGridOffer` : un `AggregateOffer` seul, sans résultat enrichi Google attendu ;
     - `jsonLdText` : sérialisation avec `<` échappé.
 - `lib/price-grid-job.ts` (le cron et la page) :
-  - `runPriceGridJob({ key, composition, retryAfterMinutes? }, { store, build, notify?, dry?, now? })` :
+  - `runPriceGridJob({ key, composition, retryAfterMinutes?, staleHours? }, { store, build, notify?, dry?, now? })` :
     calcule la grille et range `{ grid, generatedAt, composition }` sous `key`. En cas d’**échec**
     (`DegradedGridError` ou autre), **la grille précédente reste intacte** et `lastFailureAt`
     (sous `…:job`) suspend les essais pendant 15 min. L’alerte (sous `…:alert`) utilise
@@ -1780,7 +1780,14 @@ appelle `buildPriceGrid` (`maxDuration = 60`, `timeBudgetMs` d'environ 45 s) et 
   - `readPriceGrid(store, key, composition, { today, now?, staleHours? })` (page) : la grille ou
     `null` (magasin vide ou illisible, **composition différente**, jamais une erreur). Les lignes
     déjà commencées sont retirées ; plus de 24 h : `stale` (la page n’émet plus de JSON-LD).
-  - Le magasin est injecté (`HeartbeatStore`) : Upstash reste un choix de site.
+  - **« incomplete » qui dure** : `incompleteStreak` (sous `…:job`). Au 3e passage `incomplete` de
+    suite, ou si le dernier succès date de plus de `staleHours` (24 h), le passage compte comme un
+    relevé KO pour l’alerte (`stalled: true` dans le rapport, à compter en erreur par le battement de
+    cœur du site), sans pause de 15 min : le passage suivant doit pouvoir avancer.
+  - **Verrou** : `setIfAbsent(<clé>:lock, …, 90 s)` avant tout calcul, `dry` compris ; s’il est pris,
+    `skipped`. Libéré en fin de passage (`del`), sinon par l’expiration.
+  - Le magasin est injecté (`PriceGridStore` : `get`, `set`, `setIfAbsent`, `del`) : Upstash reste un
+    choix de site. Le motif `skipped` cite la valeur effective de `retryAfterMinutes`.
   - Tests : `tests/price-grid-job.test.ts`.
 - `components/PriceGrid.tsx` :
   - composant serveur, `<table>` sémantique (`caption`, `scope`), `PriceGridLabels`, sans

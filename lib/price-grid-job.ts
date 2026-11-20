@@ -13,11 +13,28 @@
  *   grille ne doit jamais être servie sous une nouvelle forme). Grille de plus de `staleHours`
  *   (24) : les lignes passées sont retirées et `stale` vaut `true` (la page n'émet plus de JSON-LD).
  *
- * Le magasin est injecté (`get`/`set` de chaînes, comme `HeartbeatStore`) : Upstash est le choix
- * d'un site, pas du socle.
+ * - Un passage `incomplete` (temps épuisé, cache de prix froid) n'est pas un échec… tant qu'il ne
+ *   dure pas : au 3e de suite, ou dès que le dernier succès date de plus de `staleHours`, il compte
+ *   comme un relevé KO pour l'alerte (`stalled` dans le rapport, à compter en erreur par le site).
+ * - Un **verrou** (`setIfAbsent(<clé>:lock, …, 90 s)`) empêche deux calculs simultanés, `dry`
+ *   compris : un second appel rend `skipped`.
+ *
+ * Le magasin est injecté (`PriceGridStore` : `get`/`set` de chaînes et une écriture « si absente »
+ * avec expiration) : Upstash est le choix d'un site, pas du socle.
  */
 import { nextAlertState, type AlertAction, type AlertState } from "./alert-state";
 import type { HeartbeatStore } from "./heartbeat";
+
+/** Le magasin du job : celui du battement de cœur, plus l'écriture « si absente » du verrou. */
+export interface PriceGridStore extends HeartbeatStore {
+  /** `SET key value NX EX ttlSeconds` : `true` si la clé a été posée, `false` si elle existait. */
+  setIfAbsent(key: string, value: string, ttlSeconds: number): Promise<boolean>;
+  /** Supprime une clé (libération du verrou). */
+  del(key: string): Promise<void>;
+}
+
+/** Durée du verrou : plus que les 60 s d'une route de cron. */
+const LOCK_SECONDS = 90;
 import { DegradedGridError, IncompleteGridError, type PriceGrid } from "./price-grid";
 
 export interface StoredPriceGrid {
@@ -28,12 +45,14 @@ export interface StoredPriceGrid {
 }
 
 export interface PriceGridJobConfig {
-  /** Clé du magasin (`barbusse:price-grid`) ; l'état du cron vit sous `…:job`, l'alerte sous `…:alert`. */
+  /** Clé du magasin (`<site>:price-grid`) ; l'état sous `…:job`, l'alerte sous `…:alert`, le verrou sous `…:lock`. */
   key: string;
   /** Version de la composition ; à changer dès que les séjours ou les groupes affichés changent. */
   composition: string;
   /** Pause après un échec avant un nouvel essai, en minutes. 15 par défaut. */
   retryAfterMinutes?: number;
+  /** Au-delà, sans succès, les passages `incomplete` comptent comme des échecs. 24 h par défaut. */
+  staleHours?: number;
 }
 
 export interface PriceGridNotification {
@@ -43,7 +62,7 @@ export interface PriceGridNotification {
 }
 
 export interface PriceGridJobDeps {
-  store: HeartbeatStore;
+  store: PriceGridStore;
   /** Le calcul, avec ses dépendances Beds24 déjà branchées par le site. */
   build: () => Promise<PriceGrid>;
   notify?: (n: PriceGridNotification) => Promise<void> | void;
@@ -53,8 +72,13 @@ export interface PriceGridJobDeps {
 }
 
 export interface PriceGridJobReport {
-  /** `incomplete` : temps épuisé, rien d'anormal — grille précédente gardée, sans marque d'échec ni alerte. */
+  /**
+   * `incomplete` : temps épuisé — grille précédente gardée, sans pause. Normal au premier passage,
+   * anormal s'il dure : voir `stalled`.
+   */
   outcome: "stored" | "dry" | "failed" | "skipped" | "incomplete";
+  /** `incomplete` qui dure (3e de suite, ou dernier succès trop ancien) : à compter comme une erreur. */
+  stalled?: boolean;
   /** Présent pour `stored` et `dry`. */
   grid?: PriceGrid;
   /** Raison d'un échec ou d'une suspension, sans détail technique sensible. */
@@ -65,6 +89,8 @@ export interface PriceGridJobReport {
 interface JobState {
   lastFailureAt?: string;
   lastSuccessAt?: string;
+  /** Passages `incomplete` consécutifs. */
+  incompleteStreak?: number;
 }
 
 async function readJson<T>(store: HeartbeatStore, key: string): Promise<T | null> {
@@ -79,23 +105,57 @@ async function readJson<T>(store: HeartbeatStore, key: string): Promise<T | null
 export async function runPriceGridJob(cfg: PriceGridJobConfig, deps: PriceGridJobDeps): Promise<PriceGridJobReport> {
   const now = deps.now ?? new Date();
   const jobKey = `${cfg.key}:job`;
+  const retryMinutes = cfg.retryAfterMinutes ?? 15;
   const job = (await readJson<JobState>(deps.store, jobKey)) ?? {};
 
   if (!deps.dry && job.lastFailureAt) {
-    const waitMs = (cfg.retryAfterMinutes ?? 15) * 60_000;
-    if (now.getTime() - Date.parse(job.lastFailureAt) < waitMs) {
-      return { outcome: "skipped", reason: "Dernier échec il y a moins de 15 minutes : prochain essai au passage suivant." };
+    if (now.getTime() - Date.parse(job.lastFailureAt) < retryMinutes * 60_000) {
+      return {
+        outcome: "skipped",
+        reason: `Dernier échec il y a moins de ${retryMinutes} minutes : prochain essai au passage suivant.`,
+      };
     }
   }
+  // Un seul calcul à la fois, `dry` compris : deux calculs parallèles doubleraient les appels
+  // Beds24 et pourraient ranger une grille plus ancienne par-dessus une plus récente.
+  const lockKey = `${cfg.key}:lock`;
+  if (!(await deps.store.setIfAbsent(lockKey, now.toISOString(), LOCK_SECONDS))) {
+    return { outcome: "skipped", reason: "Un calcul est déjà en cours." };
+  }
+  try {
+    return await locked(cfg, deps, job, jobKey, now);
+  } finally {
+    // L'expiration (90 s) libère de toute façon un verrou orphelin (fonction coupée).
+    await deps.store.del(lockKey).catch(() => undefined);
+  }
+}
 
+async function locked(
+  cfg: PriceGridJobConfig,
+  deps: PriceGridJobDeps,
+  job: JobState,
+  jobKey: string,
+  now: Date,
+): Promise<PriceGridJobReport> {
   let grid: PriceGrid;
   try {
     grid = await deps.build();
   } catch (e) {
-    if (e instanceof IncompleteGridError) return { outcome: "incomplete", reason: e.message };
+    if (e instanceof IncompleteGridError) {
+      if (deps.dry) return { outcome: "incomplete", reason: e.message };
+      const streak = (job.incompleteStreak ?? 0) + 1;
+      await deps.store.set(jobKey, JSON.stringify({ ...job, incompleteStreak: streak }));
+      const staleMs = (cfg.staleHours ?? 24) * 3_600_000;
+      const tooOld = job.lastSuccessAt !== undefined && now.getTime() - Date.parse(job.lastSuccessAt) > staleMs;
+      if (streak < 3 && !tooOld) return { outcome: "incomplete", reason: e.message };
+      // Ça dure : relevé KO pour l'alerte (deux de suite pour ouvrir), sans pause de 15 min — le
+      // passage suivant doit pouvoir avancer avec les prix déjà en cache.
+      const alert = await advanceAlert(cfg, deps, true, now);
+      return { outcome: "incomplete", stalled: true, reason: e.message, alert };
+    }
     const reason = e instanceof DegradedGridError ? e.message : "Calcul de la grille impossible (Beds24 indisponible ?).";
     if (deps.dry) return { outcome: "failed", reason };
-    await deps.store.set(jobKey, JSON.stringify({ ...job, lastFailureAt: now.toISOString() }));
+    await deps.store.set(jobKey, JSON.stringify({ ...job, incompleteStreak: 0, lastFailureAt: now.toISOString() }));
     const alert = await advanceAlert(cfg, deps, true, now);
     return { outcome: "failed", reason, alert };
   }
