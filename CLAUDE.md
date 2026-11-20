@@ -1705,8 +1705,7 @@ tout identifiant de plus de 10 / 7 caractères — chez Albiez comme chez Barbus
 ### v3.33.0 — Connexion : limite durcie contre le mot de passe viewer et les rafales (2026-11-20)
 
 Base : `v3.32.0`. Corrige deux limites de `lib/login-attempts.ts` / `lib/login-route.ts`
-(v3.31.0). **Aucune rupture, rien à brancher** : tout ce qui est nouveau est facultatif, et ni
-Albiez ni Barbusse n'appellent encore `createLoginRoute` au 2026-11-20.
+(v3.31.0). **Aucune rupture, rien à brancher** : tout ce qui est nouveau est facultatif. Les deux sitesappellent déjà `createLoginRoute` (depuis v3.31.0) : en montant, Barbusse passe seul au chemin atomique(client Upstash, clé `…:<ip>:n`), Albiez garde le magasin mémoire.
 
 - **Seul un succès admin remet le compteur à zéro.** Avant, une connexion viewer réussie
   l'effaçait aussi : qui connaissait le mot de passe viewer alternait 4 essais admin et
