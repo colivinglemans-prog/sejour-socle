@@ -611,6 +611,7 @@ async function renewByAge(
   const deadline = o.timeBudgetMs ? started + o.timeBudgetMs : Infinity;
   let calls = 0;
   let failed = 0;
+  let degraded = false;
   for (const t of tasks) {
     // Chaque appel part chez Beds24 (pas de cache) : la pause vaut avant chacun, sauf le premier.
     if (calls > 0 && o.pauseMs) await o.sleep(o.pauseMs);
@@ -637,7 +638,10 @@ async function renewByAge(
       // La cellule précédente reste, son `pricedAt` dit son âge. Au-delà du seuil, rapporté aux
       // appels **de ce passage**, on s'arrête — sans rien perdre de ce qui a été renouvelé avant :
       // insister aggrave la limitation de Beds24.
-      if (failed >= 3 && failed > o.maxFailureRatio * calls) break;
+      if (failed >= 3 && failed > o.maxFailureRatio * calls) {
+        degraded = true;
+        break;
+      }
     } else if (q.reason === "unavailable") {
       // Beds24 refuse alors que nos règles acceptaient : il a le dernier mot.
       t.row.cells[t.i] = { status: "taken", pricedAt: at };
@@ -654,7 +658,7 @@ async function renewByAge(
     generatedAt: o.now.toISOString(),
     pricesShown: o.enabled,
     complete: rows.every((r) => r.cells.every((c) => !isPending(c))),
-    ...(failed >= 3 && failed > o.maxFailureRatio * calls ? { degraded: failed } : {}),
+    ...(degraded ? { degraded: failed } : {}),
   };
 }
 
