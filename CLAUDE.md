@@ -1707,6 +1707,12 @@ Base : `v3.31.0`. Un script ajouté, rien de modifié : un site monte sans rien 
 garde ne s'exécute que là où un dépôt l'appelle depuis son propre hook. Relu par `le-douanier`
 et `cerbere` (corrections intégrées).
 
+- **`deploy-checks.yml` sur préversion** (branche `workflow-preview`, fusionnée ici) : ce que
+  v3.31.0 annonçait côté workflow est désormais en place — un rapport `production: false`
+  n'ouvre aucune issue, ne touche pas l'état d'alerte, et n'envoie qu'un ntfy priorité 2
+  « [Préversion] » s'il y a des KO. Les sites doivent remonter la référence du workflow
+  réutilisable dans `post-deploy.yml` et `surveillance.yml` pour en profiter.
+
 - **`scripts/garde-commit.mjs`** (audit de sécurité du 2026-11-20). Les trois dépôts sont
   **publics**, et la violation du 24/07/2026 (deux sauvegardes Beds24 commitées faute de
   `.gitignore`) montre qu'un `.gitignore` seul ne suffit pas. Il contrôle le **contenu indexé**
