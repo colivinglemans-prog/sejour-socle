@@ -261,15 +261,34 @@ export function controlerIndex({ racine, secrets, depuis } = {}) {
     if (!depuis || depuis.startsWith("-")) throw new Error(`référence --depuis invalide : « ${depuis} »`);
     gitOk(["rev-parse", "--verify", "--quiet", `${depuis}^{commit}`], opts);
   }
-  // Mode index : `:fichier` ; mode CI : `HEAD:fichier`.
-  const prefixe = depuis === undefined ? ":" : "HEAD:";
-  const lister =
-    depuis === undefined
-      ? ["diff", "--cached", "--name-only", "--diff-filter=ACMRT", "-z"]
-      : ["diff", "--name-only", "--diff-filter=ACMRT", "-z", `${depuis}...HEAD`];
-  const indexes = gitOk(lister, opts)
-    .stdout.split("\0")
-    .filter(Boolean);
+  // Ce qu'il faut lire : `{ fichier, objet, commit? }`. Mode index : `:fichier`. Mode CI : chaque
+  // version de chaque commit de `depuis..HEAD`, pas seulement HEAD — un export ajouté puis retiré
+  // dans le commit suivant reste public dans l'historique (relecture cerbere, v3.35.0).
+  const entrees = [];
+  if (depuis === undefined) {
+    for (const f of gitOk(["diff", "--cached", "--name-only", "--diff-filter=ACMRT", "-z"], opts).stdout.split("\0").filter(Boolean)) {
+      entrees.push({ fichier: f, objet: `:${f}` });
+    }
+  } else {
+    const commits = gitOk(["rev-list", "--reverse", `${depuis}..HEAD`], opts).stdout.split(/\r?\n/).filter(Boolean);
+    const vus = new Set();
+    for (const sha of commits) {
+      const fichiers = gitOk(
+        ["diff-tree", "-r", "-z", "--name-only", "--no-commit-id", "--diff-filter=ACMRT", "-m", "--first-parent", "--root", sha],
+        opts,
+      ).stdout.split("\0").filter(Boolean);
+      for (const f of fichiers) {
+        const id = git(["rev-parse", "--verify", "--quiet", `${sha}:${f}`], opts).stdout.trim();
+        if (id && vus.has(id)) continue; // même contenu déjà contrôlé
+        if (id) vus.add(id);
+        entrees.push({ fichier: f, objet: `${sha}:${f}`, commit: sha.slice(0, 7) });
+      }
+    }
+    if (entrees.some((e) => basename(e.fichier) === ".gitignore")) {
+      avertissements.push(".gitignore modifié : le refus des fichiers ignorés se fonde sur la version de HEAD, à relire");
+    }
+  }
+  const indexes = [...new Set(entrees.map((e) => e.fichier))];
   if (indexes.length === 0) return { refus: [], avertissements };
 
   const refus = [];
@@ -299,35 +318,36 @@ export function controlerIndex({ racine, secrets, depuis } = {}) {
     }
   }
 
-  for (const f of indexes) {
-    const taille = git(["cat-file", "-s", `${prefixe}${f}`], opts);
+  for (const { fichier: f, objet, commit } of entrees) {
+    const ajouter = (motif) => refus.push(commit ? { fichier: f, motif, commit } : { fichier: f, motif });
+    const taille = git(["cat-file", "-s", objet], opts);
     if (taille.status === 0 && Number(taille.stdout.trim()) > TAILLE_MAX) {
-      refus.push({ fichier: f, motif: `plus de ${TAILLE_MAX / 1024 / 1024} Mo : trop gros pour être contrôlé` });
+      ajouter(`plus de ${TAILLE_MAX / 1024 / 1024} Mo : trop gros pour être contrôlé`);
       continue;
     }
-    const blob = git(["cat-file", "blob", `${prefixe}${f}`], { ...opts, encoding: "buffer" });
+    const blob = git(["cat-file", "blob", objet], { ...opts, encoding: "buffer" });
     if (blob.error || blob.status !== 0) {
       // Un lien symbolique ou un sous-module n'a pas de blob lisible ainsi : rien à lire.
       const mode = (
-        depuis === undefined ? git(["ls-files", "-s", "-z", "--", f], opts) : git(["ls-tree", "-z", "HEAD", "--", f], opts)
+        commit === undefined
+          ? git(["ls-files", "-s", "-z", "--", f], opts)
+          : git(["ls-tree", "-z", objet.slice(0, objet.indexOf(":")), "--", f], opts)
       ).stdout.split(" ")[0];
       if (mode === "120000" || mode === "160000") continue;
-      refus.push({ fichier: f, motif: "illisible dans l'index : contrôle impossible" });
+      ajouter("illisible : contrôle impossible");
       continue;
     }
     if (blob.stdout.length > TAILLE_MAX) {
-      refus.push({ fichier: f, motif: `plus de ${TAILLE_MAX / 1024 / 1024} Mo : trop gros pour être contrôlé` });
+      ajouter(`plus de ${TAILLE_MAX / 1024 / 1024} Mo : trop gros pour être contrôlé`);
       continue;
     }
     const contenu = decoder(blob.stdout);
     if (contenu === null) continue; // binaire
-    for (const nom of secretsPresents(contenu, duPoste, f)) {
-      refus.push({ fichier: f, motif: `contient la valeur de ${nom}` });
-    }
+    for (const nom of secretsPresents(contenu, duPoste, f)) ajouter(`contient la valeur de ${nom}`);
     const exportMotif = ressembleAExport(f, contenu);
-    if (exportMotif) refus.push({ fichier: f, motif: exportMotif });
+    if (exportMotif) ajouter(exportMotif);
     const connu = formatConnu(f, contenu);
-    if (connu) refus.push({ fichier: f, motif: `contient un secret (${connu})` });
+    if (connu) ajouter(`contient un secret (${connu})`);
   }
   return { refus, avertissements };
 }
@@ -340,15 +360,28 @@ export function lireArguments(argv) {
 }
 
 function main() {
+  let args;
   let resultat;
   try {
-    resultat = controlerIndex(lireArguments(process.argv.slice(2)));
+    args = lireArguments(process.argv.slice(2));
+    resultat = controlerIndex(args);
   } catch (e) {
-    console.error(`\n✋ garde-commit : contrôle impossible, commit refusé — ${e instanceof Error ? e.message : String(e)}\n`);
+    const quoi = args?.depuis !== undefined ? "contrôle CI en échec" : "contrôle impossible, commit refusé";
+    console.error(`\n✋ garde-commit : ${quoi} — ${e instanceof Error ? e.message : String(e)}\n`);
     return 1;
   }
   for (const a of resultat.avertissements) console.error(`⚠ garde-commit : ${a}`);
   if (resultat.refus.length === 0) return 0;
+  if (args.depuis !== undefined) {
+    // En CI, c'est déjà poussé : le contenu est PUBLIC. Corriger le dernier commit ne suffit pas.
+    console.error("\n🚨 garde-commit : contenu interdit DÉJÀ POUSSÉ sur un dépôt public.\n");
+    for (const r of resultat.refus) console.error(`  • ${r.fichier}${r.commit ? ` (commit ${r.commit})` : ""} — ${r.motif}`);
+    console.error(
+      "\nPrévenir l'hôte. Un secret exposé se change à sa source (rotation) ; des données voyageurs\n" +
+        "exigent une réécriture de l'historique et une demande de purge à GitHub (voir la fiche RGPD).\n",
+    );
+    return 1;
+  }
   console.error("\n✋ garde-commit : commit refusé, ce dépôt est PUBLIC.\n");
   for (const r of resultat.refus) console.error(`  • ${r.fichier} — ${r.motif}`);
   console.error(

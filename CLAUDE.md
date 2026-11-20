@@ -1707,29 +1707,41 @@ tout identifiant de plus de 10 / 7 caractères — chez Albiez comme chez Barbus
 ### v3.35.0 — garde-commit en CI : `--depuis <réf>` (2026-11-20)
 
 Base : `v3.34.0`. Additif : sans argument, le hook avant commit se comporte exactement comme en
-v3.32.0.
+v3.32.0. Relu par `cerbere` (corrections intégrées).
 
 - **Pourquoi.** Le hook ne protège que les clones où `core.hooksPath` est posé, et `--no-verify`
   le contourne ; la push protection de GitHub ne voit que les secrets de format connu, pas un
   export de réservations (relecture Fable du bilan d'audit, 2026-11-20).
-- **`scripts/garde-commit.mjs --depuis <réf>`** contrôle les fichiers modifiés entre `<réf>` et
-  `HEAD` (`git diff <réf>...HEAD`, donc depuis la base commune), lus dans `HEAD` et non dans la copie
-  de travail. Mêmes refus que le hook. En CI il n'y a pas de `.env.local` : le contrôle des valeurs
-  de secrets y est inactif (avertissement), les trois autres jouent. Une référence vide, absente ou
-  commençant par `-` refuse (pas d'option injectée dans git). Nouvel export : `lireArguments`.
-- **Branchement côté site** (`ci.yml`, après `npm ci`, checkout en `fetch-depth: 0`) :
+- **La CI détecte, elle n'empêche rien.** Sur un dépôt public, le contenu est exposé dès le push,
+  avant que la CI tourne. Un échec appelle l'hôte : rotation du secret à sa source, ou réécriture
+  de l'historique et demande de purge à GitHub (fiche RGPD). Le message du mode CI le dit, au lieu
+  du « git restore --staged » du hook.
+- **`scripts/garde-commit.mjs --depuis <réf>`** contrôle **chaque commit** de `<réf>..HEAD`
+  (`git diff-tree` par commit, premier parent pour une fusion), chaque version lue dans son commit
+  (`<sha>:<fichier>`, contenus identiques contrôlés une fois). Un export ajouté puis retiré au
+  commit suivant est donc attrapé : il reste public dans l'historique. Le refus porte le commit.
+  Mêmes contrôles que le hook ; en CI, sans `.env.local`, celui des valeurs de secrets est inactif
+  (avertissement), les trois autres jouent. Avertissement si le `.gitignore` change (le refus des
+  fichiers ignorés se fonde sur celui de `HEAD`). Une référence vide, absente ou commençant par `-`
+  refuse (pas d'option injectée dans git). Nouvel export : `lireArguments`.
+- **Branchement côté site** (`ci.yml`, après `npm ci`, checkout en **`fetch-depth: 0`** — sans
+  historique, ni la base ni `before` n'existent et le contrôle échoue, fermé) :
 
   ```yaml
   - name: garde-commit
     env:
       BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
+      DEFAUT: origin/${{ github.event.repository.default_branch }}
     run: |
-      if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then exit 0; fi
+      # Premier push d'une branche (before = zéros) ou force-push (before introuvable) : depuis la branche par défaut.
+      if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then BASE="$DEFAUT"; fi
       node node_modules/@sejour/socle/scripts/garde-commit.mjs --depuis "$BASE"
   ```
 
-  La base passe par `env:`, jamais interpolée dans `run:`.
-- Tests : 4 de plus dans `tests/garde-commit.test.ts` (62).
+  Les références passent par `env:`, jamais interpolées dans `run:` ; `base_ref` et `before`
+  viennent du dépôt cible, pas de l'auteur d'une PR.
+- Tests : 6 de plus dans `tests/garde-commit.test.ts` (64), dont l'ajout puis le retrait sur deux
+  commits.
 
 ### v3.34.0 — Jour absent non réservable ; cache et limite des prix de l'agent IA (2026-11-20)
 

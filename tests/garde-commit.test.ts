@@ -362,6 +362,28 @@ describe("mode CI : --depuis <réf>", () => {
     expect(refus.map((r) => r.fichier).sort()).toEqual(["data/historique.json", "sauvegarde.json"]);
   });
 
+  it("attrape un export ajouté puis retiré dans le commit suivant (il reste dans l'historique)", () => {
+    const base = git("rev-parse", "HEAD");
+    git("checkout", "-qb", "pr");
+    ecrire("fuite.json", JSON.stringify([1, 2, 3, 4, 5].map((i) => ({ firstName: `P${i}`, phone: `+33${i}` }))));
+    git("add", "fuite.json");
+    git("commit", "-qm", "ajout");
+    const fautif = git("rev-parse", "--short=7", "HEAD");
+    git("rm", "-q", "fuite.json");
+    git("commit", "-qm", "retrait");
+    const { refus } = controlerIndex({ racine, secrets: [], depuis: base });
+    expect(refus).toEqual([{ fichier: "fuite.json", motif: expect.stringMatching(/export/), commit: fautif }]);
+  });
+
+  it("avertit quand le .gitignore change", () => {
+    const base = git("rev-parse", "HEAD");
+    ecrire(".gitignore", "/data/*\n");
+    git("commit", "-qam", "gitignore");
+    expect(controlerIndex({ racine, secrets: [], depuis: base }).avertissements).toEqual([
+      ".gitignore modifié : le refus des fichiers ignorés se fonde sur la version de HEAD, à relire",
+    ]);
+  });
+
   it("ne voit rien quand HEAD est la base", () => {
     expect(controlerIndex({ racine, secrets: [], depuis: "HEAD" }).refus).toEqual([]);
   });
