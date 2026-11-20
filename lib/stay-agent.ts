@@ -372,8 +372,6 @@ export async function quote(cfg: StayAgentConfig, deps: StayAgentDeps, p: ToolPa
   if (q.ok) {
     return { status: 200, body: { ...shown(cfg, q), ...(await links(cfg, deps, q, lang, src, extras)), ...policies(cfg) } };
   }
-  // Le devis vient d'appeler Beds24 : la pause vaut aussi avant la première alternative.
-  if (deps.pauseMs) await (deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms))))(deps.pauseMs);
   const alternatives = await nearbyStays(cfg.quote, deps, req, q).catch(() => []);
   const withLinks = await Promise.all(
     alternatives.map(async (a) => ({ ...shown(cfg, a), ...(await links(cfg, deps, a, lang, src, extras)) })),

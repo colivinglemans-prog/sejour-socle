@@ -116,6 +116,13 @@ describe("alternatives : le week-end d'abord quand la demande couvre un samedi s
     expect(alts).toHaveLength(3);
   });
 
+  it("vendredi → dimanche refusé en min-stay (3 nuits) : le vendredi demandé allongé reste en tête", async () => {
+    const d = deps({ availability: avail([], xmasMin) });
+    const alts = await nearbyStays(CFG, d, { checkIn: "2026-12-25", checkOut: "2026-12-27", adults: 10, children: 0, lang: "fr" },
+      { ok: false, reason: "min-stay", minStay: 3, detail: "" });
+    expect(alts[0]).toMatchObject({ checkIn: "2026-12-25", checkOut: "2026-12-28" });
+  });
+
   it("mardi pris : le classement actuel, le séjour voisin d'abord (pas le mardi suivant)", async () => {
     const d = deps({ availability: avail(["2027-03-09", "2027-03-10"]) });
     const alts = await nearbyStays(CFG, d, { checkIn: "2027-03-09", checkOut: "2027-03-11", adults: 10, children: 0, lang: "fr" }, refused);

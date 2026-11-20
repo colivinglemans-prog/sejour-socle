@@ -1722,16 +1722,18 @@ Base : `v3.35.1`. Additif et rétrocompatible. Cause : test voyageur IA du 20/11
   v3.37.0.
 - **`StaySearchDeps`** (`stay-search`) = `StayQuoteDeps` + `pauseMs` / `sleep` : pause avant chaque
   appel de prix sauf le premier dans `findStays`, et entre un devis refusé et ses alternatives
-  (`quoteWithAlternatives`, `quote` de l'agent). Le débit est réglé par le site, jamais par la
+  (dans `nearbyStays`, après le filtre des refus de dates : aucune pause pour un refus sans
+  alternative). Le débit est réglé par le site, jamais par la
   requête. `StayAgentDeps` en hérite. Mesures : 403 en alternance après ~20 appels sans pause
   (19/11) ; 30/30 acceptés à 250 ms (20/11). Les sites posent 250 ms.
 - **CDN de l'API** : `quote`, `find`, `availability` en `public, s-maxage=120` **sans**
-  `stale-while-revalidate` (`PRICE_MAX_AGE`). Avec la garde (5 min par requête normalisée), un prix
-  servi a au plus 5 min.
+  `stale-while-revalidate` (`PRICE_MAX_AGE`). La garde garde déjà le prix 5 min par requête
+  normalisée : un prix servi a au pire environ 7 min.
 - **Alternatives du week-end** : `StaySearch.sameWeekdayFirst`, posé par `nearbyStays` quand la
   demande refusée couvre la nuit du samedi : le meilleur séjour de même jour d'arrivée et de même
   durée passe en tête (vendredi 18 → 20/12 pris : le 11 → 13/12 d'abord, plus 16-18 / 15-17 / 21-24
-  seulement). Une seule lecture de disponibilité. Un mardi pris garde l'ancien classement ; la
+  seulement). Le jour demandé compte : refusé en `min-stay`, il revient allongé et reste en tête.
+  Une seule lecture de disponibilité. Un mardi pris garde l'ancien classement ; la
   semaine du samedi d'Albiez est inchangée.
 - **`lowestTotal(grid, column, filter?)`** : « 7 nuits à partir de » sur les semaines de 7 nuits
   seulement (Albiez citait un sous-séjour de 3 nuits à 238,57 €).

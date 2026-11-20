@@ -241,7 +241,9 @@ export async function findStays(
     let weekdayPinned = false;
     if (q.sameWeekdayFirst) {
       const wd = parseDate(near).getDay();
-      const at = arrivals.findIndex((a) => a.nights === q.nights && a.day !== near && parseDate(a.day).getDay() === wd);
+      // Le jour demandé lui-même compte : refusé en `min-stay`, il revient ici avec la durée
+      // allongée (q.nights) et doit rester devant la semaine suivante.
+      const at = arrivals.findIndex((a) => a.nights === q.nights && parseDate(a.day).getDay() === wd);
       if (at >= 0) {
         const [pinned] = arrivals.splice(at, 1);
         arrivals.unshift(pinned);
@@ -327,6 +329,9 @@ export async function nearbyStays(
 ): Promise<PricedStay[]> {
   const dateBound = ["unavailable", "min-stay", "no-check-in", "no-check-out"];
   if (!dateBound.includes(refused.reason)) return [];
+  // Une pause avant la première alternative aussi : le devis refusé a pu appeler Beds24 juste
+  // avant (refus de Beds24 lui-même), et l'appelant enchaîne souvent devis puis alternatives.
+  if (deps.pauseMs) await (deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms))))(deps.pauseMs);
   const nights = Math.max(daysBetween(req.checkIn, req.checkOut), refused.minStay ?? 0);
   // La demande couvre-t-elle la nuit du samedi ? Alors c'est un week-end (ou la semaine du samedi).
   let weekend = false;
@@ -363,8 +368,6 @@ export async function quoteWithAlternatives(
 ): Promise<{ quote: StayQuote; alternatives: PricedStay[] }> {
   const quote = await quoteStay(cfg, deps, req);
   if (quote.ok) return { quote, alternatives: [] };
-  // Le devis vient d'appeler Beds24 : la pause vaut aussi avant la première alternative.
-  if (deps.pauseMs) await (deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms))))(deps.pauseMs);
   const alternatives = await nearbyStays(cfg, deps, req, quote).catch((): PricedStay[] => []);
   return { quote, alternatives };
 }
