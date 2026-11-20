@@ -190,6 +190,7 @@ deux validations.
 | — | Disponibilités — **un jour absent est non réservable** (`longestFreeRange`, `readNights`, état « inconnu » d'`EventBookingCTA`) ; agent IA — **cache des prix 5 min et limite par IP** (`stay-agent-guard`, 3e argument de `createAgentRoute` / `createMcpRoute`) | `le-douanier` | `v3.34.0` |
 | — | Sécurité — **garde-commit en CI** (`--depuis <réf>` : fichiers modifiés d'une PR ou d'un push) | `cerbere` | `v3.35.0` |
 | — | Sécurité — **nodemailer 10** (paire optionnelle `^6.10.1 || ^10.6.1`, les sites en `^10.6.1` ; la 6 cumule 18 avis, dont injection SMTP et envoi vers un domaine non voulu) | — | `v3.35.1` |
+| — | Prix — **prix frais partout** (`fetchRoomPrice` sans `revalidate` = `no-store`), `StaySearchDeps.pauseMs`, CDN des prix 120 s sans SWR, alternatives du week-end (`sameWeekdayFirst`), `lowestTotal(filter)`, `perPersonPrice` | `monsieur-loyal` | `v3.36.0` |
 | — | Veille des dates d'événements (`lib/events-watch.ts`) | — | `v0.7.0` |
 
 Plan détaillé : `C:\Users\alexa\.claude\plans\cheerful-toasting-rivest.md`.
