@@ -1,4 +1,6 @@
 import { SignJWT, jwtVerify } from "jose";
+import { constantTimeEqual } from "./cron-auth";
+import { sha256Hex } from "./sha256";
 
 /**
  * Authentification du dashboard : vérification pure du jeton, **sans `next/headers`**.
@@ -83,10 +85,39 @@ export interface Auth<Role extends string> {
   ): Role | null;
 }
 
+/**
+ * Seul algorithme accepté à la vérification. `createToken` n'a jamais signé autrement, donc
+ * aucun jeton en circulation n'est rejeté ; l'épingler ferme la porte à une confusion
+ * d'algorithme si `jose` venait à en accepter d'autres pour une clé symétrique.
+ */
+const ALGORITHMS = ["HS256"];
+
+/** Longueur sous laquelle un secret HS256 est jugé faible (32 octets = taille du condensat). */
+const SECRET_MIN_LENGTH = 32;
+let secretCourtSignale = false;
+
 function getSecret(): Uint8Array {
   const secret = process.env.DASHBOARD_SECRET;
   if (!secret) throw new Error("DASHBOARD_SECRET n'est pas défini");
+  // Un avertissement, jamais une erreur : refuser un secret court couperait la production.
+  if (secret.length < SECRET_MIN_LENGTH && !secretCourtSignale) {
+    secretCourtSignale = true;
+    console.warn(
+      `[auth] DASHBOARD_SECRET fait moins de ${SECRET_MIN_LENGTH} caractères : à allonger (tous les jetons seront à refaire).`,
+    );
+  }
   return new TextEncoder().encode(secret);
+}
+
+/**
+ * Égalité de mots de passe en temps constant.
+ *
+ * Les deux valeurs sont d'abord ramenées à leur empreinte SHA-256 : même longueur des deux
+ * côtés, donc la durée de la comparaison ne dit rien ni de la longueur du mot de passe
+ * attendu, ni du nombre de caractères justes en tête.
+ */
+function memeMotDePasse(donne: string, attendu: string): boolean {
+  return constantTimeEqual(sha256Hex(donne), sha256Hex(attendu));
 }
 
 export function createAuth<Role extends string>(config: AuthConfig<Role>): Auth<Role> {
@@ -112,7 +143,7 @@ export function createAuth<Role extends string>(config: AuthConfig<Role>): Auth<
   async function verifyToken(token: string | undefined | null): Promise<boolean> {
     if (!token) return false;
     try {
-      await jwtVerify(token, getSecret());
+      await jwtVerify(token, getSecret(), { algorithms: ALGORITHMS });
       return true;
     } catch {
       return false;
@@ -128,7 +159,7 @@ export function createAuth<Role extends string>(config: AuthConfig<Role>): Auth<
   async function roleFromToken(token: string | undefined | null): Promise<Role> {
     if (!token) return fallbackRole;
     try {
-      const { payload } = await jwtVerify(token, getSecret());
+      const { payload } = await jwtVerify(token, getSecret(), { algorithms: ALGORITHMS });
       const role = payload.role;
       return typeof role === "string" && connus.has(role) ? (role as Role) : fallbackRole;
     } catch {
@@ -146,17 +177,20 @@ export function createAuth<Role extends string>(config: AuthConfig<Role>): Auth<
     password: string | undefined | null,
     env: Record<string, string | undefined> = process.env,
   ): Role | null {
-    if (!password) return null;
+    // Un corps JSON peut porter n'importe quoi : seule une chaîne non vide est un mot de passe.
+    if (!password || typeof password !== "string") return null;
 
+    // Toutes les comparaisons sont faites, sans court-circuit : le temps de réponse ne dit pas
+    // laquelle a réussi, ni combien de variables ont été essayées avant.
     const admin = env[adminPasswordVar];
-    if (admin && password === admin) return adminRole;
+    const estAdmin = !!admin && memeMotDePasse(password, admin);
 
-    const ouvre = Object.entries(env).some(
-      ([cle, valeur]) =>
-        !!valeur &&
-        valeur === password &&
-        restrictedPasswordPrefixes.some((prefixe) => cle.startsWith(prefixe)),
-    );
+    let ouvre = false;
+    for (const [cle, valeur] of Object.entries(env)) {
+      if (!valeur || !restrictedPasswordPrefixes.some((prefixe) => cle.startsWith(prefixe))) continue;
+      if (memeMotDePasse(password, valeur)) ouvre = true;
+    }
+    if (estAdmin) return adminRole;
     return ouvre ? restrictedRole : null;
   }
 

@@ -1983,3 +1983,46 @@ appelle `buildPriceGrid` (`maxDuration = 60`, `timeBudgetMs` d'environ 22 s : cr
     JSON-LD.
 - Additif : rien ne change pour un site qui ne l'importe pas, hormis le délai de 8 s de
   `fetchRoomPrice`.
+
+### Connexion : tentatives limitées, comparaison en temps constant, origine des écritures
+
+Branche `auth-tentatives`. Additif : un site qui ne branche rien ne voit changer que les trois
+durcissements de `lib/auth.ts` et le contrôle d'origine de `guard.deny`, tous sans rupture.
+
+- `lib/login-attempts.ts` — `createLoginLimiter({ store?, maxFailures = 5, windowMs = 15 min, notify?, now? })` :
+  - fenêtre **glissante par IP** (`clientIp` : 1re valeur de `x-forwarded-for`, réécrit par
+    Vercel) ; au-delà de 5 échecs, 429 + `Retry-After` jusqu'à ce que le plus ancien sorte de la
+    fenêtre, **même avec le bon mot de passe** ; un succès remet l'adresse à zéro ;
+  - magasin injectable (`LoginAttemptStore`) : `createRedisLoginAttemptStore(redis, prefix)` sur
+    un ensemble trié Upstash (le client `@upstash/redis` satisfait l'interface structurelle
+    `RedisSortedSetClient`, vérifié par tsc) ; sans magasin, `createMemoryLoginAttemptStore`
+    (mémoire de l'instance, 10 000 adresses au plus) ;
+  - **un magasin en panne ne bloque jamais la connexion** : repli en mémoire, un seul
+    avertissement ;
+  - `notify` (typiquement `sendNtfy`) : **une seule alerte au franchissement** (`count === max`),
+    jamais une par refus ; une erreur du notificateur est avalée.
+- `lib/login-route.ts` — `createLoginRoute({ auth, passwordField, limiter?, setCookie? })` rend
+  `{ POST }`. Réponses aux clés des deux sites (`ok`/`success`, `erreur`/`error`) : 200 + cookie,
+  401 au message unique, 429. `limiter: null` désactive la limite.
+- `lib/auth.ts` :
+  - `jwtVerify(…, { algorithms: ["HS256"] })` — sans rupture, `createToken` n'a jamais signé
+    autrement (test : un jeton émis reste valide, un HS512 au même secret est refusé) ;
+  - `roleForPassword` compare `sha256Hex(donné)` à `sha256Hex(attendu)` par `constantTimeEqual`
+    (`cron-auth`), **sans court-circuit** entre les variables ; un mot de passe non-chaîne vaut
+    `null` ;
+  - `DASHBOARD_SECRET` de moins de 32 caractères : `console.warn` une fois, **jamais d'erreur**
+    (ce serait couper la production). Audience, `sub` et révocation : volontairement absents,
+    ils déconnecteraient tout le monde.
+- `lib/sha256.ts` — SHA-256 synchrone écrit à la main : `roleForPassword` reste synchrone et le
+  module reste importable par le proxy, quel que soit son runtime. Testé contre `node:crypto`.
+- `lib/auth-guard.ts` — `isCrossOrigin(request)` : toute méthode hors GET/HEAD/OPTIONS dont
+  l'`Origin` n'est pas l'hôte de la requête (ou vaut `null`), ou dont `Sec-Fetch-Site` vaut
+  `cross-site`, reçoit **403 après le contrôle du cookie** (un anonyme garde son 401). Sans
+  `Origin` ni `Sec-Fetch-Site` (client hors navigateur : contrôles post-déploiement, protocole),
+  la requête passe. Vérifié avant de l'écrire : tous les POST/DELETE du dashboard des deux sites
+  sont des `fetch` relatifs, et aucun cron ni webhook ne passe par `guard.deny`.
+- **À savoir pour les contrôles post-déploiement** : `security.badLogin` fait un échec par
+  passage depuis l'IP du runner. Cinq passages en moins de 15 min depuis la même IP, et le
+  sixième recevrait 429 au lieu de 401 — sans conséquence au rythme actuel, à garder en tête si
+  un site branche la limite et relance les contrôles en rafale.
+- Tests : `tests/auth.test.ts`.
