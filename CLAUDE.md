@@ -1733,8 +1733,9 @@ Lot 2b du plan `curried-mapping-stallman`. Base : `release-v3.29.0`. Pré-relect
   contredirait `total`. Le nombre de voyageurs canonique accepte `1.0`, `+4`, `1e1` (→ `1`, `4`, `10`).
   Les paramètres inconnus (`utm_*`…) sont retirés par la redirection, assumé. Un devis signé invalide
   reste neutre (l'en-tête n'apparaît que sur la page Séjour).
-- Pare-feu Vercel (avis `cerbere`) : règle « Limite page Séjour », `^/[a-z]{2}/sejour$`, **10/min/IP**
-  en 429 sur les deux projets — au pire 7 `getroomprice` par requête (refus + remplacements).
+- Pare-feu Vercel (avis `cerbere`) : `^/[a-z]{2}/sejour$` ajouté à la règle « Limite API IA »
+  (20/min/IP, compteur partagé avec l'API) sur les deux projets — une règle séparée à 10/min est
+  refusée par le plan Vercel (402). Au pire 7 `getroomprice` par requête (refus + remplacements).
 - Côté sites : la page, `headers()` dans `next.config` (`Vercel-CDN-Cache-Control: s-maxage=60`,
   `X-Robots-Tag: noindex, nofollow`), `noindex, nofollow` en balise, pas de canonical ni d'entrée
   au sitemap, `/xx/sejour` sans paramètre → 308 vers `/xx/tarifs`. **Pas** de redirection de
