@@ -29,6 +29,11 @@ export interface PriceGridLabels {
   book: string;
   /** « Tableau mis à jour le 19 novembre 2026 à 14:00 », la date déjà formatée. */
   updatedAt: (formatted: string) => string;
+  /**
+   * Grille renouvelée par âge (v3.37.0, prop `priced`) : « Prix relevés entre le … et le … », les
+   * deux dates déjà formatées. Absent : `updatedAt` sur le plus ancien prix.
+   */
+  pricedBetween?: (oldest: string, newest: string) => string;
 }
 
 export interface PriceGridProps {
@@ -39,6 +44,8 @@ export interface PriceGridProps {
   /** Lien d'une cellule chiffrée (calendrier pré-rempli), ou `null` pour ne pas en mettre. */
   linkFor?: (row: GridRow, column: GridColumn) => string | null;
   className?: string;
+  /** L'âge réel des prix (`readPriceGrid().priced`) : la date affichée sous le tableau. */
+  priced?: { oldest: string; newest: string };
 }
 
 function formatters(locale: string) {
@@ -88,7 +95,7 @@ function Cell({ cell, href, f, labels }: {
   );
 }
 
-export default function PriceGrid({ grid, locale, labels, linkFor, className }: PriceGridProps) {
+export default function PriceGrid({ grid, locale, labels, linkFor, className, priced }: PriceGridProps) {
   const f = formatters(locale);
   return (
     <div className={className}>
@@ -134,7 +141,13 @@ export default function PriceGrid({ grid, locale, labels, linkFor, className }: 
           </tbody>
         </table>
       </div>
-      <p className="mt-2 text-xs text-secondary">{labels.updatedAt(f.stamp(grid.generatedAt))}</p>
+      <p className="mt-2 text-xs text-secondary">
+        {priced
+          ? labels.pricedBetween
+            ? labels.pricedBetween(f.stamp(priced.oldest), f.stamp(priced.newest))
+            : labels.updatedAt(f.stamp(priced.oldest))
+          : labels.updatedAt(f.stamp(grid.generatedAt))}
+      </p>
     </div>
   );
 }

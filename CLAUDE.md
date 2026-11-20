@@ -1729,7 +1729,7 @@ Plan `curried-mapping-stallman` v2, section B (corrections de Fable intégrées)
   incomplète `maxIncompleteStreak` fois, ou si le plus vieux prix rangé dépasse `staleHours`.
 - **`readPriceGrid`** : fusionne les colonnes à la lecture (`mergeColumns`), `stale` sur le plus vieux
   `pricedAt`, et rend `priced: { oldest, newest }` — la date honnête à afficher.
-- **`pricedRange(grid)`** exporté.
+- **`pricedRange(grid)`** exporté ; `PriceGrid` reçoit `priced` et le libellé `pricedBetween` (« Prix relevés entre le … et le … »).
 - **Changer la composition** côté site en passant au mode par âge (la grille rangée change de forme).
 - Tests : `tests/grille-par-age.test.ts`.
 
