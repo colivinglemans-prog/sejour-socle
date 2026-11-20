@@ -14,6 +14,7 @@ import type { CancellationPolicy, PaymentPolicy } from "../config/policies";
 import { bookingUrl } from "./booking-url";
 import { addDays, daysBetween } from "./dates";
 import { signQuote, QUOTE_VALIDITY_DAYS, type QuoteKeys } from "./quote-token";
+import { cleanSrc, stayQuery } from "./stay-page";
 import { isDay, quoteStay, selectionContext, type StayQuote, type StayQuoteConfig, type StayQuoteDeps } from "./stay-quote";
 import { findStays, MAX_SEARCH_DAYS, MAX_STAY_NIGHTS, nearbyStays, shortestStay, type PricedStay } from "./stay-search";
 
@@ -63,6 +64,11 @@ export interface StayAgentConfig {
   facts: (lang: string) => PropertyFacts;
   /** Chemin de la page de devis pour un jeton, ex. `/fr/devis/<jeton>`. */
   quotePagePath?: (lang: string, token: string) => string;
+  /**
+   * Chemin de la page Séjour, ex. `/fr/sejour` : le séjour chiffré rendu côté serveur, lisible par
+   * une IA qui ouvre une URL. Fourni, chaque séjour de l'API et du MCP porte un `stayUrl`.
+   */
+  stayPagePath?: (lang: string) => string;
   /** Chemin du calendrier, que le site pré-remplit depuis la requête (`?arrivee=&depart=…`). */
   calendarPath: (lang: string) => string;
   /** Réservation instantanée (sans validation de l'hôte) sur la page de paiement. */
@@ -103,8 +109,7 @@ function langOf(cfg: StayAgentConfig, p: ToolParams): string {
 
 /** Origine déclarée (`chatgpt`, `claude`…) : mesurer ce que rapportent les IA. Rien d'autre ne passe. */
 function srcOf(p: ToolParams): string | undefined {
-  const s = (p.src ?? "").toLowerCase();
-  return /^[a-z0-9-]{2,24}$/.test(s) ? s : undefined;
+  return cleanSrc(p.src);
 }
 
 const WEEKDAYS: Record<string, number> = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
@@ -296,7 +301,13 @@ async function links(cfg: StayAgentConfig, deps: StayAgentDeps, q: PricedStay, l
       // Secret absent ou trop court : le devis reste valable, sans lien partageable.
     }
   }
-  return { bookUrl, calendarUrl, ...(quoteUrl ? { quoteUrl, quoteValidDays: QUOTE_VALIDITY_DAYS } : {}) };
+  const stayUrl = cfg.stayPagePath ? `${cfg.siteUrl}${cfg.stayPagePath(lang)}?${stayQuery({ ...q, src })}` : undefined;
+  return {
+    bookUrl,
+    calendarUrl,
+    ...(stayUrl ? { stayUrl } : {}),
+    ...(quoteUrl ? { quoteUrl, quoteValidDays: QUOTE_VALIDITY_DAYS } : {}),
+  };
 }
 
 function stayRequestOf(cfg: StayAgentConfig, p: ToolParams) {

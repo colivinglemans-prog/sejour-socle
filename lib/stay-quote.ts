@@ -169,6 +169,12 @@ export type StayQuote =
       minStay?: number;
     };
 
+/**
+ * Durée maximale d'un séjour chiffré — la même borne que le paramètre `nights` de l'API. Au-delà,
+ * `validateRequest` refuse sans interroger Beds24 (page Séjour, API, MCP).
+ */
+export const MAX_STAY_NIGHTS = 60;
+
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 /** Un jour calendaire `YYYY-MM-DD` bien formé — à tester avant tout calcul sur une entrée publique. */
@@ -225,6 +231,9 @@ export function validateRequest(cfg: StayQuoteConfig, req: StayRequest, today: s
     return fail("invalid-request", "Dates attendues au format AAAA-MM-JJ.");
   }
   if (checkOut <= checkIn) return fail("invalid-request", "Le départ doit suivre l'arrivée.");
+  if (daysBetween(checkIn, checkOut) > MAX_STAY_NIGHTS) {
+    return fail("invalid-request", `Séjour de ${MAX_STAY_NIGHTS} nuits au plus.`);
+  }
   if (checkIn < today) return fail("invalid-request", "L'arrivée est dans le passé.");
   if (daysBetween(today, checkIn) > cfg.maxHorizonDays) {
     return fail("too-far", `Les tarifs ne sont ouverts que ${cfg.maxHorizonDays} jours à l'avance.`);

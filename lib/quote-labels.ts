@@ -102,6 +102,20 @@ export const QUOTE_LABELS: Record<string, Generic> = {
   },
 };
 
+/** Ce qui change sur la page Séjour (`lib/stay-page`) : pas de devis, un séjour chiffré à l'instant. */
+const STAY_PAGE_LABELS: Record<string, Pick<QuoteSummaryLabels, "title" | "unavailable" | "seeStay">> = {
+  fr: { title: "Votre séjour", unavailable: "Ce séjour n'est pas réservable tel quel.", seeStay: "Voir ce séjour" },
+  en: { title: "Your stay", unavailable: "This stay cannot be booked as it is.", seeStay: "See this stay" },
+  de: { title: "Ihr Aufenthalt", unavailable: "Dieser Aufenthalt ist so nicht buchbar.", seeStay: "Diesen Aufenthalt ansehen" },
+  es: { title: "Su estancia", unavailable: "Esta estancia no se puede reservar tal cual.", seeStay: "Ver esta estancia" },
+  it: { title: "Il vostro soggiorno", unavailable: "Questo soggiorno non è prenotabile così com'è.", seeStay: "Vedi questo soggiorno" },
+};
+
+/** Les textes de la page Séjour : ceux du devis, titre et refus adaptés. */
+export function stayPageLabels(lang: string, included: QuoteSummaryLabels["included"]): QuoteSummaryLabels {
+  return { ...quoteLabels(lang, included), ...(STAY_PAGE_LABELS[lang] ?? STAY_PAGE_LABELS.fr) };
+}
+
 /** Les textes d'une langue, complétés par la ligne propre au site. */
 export function quoteLabels(lang: string, included: QuoteSummaryLabels["included"]): QuoteSummaryLabels {
   return { ...(QUOTE_LABELS[lang] ?? QUOTE_LABELS.fr), included };

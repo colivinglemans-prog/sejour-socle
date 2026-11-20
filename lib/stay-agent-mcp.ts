@@ -129,7 +129,8 @@ export function buildMcpServer(cfg: StayAgentConfig, deps: () => StayAgentDeps):
       title: "Prix exact d'un séjour",
       description:
         "Prix total exact pour ces dates et ces voyageurs, avec un lien de réservation pré-rempli (bookUrl), " +
-        "le calendrier du site (calendarUrl) et un devis partageable valable 7 jours (quoteUrl). " +
+        "le calendrier du site (calendarUrl), la page du séjour avec son prix à jour (stayUrl, si le site la publie) " +
+        "et un devis partageable valable 7 jours (quoteUrl). " +
         "Si les dates ne conviennent pas, `reason` et `detail` l'expliquent et `alternatives` propose les " +
         "séjours libres les plus proches, déjà chiffrés. " +
         RELAY,

@@ -1210,6 +1210,7 @@ amène à la page de paiement Beds24. **Rien n'est réservé ni payé par le soc
 | `lib/stay-agent-http.ts` | `createAgentRoute(cfg, depsFactory)` pour `app/api/agent/[tool]/route.ts` : GET seulement (une IA qui navigue ne sait pas faire de POST), CORS ouvert, `s-maxage` court, **jamais de cache sur un 5xx**. `runTool` sera repris tel quel par le serveur MCP. `openApi(cfg)`. |
 | `lib/quote-page.ts`, `components/QuoteSummary.tsx`, `lib/quote-labels.ts` | `loadQuotePage` revérifie à chaque affichage : `valid`, `price-changed` (nouveau prix affiché), `unavailable` (+ alternatives), `expired`, `invalid` (autre site ou falsifié), `unchecked` (panne : on montre le devis signé). Textes en 5 langues sauf `included`, propre au site. |
 | `lib/calendar-quote.ts` (+ prop `quote` de `ReservationCalendar`) | Bloc prix du calendrier (v3.29.0) : `interpretQuote` range la réponse de `/api/agent/quote` en `priced` / `refused` (refus **confirmés** seulement : unavailable, min-stay, no-check-in, no-check-out, capacity) / `fallback` (tout le reste : « prix sur la page de paiement », Réserver reste actif). Libellés 5 langues ; `formatEuro` (source unique, aussi pour `QuoteSummary`) ; texte du séjour minimum = `minStayText`. `included` et l'URL restent au site. |
+| `lib/stay-page.ts` | Page Séjour (v3.30.0) : `parseStayParams` (forme canonique unique `checkin, checkout, adults, children, src`, alias français acceptés puis 308 ; idempotent ; valeur illisible laissée à `validateRequest`), `loadStayPage` → `QuotePageState` (`invalid` avec motif traduit **sans appel Beds24**, `unavailable` traduit + remplacements, `live` avec ou sans `current`), `stayJsonLd` (`Offer` seulement pour un `live` chiffré, sérialisé par `jsonLdText`), `cleanSrc` (règle `src` unique, partagée avec l'API et le MCP), `stayQuery`. Rendu par `QuoteSummary`. |
 | `components/ReservationCalendar.tsx` | Pré-remplissage par `?arrivee=&depart=&adultes=&enfants=` : voyageurs tout de suite, dates **seulement** si le moteur de sélection les accepte une fois le mois chargé. |
 
 **Route publique, donc protections** (relecture cerbère) : `monthlyAvailability(read)`
@@ -1695,6 +1696,34 @@ tout identifiant de plus de 10 / 7 caractères — chez Albiez comme chez Barbus
   `_T`, la boucle des copies de test reviendrait et le départage redeviendrait aveugle.
 - Correctif : aucune signature publique ne change. Les deux sites montent sans modification de code
   (ils n'écrivent aucun code `MSG_` en dur) ; leur `validateTemplates` couvre leurs identifiants.
+
+### v3.30.0 — Page Séjour : le séjour chiffré en HTML, lisible sans JavaScript (2026-11-20)
+
+Lot 2b du plan `curried-mapping-stallman`. Base : `release-v3.29.0`. Pré-relecture `le-douanier`
+(6 conditions, toutes appliquées).
+
+- **`lib/stay-page.ts`** (nouveau) : voir le tableau des modules. Une URL `/xx/sejour?checkin=&
+  checkout=&adults=&children=` rendue côté serveur : « Disponible » et le total Beds24 au centime,
+  ou le refus **traduit** (jamais le `detail`) avec les séjours libres les plus proches, chacun
+  lié à sa propre page Séjour. Trop de voyageurs → `unavailable` sans remplacement ; forme,
+  passé, horizon, durée → `invalid` avec motif ; aucun des deux n'interroge Beds24. Une panne
+  n'est jamais « complet » : `live` sans `current`, « prix sur la page de paiement », Réserver actif.
+- `QuotePageState` gagne `live` et un `reason?` facultatif sur `invalid` (ajouts : les sites ne
+  testent pas `status`). `QuoteSummary` : `perPersonPerNight` devient **facultatif** (absent = ligne
+  masquée), props facultatives `alternativeUrl` et `fallbackUrl` (absentes = comportement du devis
+  inchangé), « valable jusqu'au » seulement quand il y a un jeton. `stayPageLabels` dans
+  `quote-labels` (titre, refus, « Voir ce séjour »).
+- `quoteWithAlternatives` (dans `stay-search`, sans texte) : devis + `nearbyStays` sur refus,
+  partagé par `loadQuotePage` et `loadStayPage`.
+- `StayAgentConfig.stayPagePath?` : fourni, chaque séjour de l'API et du MCP porte un `stayUrl`.
+- **Changement de comportement de l'API et du MCP** : `validateRequest` refuse désormais un séjour
+  de plus de `MAX_STAY_NIGHTS` (60) nuits en `invalid-request`, sans appel Beds24. La constante
+  vit dans `stay-quote` (réexportée par `stay-search`, même borne que le paramètre `nights`).
+- Côté sites : la page, `headers()` dans `next.config` (`Vercel-CDN-Cache-Control: s-maxage=60`,
+  `X-Robots-Tag: noindex, nofollow`), `noindex, nofollow` en balise, pas de canonical ni d'entrée
+  au sitemap, `/xx/sejour` sans paramètre → 308 vers `/xx/tarifs`. **Pas** de redirection de
+  `/?arrivee=` vers `/sejour` (écart au plan) : `calendarUrl` est aussi le lien « Voir le
+  calendrier » de la page Séjour, qui bouclerait.
 
 ### v3.29.0 — Calendrier : « Disponible » et le prix avant la page de paiement (2026-11-20)
 
