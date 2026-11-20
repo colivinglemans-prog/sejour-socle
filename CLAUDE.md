@@ -184,6 +184,7 @@ deux validations.
 | — | Serrure — **horaires convenus par séjour** (`AccessStay.validFromHour` / `validUntilHour`, `stayAccessHours`, `agreedHour`) et **arrivée anticipée** dans la préparation d'arrivée (`ReadinessSchedule.earliestCheckIn`) ; v3.25.0 reste réservée au Pricing | `le-douanier`, `chef-de-stand`, `le-dahu` | `v3.26.0` |
 | — | Messages — **Beds24 tronque les codes d'`infoItem` à 20 caractères** : suffixes `_P` / `_T`, lecture des anciennes formes, toute trace relue avant l'envoi | `le-douanier`, `chef-de-stand`, `le-dahu` | `v3.26.1` |
 | — | Référencement — **grille de prix publiée en HTML** (`price-grid` : `buildPriceGrid`, générateurs, `priceGridOffer` ; composant `PriceGrid`) pour les pages « Tarifs » | relu : `le-douanier`, `cerbere`, `poisson-babel`, `le-dahu`, `chef-de-stand` (corrections intégrées) | `v3.27.0` |
+| — | Robustesse — **jeton Beds24 partagé** (`tokenStore`, fin des 429 sur `/authentication/token`), `check_availability` borné à `maxHorizonDays`, contrôles de déploiement sur préversion (`indexing.home` / `indexing.sitemapUrls` sautés, pas d'issue ni de priorité 5), portes `DELETE` | `le-douanier`, `le-dahu`, `chef-de-stand` | `v3.31.0` |
 | — | Veille des dates d'événements (`lib/events-watch.ts`) | — | `v0.7.0` |
 
 Plan détaillé : `C:\Users\alexa\.claude\plans\cheerful-toasting-rivest.md`.
@@ -265,7 +266,7 @@ Mesure sur `/api/dashboard/bookings?arrivalFrom=2025-01-01&arrivalTo=2026-06-30`
 |---|---|---|
 | `lib/booking.ts` | `Booking`, `BookingSource`, `nightsBetween`. **Le type canonique du domaine.** | Albiez (`Sejour`), renommé en anglais technique |
 | `lib/beds24-types.ts` | `Beds24Booking`, `Beds24InfoItem`, `Beds24InvoiceItem`, `Beds24Property`, `Beds24CalendarSpan`, `Beds24CalendarRoom`, `Beds24AvailabilityRoom`. Le **format de transport**. | Barbusse (déclaration en production), + `commission` et `apiReference` d'Albiez |
-| `lib/beds24-client.ts` | `createBeds24Client` — jetons par voie, cache d'access tokens, replis, `keepAlive`, `updateNotes`, `updateCalendar`, `compressSpans`, `expandSpans`, `eachDay`. | les deux, écrits deux fois |
+| `lib/beds24-client.ts` | `createBeds24Client` — jetons par voie, cache d'access tokens (mémoire, plus `tokenStore` partagé facultatif depuis v3.31.0), replis, `keepAlive`, `updateNotes`, `updateCalendar`, `compressSpans`, `expandSpans`, `eachDay`, `beds24TokenStoreKey`. | les deux, écrits deux fois |
 | `lib/archive.ts` | `createArchive<T>` — filtrage répliquant celui de l'API, dédoublonnage où le live gagne, `origin` exposé. | Albiez pour la forme, les deux pour le mécanisme |
 
 **Deux types, et ce n'est pas une contradiction.** `Booking` est le modèle du domaine ;
@@ -1697,6 +1698,80 @@ tout identifiant de plus de 10 / 7 caractères — chez Albiez comme chez Barbus
   `_T`, la boucle des copies de test reviendrait et le départage redeviendrait aveugle.
 - Correctif : aucune signature publique ne change. Les deux sites montent sans modification de code
   (ils n'écrivent aucun code `MSG_` en dur) ; leur `validateTemplates` couvre leurs identifiants.
+
+### v3.31.0 — Jeton Beds24 partagé, agent borné, contrôles sur préversion (2026-11-20)
+
+Base : `v3.30.1`. Aucune signature ne change, tout est facultatif ou additif : un site monte sans
+toucher son code, et rien ne bouge tant qu'il ne branche pas `tokenStore`.
+
+- **`lib/beds24-client.ts` — `tokenStore` (fin des 429).** L'access token (24 h) ne vivait que
+  dans la mémoire de l'instance : chaque démarrage à froid refaisait `/authentication/token`. Le
+  2026-11-16 au soir, deux post-déploiements Barbusse ont échoué sur un 429 de cet échange.
+  `Beds24ClientConfig.tokenStore?: Beds24TokenStore` :
+
+  ```ts
+  interface Beds24StoredToken { token: string; expiresAt: number } // ms depuis l'époque
+  interface Beds24TokenStore {
+    get(key: string): Promise<Beds24StoredToken | null>;
+    set(key: string, value: Beds24StoredToken, ttlSeconds: number): Promise<void>;
+    delete(key: string): Promise<void>;
+  }
+  ```
+
+  - clé `beds24:access:<32 hex>` = SHA-256 tronqué du refresh token (`beds24TokenStoreKey`, Web
+    Crypto) — **jamais le refresh token** ; la valeur est un access token, le magasin reste privé ;
+  - ordre : mémoire (marge 60 s, inchangée) → magasin (marge **10 min**, TTL posé = `expiresIn` −
+    600 s) → échange, publié ensuite dans le magasin ; `refresh()` / `keepAlive` publient aussi ;
+  - **un 401 efface la mémoire et le magasin**, puis retente une fois la même voie avec un échange
+    neuf avant tout repli `whenRefused` (un jeton partagé périmé n'est pas un refresh token mort) ;
+    `invalidate()` efface aussi le magasin (en arrière-plan, signature synchrone inchangée) ;
+  - **magasin en panne ou muet (> 1,5 s) = magasin absent** : avertissement en console, échange
+    direct, jamais d'erreur remontée ;
+  - appels simultanés d'une même instance : un seul échange. Deux instances froides au même
+    instant échangent encore chacune une fois : pas de verrou réparti (un aller-retour et un cas
+    de panne de plus pour une fenêtre de quelques centaines de millisecondes) ;
+  - **sans `tokenStore`, comportement strictement identique** (y compris : pas de nouvel essai
+    sur 401 hors repli).
+- **`lib/stay-agent.ts` — `check_availability` borné.** `from` au-delà de `today + maxHorizonDays`
+  ⇒ 400 `too-far` sans lire le calendrier ; `to` au-delà ⇒ ramené à l'horizon, réponse
+  `truncated: { requestedTo, detail }`. La plage de 120 jours se contrôle sur la demande, avant
+  bornage. Chaque mois lointain coûtait une URL Beds24, et un paramètre aléatoire contournait le
+  cache CDN. Descriptions OpenAPI et MCP mises à jour.
+- **Contrôles de déploiement sur préversion.** La production se reconnaît à l'origine de
+  `canonicalUrl` (`isProductionTarget`, exposée depuis `testing/deploy/run.ts`, déjà la règle de
+  `ctx.isProduction`) :
+  - `indexing.home` et `indexing.sitemapUrls` passent `productionOnly` : **SAUTÉS** hors
+    production (Vercel y pose `X-Robots-Tag: noindex`). Contrepartie : l'ancre de réservation de
+    l'accueil n'est plus vérifiée sur une préversion ;
+  - le rapport porte `production` ; hors production, `DEPLOY_ALERT_PREV` est ignoré (l'état
+    d'alerte n'avance pas) et `deploy-checks.yml` **n'ouvre ni ne commente aucune issue**,
+    n'envoie jamais de priorité 5 : un ntfy priorité 2 « [Préversion] » seulement s'il y a des KO.
+    Rapport d'un socle antérieur (sans `production`) = production, comme avant ;
+  - `doors[].method` accepte `"DELETE"` (sans corps ni en-tête JSON).
+- Tests : `tests/beds24-token-store.test.ts`, `tests/stay-agent-availability-horizon.test.ts`,
+  `tests/testing-deploy/preview.test.ts`, porte `DELETE` dans `tests/testing-deploy/security.test.ts`.
+  Aucun appel réseau.
+
+**Brancher `tokenStore` (Upstash, comme `lib/redis.ts` de Barbusse)** — dans le `lib/beds24.ts`
+du site ; `hasRedis()` faux ⇒ pas de magasin, comportement d'avant :
+
+```ts
+import type { Beds24StoredToken, Beds24TokenStore } from "@sejour/socle/lib/beds24-client";
+import { getRedis, hasRedis, redisKey } from "@/lib/redis";
+
+const tokenStore: Beds24TokenStore | undefined = hasRedis()
+  ? {
+      get: (k) => getRedis().get<Beds24StoredToken>(redisKey(k)),
+      set: async (k, v, ttl) => { await getRedis().set(redisKey(k), v, { ex: ttl }); },
+      delete: async (k) => { await getRedis().del(redisKey(k)); },
+    }
+  : undefined;
+
+const client = createBeds24Client({ routes, defaultRoute: "public", tokenStore });
+```
+
+Albiez n'a pas de Redis aujourd'hui : il monte sans rien brancher, ou pose le même adaptateur le
+jour où il en a un.
 
 ### v3.30.1 — Liens « Réserver » vers une ancre déjà affichée (2026-11-20)
 
