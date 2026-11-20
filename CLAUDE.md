@@ -186,6 +186,7 @@ deux validations.
 | — | Référencement — **grille de prix publiée en HTML** (`price-grid` : `buildPriceGrid`, générateurs, `priceGridOffer` ; composant `PriceGrid`) pour les pages « Tarifs » | relu : `le-douanier`, `cerbere`, `poisson-babel`, `le-dahu`, `chef-de-stand` (corrections intégrées) | `v3.27.0` |
 | — | Robustesse — **jeton Beds24 partagé** (`tokenStore`, fin des 429 sur `/authentication/token`), `check_availability` borné à `maxHorizonDays`, contrôles de déploiement sur préversion (`indexing.home` / `indexing.sitemapUrls` sautés, pas d'issue ni de priorité 5), portes `DELETE` | `le-douanier`, `le-dahu`, `chef-de-stand` | `v3.31.0` |
 | — | Sécurité — **garde-fou avant commit** des dépôts publics (`scripts/garde-commit.mjs` : fichiers exclus, valeurs de secrets du poste, exports de réservations) | `le-douanier`, `cerbere`, `le-dahu`, `chef-de-stand` | `v3.32.0` |
+| — | Sécurité — **limite de connexion durcie** : seul un succès admin remet le compteur à zéro (`resetOnRoles`), tentative comptée avant le mot de passe en un appel atomique (`hit`/`unhit`, `attempt`), alerte au passage de la limite | `cerbere` | `v3.33.0` |
 | — | Veille des dates d'événements (`lib/events-watch.ts`) | — | `v0.7.0` |
 
 Plan détaillé : `C:\Users\alexa\.claude\plans\cheerful-toasting-rivest.md`.
@@ -1701,6 +1702,42 @@ tout identifiant de plus de 10 / 7 caractères — chez Albiez comme chez Barbus
 - Correctif : aucune signature publique ne change. Les deux sites montent sans modification de code
   (ils n'écrivent aucun code `MSG_` en dur) ; leur `validateTemplates` couvre leurs identifiants.
 
+### v3.33.0 — Connexion : limite durcie contre le mot de passe viewer et les rafales (2026-11-20)
+
+Base : `v3.32.0`. Corrige deux limites de `lib/login-attempts.ts` / `lib/login-route.ts`
+(v3.31.0). **Aucune rupture, rien à brancher** : tout ce qui est nouveau est facultatif, et ni
+Albiez ni Barbusse n'appellent encore `createLoginRoute` au 2026-11-20.
+
+- **Seul un succès admin remet le compteur à zéro.** Avant, une connexion viewer réussie
+  l'effaçait aussi : qui connaissait le mot de passe viewer alternait 4 essais admin et
+  1 connexion viewer, sans limite. `createLoginRoute({ resetOnRoles? })`, défaut
+  `[auth.adminRole]` — générique, chaque site nomme ses rôles (`AuthConfig.adminRole`). Une
+  connexion à un autre rôle **ne touche pas** au compteur : sa tentative est rendue, ni comptée
+  comme échec, ni remise à zéro.
+- **Tentative comptée avant le mot de passe, atomiquement.** `LoginLimiter.attempt(ip)` rend un
+  `LoginTicket` (`allowed`, `retryAfterSeconds`, `fail()`, `reset()`, `release()`) ; la route
+  l'utilise si présent, sinon retombe sur `check`/`failure`/`success` (limiteur écrit à la main).
+  Le contrat du magasin gagne deux méthodes **facultatives** : `hit(key, now, windowMs, limit)`
+  et `unhit(key, now, windowMs)`.
+  - Mémoire : atomique par construction (aucun `await` entre lecture et écriture), fenêtre
+    toujours glissante ; une tentative refusée n'est pas inscrite.
+  - Redis : `hit`/`unhit` n'existent que si le client a `incr`, `decr` et `pttl` (optionnels dans
+    `RedisSortedSetClient` ; `@upstash/redis` les a, donc un site déjà branché passe au chemin
+    atomique sans rien changer). Compteur `INCR` sous `<prefix>:<ip>:n`, `PEXPIRE` posé au 1er
+    `INCR` et reposé si `PTTL` rend -1 (expiration perdue par une panne). **Fenêtre fixe** depuis
+    la 1re tentative, plus glissante : au pire 2 × la limite à cheval sur deux fenêtres, prix de
+    l'atomicité sans script Lua. `unhit` efface la clé si `DECR` tombe à 0 ou moins (clé expirée
+    entre-temps). `reset` efface les deux clés.
+  - Sans `hit` (magasin tiers, client Redis sans `incr`) : ancien chemin, toujours non atomique.
+  - Test : 20 essais parallèles → 5 admis, 15 refusés ; 12 POST parallèles → 5 × 401, 7 × 429.
+- **L'alerte part au passage de la limite, plus à l'égalité.** `count >= maxFailures`, une fois
+  par adresse et par fenêtre (mémoire de l'instance, effacée par une connexion admin). Un compte
+  qui saute la valeur exacte (rafale sur l'ancien chemin) alerte quand même ; deux instances
+  peuvent alerter chacune une fois — doublon plutôt que silence.
+- Inchangés : 5 échecs / 15 min, 429 + `Retry-After` même avec le bon mot de passe, repli en
+  mémoire sur panne du magasin (un seul avertissement), `limiter: null`.
+- Tests : `tests/auth.test.ts` (+14).
+
 ### v3.32.0 — Garde-fou avant commit des dépôts publics (2026-11-20)
 
 Base : `v3.31.0`. Un script ajouté, rien de modifié : un site monte sans rien changer, et le
@@ -2074,7 +2111,8 @@ durcissements de `lib/auth.ts` et le contrôle d'origine de `guard.deny`, tous s
     avertissement ;
   - `notify` (typiquement `sendNtfy`) : **une seule alerte au franchissement** (`count === max`),
     jamais une par refus ; une erreur du notificateur est avalée ;
-  - **limite connue, non corrigée en v3.31.0** : `check` puis `failure` sont deux allers-retours
+  - **limite connue en v3.31.0, corrigée en v3.33.0** (voir cette section : comptage atomique
+    `hit`, alerte au passage `>=`, remise à zéro par l'admin seul) : `check` puis `failure` sont deux allers-retours
     distincts, et `recordFailure` Redis enchaîne quatre commandes sans `MULTI`. Des essais
     parallèles depuis une même IP passent tous `check` avant que leurs échecs ne soient comptés,
     et l'alerte au franchissement (`===`) peut sauter ou doubler. Un `INCR` + `EXPIRE` ne
