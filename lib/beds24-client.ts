@@ -46,6 +46,18 @@ const DEFAULT_REVALIDATE = 60;
 /** Marge sur l'expiration : un jeton qui meurt pendant la requête coûte un 401 inexplicable. */
 const EXPIRY_MARGIN_MS = 60_000;
 
+/**
+ * Marge du magasin partagé (v3.31.0) : un jeton relu par une autre instance doit encore vivre
+ * toute la durée d'une fonction serverless, d'où 10 min au lieu de 60 s.
+ */
+const STORE_MARGIN_MS = 10 * 60_000;
+
+/** Au-delà, un magasin qui ne répond pas est réputé en panne : on échange comme avant. */
+const STORE_TIMEOUT_MS = 1_500;
+
+/** Préfixe des clés du magasin, suivi de l'empreinte du refresh token. */
+const STORE_KEY_PREFIX = "beds24:access:";
+
 export interface Beds24Route {
   /** Variable d'environnement portant le refresh token de cette voie. */
   env: string;
@@ -77,6 +89,40 @@ export interface Beds24ClientConfig {
   defaultRoute: string;
   baseUrl?: string;
   revalidate?: number;
+  /**
+   * Magasin partagé des access tokens (v3.31.0), branché par le site sur son Redis. Facultatif :
+   * omis, le client ne garde ses jetons qu'en mémoire, exactement comme avant.
+   *
+   * Pourquoi : un access token vit 24 h, mais chaque démarrage à froid d'une fonction serverless
+   * repartait d'une mémoire vide et refaisait `/authentication/token`. Le 2026-11-16, deux
+   * post-déploiements ont échoué sur un 429 de cet échange. Avec un magasin, une instance
+   * échange et les autres relisent.
+   */
+  tokenStore?: Beds24TokenStore;
+}
+
+/** Access token tel que gardé dans le magasin. `expiresAt` en millisecondes depuis l'époque. */
+export interface Beds24StoredToken {
+  token: string;
+  expiresAt: number;
+}
+
+/**
+ * Contrat minimal d'un magasin partagé — trois méthodes, de quoi le poser sur n'importe quel
+ * clé-valeur (Upstash, Vercel KV, `Map` de test).
+ *
+ * La clé est `beds24:access:` suivi d'une **empreinte SHA-256 tronquée** du refresh token
+ * (`beds24TokenStoreKey`) : le refresh token n'est jamais écrit dans le magasin. La valeur, elle,
+ * est un access token valide jusqu'à 24 h : le magasin doit rester privé au site.
+ *
+ * Aucune méthode ne peut casser un appel Beds24 : une erreur, ou un délai au-delà de 1,5 s, est
+ * avalé et le client retombe sur l'échange direct.
+ */
+export interface Beds24TokenStore {
+  get(key: string): Promise<Beds24StoredToken | null>;
+  /** `ttlSeconds` : durée de vie à poser sur la clé, déjà amputée de la marge de 10 min. */
+  set(key: string, value: Beds24StoredToken, ttlSeconds: number): Promise<void>;
+  delete(key: string): Promise<void>;
 }
 
 export interface Beds24GetOptions {
@@ -216,6 +262,9 @@ export function createBeds24Client(config: Beds24ClientConfig): Beds24Client {
    * d'expiration serait à corriger à deux endroits le jour où elle s'avère mal choisie.
    */
   const cache = new Map<string, { token: string; expiresAt: number }>();
+  const store = config.tokenStore;
+  /** Avec un magasin : échanges en cours par refresh token, pour que des appels simultanés n'en fassent qu'un. */
+  const inflight = new Map<string, Promise<string>>();
 
   function route(name: string): Beds24Route {
     const r = config.routes[name];
@@ -264,19 +313,79 @@ export function createBeds24Client(config: Beds24ClientConfig): Beds24Client {
     return resolve(whenMissing, [...seen, name]);
   }
 
+  /** Échange, puis publie le jeton dans le magasin s'il y en a un (sans jamais lever pour lui). */
+  async function exchangeAndShare(refreshToken: string, usage: string): Promise<Beds24TokenExchange> {
+    const result = await exchange(refreshToken, usage);
+    const entry = cache.get(refreshToken);
+    if (store && entry) {
+      const ttl = Math.floor(result.expiresIn - STORE_MARGIN_MS / 1000);
+      if (ttl > 0) {
+        await quietly("écriture", async () => store.set(await beds24TokenStoreKey(refreshToken), { ...entry }, ttl));
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Relit le magasin. Un jeton trop près de sa fin, mal formé, ou un magasin en panne valent
+   * « rien » : l'appelant échange alors comme sans magasin.
+   */
+  async function fromStore(refreshToken: string): Promise<string | null> {
+    if (!store) return null;
+    const hit = await quietly("lecture", async () => store.get(await beds24TokenStoreKey(refreshToken)));
+    if (
+      !hit ||
+      typeof hit.token !== "string" ||
+      !hit.token ||
+      typeof hit.expiresAt !== "number" ||
+      hit.expiresAt <= Date.now() + STORE_MARGIN_MS
+    ) {
+      return null;
+    }
+    cache.set(refreshToken, { token: hit.token, expiresAt: hit.expiresAt });
+    return hit.token;
+  }
+
+  /** Oublie un jeton en mémoire **et** dans le magasin. N'échoue jamais. */
+  async function forget(refreshToken: string): Promise<void> {
+    cache.delete(refreshToken);
+    if (store) await quietly("suppression", async () => store.delete(await beds24TokenStoreKey(refreshToken)));
+  }
+
   async function token(name = config.defaultRoute): Promise<string> {
     const { name: actual, refreshToken } = resolve(name);
     const hit = cache.get(refreshToken);
     if (hit && hit.expiresAt > Date.now() + EXPIRY_MARGIN_MS) return hit.token;
-    const { token: fresh } = await exchange(refreshToken, actual);
-    return fresh;
+    if (!store) {
+      const { token: fresh } = await exchange(refreshToken, actual);
+      return fresh;
+    }
+    /*
+     * Avec un magasin : relire avant d'échanger, et un seul échange par instance quand plusieurs
+     * appels arrivent ensemble. Deux instances froides au même instant échangent encore chacune
+     * une fois : un verrou réparti coûterait un aller-retour et un cas de panne de plus, pour
+     * une fenêtre de quelques centaines de millisecondes.
+     */
+    const pending = inflight.get(refreshToken);
+    if (pending) return pending;
+    const p = (async () => {
+      const shared = await fromStore(refreshToken);
+      if (shared) return shared;
+      return (await exchangeAndShare(refreshToken, actual)).token;
+    })();
+    inflight.set(refreshToken, p);
+    try {
+      return await p;
+    } finally {
+      inflight.delete(refreshToken);
+    }
   }
 
   async function refresh(name: string): Promise<Beds24TokenExchange> {
     const rt = refreshTokenOf(name);
     if (!rt) throw new Error(`${route(name).env} n'est pas défini`);
     cache.delete(rt);
-    return exchange(rt, name);
+    return exchangeAndShare(rt, name);
   }
 
   async function keepAlive(
@@ -294,9 +403,19 @@ export function createBeds24Client(config: Beds24ClientConfig): Beds24Client {
     return states;
   }
 
+  /**
+   * La mémoire est vidée tout de suite ; la suppression dans le magasin part en arrière-plan
+   * (la signature reste synchrone). Les chemins internes attendent `invalidateShared`, pour que
+   * l'appel suivant ne relise pas le jeton refusé.
+   */
   function invalidate(name: string): void {
     const rt = refreshTokenOf(name);
-    if (rt) cache.delete(rt);
+    if (rt) void forget(rt);
+  }
+
+  async function invalidateShared(name: string): Promise<void> {
+    const rt = refreshTokenOf(name);
+    if (rt) await forget(rt);
   }
 
   async function get<T>(path: string, options: Beds24GetOptions = {}): Promise<T> {
@@ -341,10 +460,24 @@ export function createBeds24Client(config: Beds24ClientConfig): Beds24Client {
       res = await call(await token(refused));
     }
 
+    /*
+     * Avec un magasin, un 401 peut venir d'un jeton partagé périmé et non d'un refresh token
+     * mort : on l'oublie partout (mémoire et magasin — sinon toutes les instances le reliraient
+     * jusqu'à 24 h), puis on retente une fois la même voie avec un échange neuf, avant tout
+     * repli. Sans magasin, ce bloc ne s'exécute pas et rien ne change.
+     */
+    if (res.status === 401 && store) {
+      await invalidateShared(actual);
+      res = await call(await token(name));
+      if (res.status === 401 && !refused) await invalidateShared(actual);
+    }
+
     if (res.status === 401 && refused) {
-      invalidate(actual);
+      if (store) await invalidateShared(actual);
+      else invalidate(actual);
       degrade("refusée (401) — révoquée ?");
       res = await call(await token(refused));
+      if (res.status === 401 && store) await invalidateShared(resolve(refused).name);
     }
 
     noteQuota(res);
@@ -383,7 +516,7 @@ export function createBeds24Client(config: Beds24ClientConfig): Beds24Client {
     const body = await res.text();
     if (!res.ok) {
       // On invalide la voie réellement empruntée, pas celle demandée (elles diffèrent après un repli).
-      if (res.status === 401) invalidate(actual);
+      if (res.status === 401) await invalidateShared(actual);
       throw new Beds24Error(res.status, `${path} (POST)`, "");
     }
     let refusal: string | null = null;
@@ -435,7 +568,7 @@ export function createBeds24Client(config: Beds24ClientConfig): Beds24Client {
     noteQuota(res);
     const body = await res.text();
     if (!res.ok) {
-      if (res.status === 401) invalidate(actual);
+      if (res.status === 401) await invalidateShared(actual);
       // Le calendrier n'a rien de personnel : les 200 premiers caractères aident à diagnostiquer.
       throw new Beds24Error(res.status, "/inventory/rooms/calendar (POST)", body);
     }
@@ -463,6 +596,40 @@ export function createBeds24Client(config: Beds24ClientConfig): Beds24Client {
     quota: () => lastQuota,
     invalidate,
   };
+}
+
+/**
+ * Clé du magasin pour un refresh token : `beds24:access:` + 32 caractères hexadécimaux de son
+ * SHA-256. Web Crypto plutôt que `node:crypto` : le client peut tourner sur le runtime edge.
+ */
+export async function beds24TokenStoreKey(refreshToken: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(refreshToken));
+  const hex = Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+  return STORE_KEY_PREFIX + hex.slice(0, 32);
+}
+
+/**
+ * Exécute une opération du magasin sans jamais la laisser casser l'appel Beds24 : erreur ou
+ * délai dépassé ⇒ `null` et un avertissement, sans clé ni jeton dans le message.
+ */
+async function quietly<T>(what: string, op: () => Promise<T>): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      op(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`délai de ${STORE_TIMEOUT_MS} ms dépassé`)), STORE_TIMEOUT_MS);
+      }),
+    ]);
+  } catch (e) {
+    console.warn(
+      `Beds24 : magasin de jetons indisponible (${what} : ${e instanceof Error ? e.message : String(e)}), ` +
+        "échange direct.",
+    );
+    return null;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /**
