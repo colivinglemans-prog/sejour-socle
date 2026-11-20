@@ -301,7 +301,9 @@ async function links(cfg: StayAgentConfig, deps: StayAgentDeps, q: PricedStay, l
       // Secret absent ou trop court : le devis reste valable, sans lien partageable.
     }
   }
-  const stayUrl = cfg.stayPagePath ? `${cfg.siteUrl}${cfg.stayPagePath(lang)}?${stayQuery({ ...q, src })}` : undefined;
+  // Pas de page Séjour pour un séjour avec suppléments : elle affiche le prix sans eux (le linge
+  // d'Albiez se coche sur la page de paiement) et contredirait `total` et `quoteUrl`.
+  const stayUrl = cfg.stayPagePath && extras.length === 0 ? `${cfg.siteUrl}${cfg.stayPagePath(lang)}?${stayQuery({ ...q, src })}` : undefined;
   return {
     bookUrl,
     calendarUrl,

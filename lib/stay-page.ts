@@ -52,9 +52,13 @@ const FIELDS = [
   ["children", "enfants"],
 ] as const;
 
-/** Un nombre de voyageurs écrit proprement (`010` → `10`) ; autre chose est laissé tel quel. */
+/**
+ * Un nombre de voyageurs écrit d'une seule façon (`010`, `1.0`, `+4`, `1e1` → `10`, `1`, `4`, `10`) ;
+ * ce qui n'est pas un entier est laissé tel quel, et `validateRequest` le refusera.
+ */
 function count(raw: string): string {
-  return /^\d{1,3}$/.test(raw) ? String(Number(raw)) : raw;
+  const n = Number(raw);
+  return raw !== "" && Number.isInteger(n) && n >= 0 && n < 1000 ? String(n) : raw;
 }
 
 /** La requête canonique d'un séjour, dans l'ordre fixe : checkin, checkout, adults, children, src. */
@@ -70,7 +74,9 @@ export function stayQuery(s: { checkIn: string; checkOut: string; adults: number
 }
 
 /**
- * Lit la requête de la page Séjour. Idempotent : la forme canonique renvoie toujours `ok`, sinon
+ * Lit la requête de la page Séjour. Les paramètres inconnus (`utm_*`, `gclid`…) sont retirés par
+ * la redirection : assumé, la page n'est pas indexée et seule l'origine `src` compte ici.
+ * Idempotent : la forme canonique renvoie toujours `ok`, sinon
  * la redirection bouclerait. Un paramètre en double garde sa première valeur, puis redirige.
  */
 export function parseStayParams(params: SearchParams): ParsedStay {
@@ -112,23 +118,23 @@ export function parseStayParams(params: SearchParams): ParsedStay {
 const INVALID_TEXT: Record<string, { invalid: string; tooFar: (days: number) => string }> = {
   fr: {
     invalid: "Ces dates ou ce nombre de voyageurs ne sont pas valides. Choisissez votre séjour dans le calendrier.",
-    tooFar: (d) => `Les réservations ne sont ouvertes que ${d} jours à l'avance.`,
+    tooFar: (d) => `On peut réserver au plus ${d} jours à l'avance.`,
   },
   en: {
     invalid: "These dates or this number of guests are not valid. Choose your stay in the calendar.",
-    tooFar: (d) => `Bookings only open ${d} days ahead.`,
+    tooFar: (d) => `Bookings can be made up to ${d} days ahead.`,
   },
   de: {
     invalid: "Diese Daten oder diese Gästezahl sind ungültig. Wählen Sie Ihren Aufenthalt im Kalender.",
-    tooFar: (d) => `Buchungen sind nur ${d} Tage im Voraus möglich.`,
+    tooFar: (d) => `Buchungen sind höchstens ${d} Tage im Voraus möglich.`,
   },
   es: {
     invalid: "Estas fechas o este número de viajeros no son válidos. Elija su estancia en el calendario.",
-    tooFar: (d) => `Las reservas solo se abren con ${d} días de antelación.`,
+    tooFar: (d) => `Solo se puede reservar con un máximo de ${d} días de antelación.`,
   },
   it: {
     invalid: "Queste date o questo numero di ospiti non sono validi. Scegliete il soggiorno nel calendario.",
-    tooFar: (d) => `Le prenotazioni si aprono solo ${d} giorni prima.`,
+    tooFar: (d) => `Si può prenotare al massimo ${d} giorni in anticipo.`,
   },
 };
 

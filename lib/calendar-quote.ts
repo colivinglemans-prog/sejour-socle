@@ -242,3 +242,28 @@ export const CALENDAR_QUOTE_LABELS: Record<string, CalendarQuoteLabels> = {
 export function calendarQuoteLabels(lang: string): CalendarQuoteLabels {
   return CALENDAR_QUOTE_LABELS[lang] ?? CALENDAR_QUOTE_LABELS.fr;
 }
+
+/**
+ * L'étape « voyageurs » du calendrier, avant les dates : le prix dépend du nombre de voyageurs,
+ * il ne s'affiche qu'une fois celui-ci choisi (demande de l'hôte du 2026-11-20).
+ */
+export interface CalendarGuestLabels {
+  title: string;
+  /** Dates choisies, voyageurs pas encore : ni prix ni bouton Réserver. */
+  prompt: string;
+  /** Noms des boutons « − » et « + » pour les lecteurs d'écran, d'après le libellé du compteur. */
+  remove: (counter: string) => string;
+  add: (counter: string) => string;
+}
+
+const CALENDAR_GUEST_LABELS: Record<string, CalendarGuestLabels> = {
+  fr: { title: "Combien de voyageurs ?", prompt: "Indiquez le nombre de voyageurs, en haut du calendrier, pour voir le prix exact.", remove: (c) => `Retirer : ${c}`, add: (c) => `Ajouter : ${c}` },
+  en: { title: "How many guests?", prompt: "Enter the number of guests at the top of the calendar to see the exact price.", remove: (c) => `Remove: ${c}`, add: (c) => `Add: ${c}` },
+  de: { title: "Wie viele Gäste?", prompt: "Geben Sie oben im Kalender die Zahl der Gäste an, um den genauen Preis zu sehen.", remove: (c) => `Weniger: ${c}`, add: (c) => `Mehr: ${c}` },
+  es: { title: "¿Cuántos viajeros?", prompt: "Indique el número de viajeros, arriba del calendario, para ver el precio exacto.", remove: (c) => `Quitar: ${c}`, add: (c) => `Añadir: ${c}` },
+  it: { title: "Quanti ospiti?", prompt: "Indicate il numero di ospiti, in alto nel calendario, per vedere il prezzo esatto.", remove: (c) => `Togli: ${c}`, add: (c) => `Aggiungi: ${c}` },
+};
+
+export function calendarGuestLabels(lang: string): CalendarGuestLabels {
+  return CALENDAR_GUEST_LABELS[lang] ?? CALENDAR_GUEST_LABELS.fr;
+}

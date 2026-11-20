@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   QUOTE_FALLBACK,
+  calendarGuestLabels,
   formatDay,
   formatEuro,
   interpretQuote,
@@ -226,7 +227,11 @@ export default function ReservationCalendar({
   const [pending, setPending] = useState(0);
   const loading = pending > 0;
   const [modalOpen, setModalOpen] = useState(false);
-  const [adults, setAdults] = useState(2);
+  // Aucun adulte au départ : le prix dépend du nombre de voyageurs, il ne s'affiche qu'une fois
+  // celui-ci choisi (demande de l'hôte du 2026-11-20). Un lien `?adultes=` le pose d'emblée.
+  const [adults, setAdults] = useState(0);
+  const guestsChosen = adults >= 1;
+  const guestStep = calendarGuestLabels(lang);
   const [children, setChildren] = useState(0);
 
   const month2 = addMonths(year, month, 1);
@@ -423,7 +428,7 @@ export default function ReservationCalendar({
   });
   const [quotes, setQuotes] = useState<Record<string, { at: number; state: CalendarQuoteState }>>({});
   // La langue fait partie de la clé : le détail et les avertissements arrivent dans la langue demandée.
-  const selectedKey = checkIn && checkOut ? `${lang}|${quoteKey({ checkIn, checkOut, adults, children })}` : null;
+  const selectedKey = checkIn && checkOut && guestsChosen ? `${lang}|${quoteKey({ checkIn, checkOut, adults, children })}` : null;
   const selectedQuote: CalendarQuoteState | "loading" = (selectedKey && quotes[selectedKey]?.state) || "loading";
   /** Ce qui est en mémoire pour un séjour, et frais : une panne (`at: 0`) ne l'est jamais. */
   const quotesRef = useRef(quotes);
@@ -434,7 +439,7 @@ export default function ReservationCalendar({
 
   useEffect(() => {
     const url = quoteUrlRef.current;
-    if (!hasQuote || !url || !checkIn || !checkOut) return;
+    if (!hasQuote || !url || !checkIn || !checkOut || adults < 1) return;
     const stay: CalendarStay = { checkIn, checkOut, adults, children };
     const key = `${lang}|${quoteKey(stay)}`;
     const known = quotesRef.current[key];
@@ -518,7 +523,7 @@ export default function ReservationCalendar({
   );
 
   const url =
-    checkIn && checkOut
+    checkIn && checkOut && guestsChosen
       ? beds24BookingUrl({ propertyId, lang, checkIn, checkOut, adults, children })
       : null;
 
@@ -547,6 +552,42 @@ export default function ReservationCalendar({
       )}
 
       <div className={`rounded-2xl border border-border p-4 sm:p-6 ${heading ? "mt-6" : ""}`}>
+        {/* 1. Les voyageurs, avant les dates : le prix en dépend. */}
+        <div className="mb-6 flex flex-col items-center gap-2 border-b border-border pb-5">
+          <p id={`${id ?? "calendrier"}-voyageurs`} className="text-sm font-semibold text-foreground">
+            {guestStep.title}
+          </p>
+          <div
+            role="group"
+            aria-labelledby={`${id ?? "calendrier"}-voyageurs`}
+            className="flex flex-col gap-2 sm:flex-row sm:gap-6"
+          >
+            <GuestCounter
+              label={labels.adults}
+              value={adults}
+              min={guestsChosen ? 1 : 0}
+              max={guests.maxTotal}
+              names={guestStep}
+              onChange={(v) => {
+                setAdults(v);
+                // La capacité est un plafond global : on rabote le second compteur plutôt
+                // que de laisser partir vers Beds24 une réservation qu'il refusera.
+                if (v + children > guests.maxTotal) setChildren(guests.maxTotal - v);
+              }}
+            />
+            <GuestCounter
+              label={guests.childrenLabel}
+              value={children}
+              min={0}
+              max={maxChildren}
+              names={guestStep}
+              onChange={setChildren}
+            />
+          </div>
+          <p className="text-xs text-secondary">{guests.note}</p>
+        </div>
+
+        {/* 2. Les dates. */}
         <div className="mb-4 flex items-center justify-between">
           <button
             onClick={() => shift(-1)}
@@ -621,30 +662,13 @@ export default function ReservationCalendar({
               {checkOut}
             </p>
 
-            <div className="flex flex-col gap-2 sm:flex-row sm:gap-6">
-              <GuestCounter
-                label={labels.adults}
-                value={adults}
-                min={1}
-                max={guests.maxTotal}
-                onChange={(v) => {
-                  setAdults(v);
-                  // La capacité est un plafond global : on rabote le second compteur plutôt
-                  // que de laisser partir vers Beds24 une réservation qu'il refusera.
-                  if (v + children > guests.maxTotal) setChildren(guests.maxTotal - v);
-                }}
-              />
-              <GuestCounter
-                label={guests.childrenLabel}
-                value={children}
-                min={0}
-                max={maxChildren}
-                onChange={setChildren}
-              />
-            </div>
-            <p className="text-xs text-secondary">{guests.note}</p>
+            {!guestsChosen && (
+              <p role="status" className="text-center text-sm font-medium text-foreground">
+                {guestStep.prompt}
+              </p>
+            )}
 
-            {quote && (
+            {quote && guestsChosen && (
               <QuoteBlock
                 state={selectedQuote}
                 labels={quote.labels}
@@ -668,12 +692,14 @@ export default function ReservationCalendar({
               >
                 {labels.clear}
               </button>
-              <button
-                onClick={() => setModalOpen(true)}
-                className="rounded-full bg-primary px-6 py-2 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
-              >
-                {labels.bookNow}
-              </button>
+              {guestsChosen && (
+                <button
+                  onClick={() => setModalOpen(true)}
+                  className="rounded-full bg-primary px-6 py-2 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
+                >
+                  {labels.bookNow}
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -831,12 +857,14 @@ function GuestCounter({
   value,
   min,
   max,
+  names,
   onChange,
 }: {
   label: string;
   value: number;
   min: number;
   max: number;
+  names: { remove: (c: string) => string; add: (c: string) => string };
   onChange: (v: number) => void;
 }) {
   return (
@@ -847,19 +875,33 @@ function GuestCounter({
         disabled={value <= min}
         onClick={() => onChange(value - 1)}
         className="flex h-8 w-8 items-center justify-center rounded-full border border-border text-foreground transition-colors hover:bg-light-bg disabled:cursor-default disabled:opacity-30"
-        aria-label="−"
+        aria-label={names.remove(label)}
       >
         <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
         </svg>
       </button>
-      <span className="w-6 text-center text-sm font-semibold text-foreground">{value}</span>
+      {/* Saisie directe : 16 clics sur « + » pour un groupe de 16, c'était trop (chef-de-stand). */}
+      <input
+        type="text"
+        inputMode="numeric"
+        pattern="[0-9]*"
+        aria-label={label}
+        value={value}
+        onFocus={(e) => e.currentTarget.select()}
+        onChange={(e) => {
+          const digits = e.target.value.replace(/\D/g, "").slice(-3);
+          if (digits === "") return;
+          onChange(Math.max(min, Math.min(max, Number(digits))));
+        }}
+        className="w-10 rounded-md border border-border bg-white py-1 text-center text-sm font-semibold text-foreground"
+      />
       <button
         type="button"
         disabled={value >= max}
         onClick={() => onChange(value + 1)}
         className="flex h-8 w-8 items-center justify-center rounded-full border border-border text-foreground transition-colors hover:bg-light-bg disabled:cursor-default disabled:opacity-30"
-        aria-label="+"
+        aria-label={names.add(label)}
       >
         <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />

@@ -149,7 +149,8 @@ export default function QuoteSummary({
   if (state.status === "invalid") {
     return (
       <section className="mx-auto max-w-2xl space-y-6 px-4 py-16 text-center">
-        {header}
+        {/* L'en-tête seulement sur la page Séjour : le devis invalide garde sa page neutre. */}
+        {fallbackUrl && header}
         <p>{state.reason ?? labels.invalid}</p>
         {fallbackUrl && (
           <a className={button} href={fallbackUrl}>

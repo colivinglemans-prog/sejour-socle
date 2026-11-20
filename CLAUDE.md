@@ -1719,6 +1719,22 @@ Lot 2b du plan `curried-mapping-stallman`. Base : `release-v3.29.0`. Pré-relect
 - **Changement de comportement de l'API et du MCP** : `validateRequest` refuse désormais un séjour
   de plus de `MAX_STAY_NIGHTS` (60) nuits en `invalid-request`, sans appel Beds24. La constante
   vit dans `stay-quote` (réexportée par `stay-search`, même borne que le paramètre `nights`).
+- **Calendrier : les voyageurs avant les dates** (demande de l'hôte du 20/11 : « jamais de prix
+  avant le nombre de voyageurs », le prix en dépend). Les compteurs passent en tête de la carte
+  (« Combien de voyageurs ? », `calendarGuestLabels`, 5 langues), **adultes à 0** au départ (sauf
+  `?adultes=` dans l'URL). Tant qu'il n'y a pas au moins un adulte : aucun appel de prix, ni bloc
+  prix, ni bouton Réserver, une invite à la place. Pas de valeur par défaut par site (un défaut à 10
+  afficherait un prix pour 10 avant le choix). Le nombre se **tape** aussi (champ numérique entre
+  « − » et « + », borné) : 16 clics pour un groupe de 16, c'était trop. Accessibilité : compteurs en
+  `role="group"` nommé par le titre, boutons nommés (« Ajouter : Adultes »), invite en `role="status"`.
+  Un lien vers le calendrier qui doit montrer un prix porte **toujours** `adultes`.
+  Validé par `le-dahu` et `chef-de-stand`.
+- `stayUrl` absent quand le devis porte des suppléments (le linge d'Albiez) : la page les ignore et
+  contredirait `total`. Le nombre de voyageurs canonique accepte `1.0`, `+4`, `1e1` (→ `1`, `4`, `10`).
+  Les paramètres inconnus (`utm_*`…) sont retirés par la redirection, assumé. Un devis signé invalide
+  reste neutre (l'en-tête n'apparaît que sur la page Séjour).
+- Pare-feu Vercel (avis `cerbere`) : règle « Limite page Séjour », `^/[a-z]{2}/sejour$`, **10/min/IP**
+  en 429 sur les deux projets — au pire 7 `getroomprice` par requête (refus + remplacements).
 - Côté sites : la page, `headers()` dans `next.config` (`Vercel-CDN-Cache-Control: s-maxage=60`,
   `X-Robots-Tag: noindex, nofollow`), `noindex, nofollow` en balise, pas de canonical ni d'entrée
   au sitemap, `/xx/sejour` sans paramètre → 308 vers `/xx/tarifs`. **Pas** de redirection de
