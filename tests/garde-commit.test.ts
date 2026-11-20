@@ -17,6 +17,7 @@ import {
   decoder,
   estFichierEnv,
   formatConnu,
+  lireArguments,
   lireEnv,
   ressembleAExport,
   secretsDesFichiers,
@@ -326,6 +327,56 @@ describe("controlerIndex sur un dépôt jetable", () => {
     ecrire("img.png", Buffer.from([0x89, 0x50, 0x00, 0x76, 0x61, 0x6c, 0x65, 0x75, 0x72]));
     git("add", "img.png");
     expect(fichiersRefuses([{ nom: "S", valeur: "valeur", type: "secret" }])).toEqual([]);
+  });
+});
+
+describe("mode CI : --depuis <réf>", () => {
+  let racine: string;
+  const git = (...args: string[]) =>
+    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@exemple.fr", ...args], { cwd: racine, encoding: "utf8" }).trim();
+  const ecrire = (f: string, contenu: string) => writeFileSync(join(racine, f), contenu);
+
+  beforeEach(() => {
+    racine = mkdtempSync(join(tmpdir(), "garde-ci-"));
+    git("init", "-q");
+    ecrire(".gitignore", "/data/*\n!/data/reviews.json\n");
+    ecrire("a.ts", "propre\n");
+    ecrire("vieux.json", "[]\n");
+    git("add", ".");
+    git("commit", "-qm", "base");
+  });
+  afterEach(() => rmSync(racine, { recursive: true, force: true }));
+
+  it("contrôle les fichiers modifiés depuis la base, lus dans HEAD", () => {
+    const base = git("rev-parse", "HEAD");
+    git("checkout", "-qb", "pr");
+    ecrire("sauvegarde.json", JSON.stringify([1, 2, 3, 4, 5].map((i) => ({ firstName: `P${i}`, phone: `+33${i}` }))));
+    mkdirSync(join(racine, "data"));
+    ecrire("data/historique.json", "[]");
+    git("add", "sauvegarde.json");
+    git("add", "-f", "data/historique.json");
+    git("rm", "-q", "vieux.json");
+    git("commit", "-qm", "pr");
+    ecrire("sauvegarde.json", "[]\n"); // la copie de travail ne compte pas
+    const { refus } = controlerIndex({ racine, secrets: [], depuis: base });
+    expect(refus.map((r) => r.fichier).sort()).toEqual(["data/historique.json", "sauvegarde.json"]);
+  });
+
+  it("ne voit rien quand HEAD est la base", () => {
+    expect(controlerIndex({ racine, secrets: [], depuis: "HEAD" }).refus).toEqual([]);
+  });
+
+  it("refuse une référence absente ou qui ressemble à une option", () => {
+    expect(() => controlerIndex({ racine, secrets: [], depuis: "origin/inexistante" })).toThrow(/rev-parse/);
+    expect(() => controlerIndex({ racine, secrets: [], depuis: "--output=x" })).toThrow(/invalide/);
+    expect(() => controlerIndex({ racine, secrets: [], depuis: "" })).toThrow(/invalide/);
+  });
+
+  it("lit les arguments de la ligne de commande", () => {
+    expect(lireArguments([])).toEqual({});
+    expect(lireArguments(["--depuis", "origin/main"])).toEqual({ depuis: "origin/main" });
+    expect(() => lireArguments(["--depuis"])).toThrow(/inattendus/);
+    expect(() => lireArguments(["x"])).toThrow(/inattendus/);
   });
 });
 

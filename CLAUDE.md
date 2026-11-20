@@ -188,6 +188,7 @@ deux validations.
 | — | Sécurité — **garde-fou avant commit** des dépôts publics (`scripts/garde-commit.mjs` : fichiers exclus, valeurs de secrets du poste, exports de réservations) | `le-douanier`, `cerbere`, `le-dahu`, `chef-de-stand` | `v3.32.0` |
 | — | Sécurité — **limite de connexion durcie** : seul un succès admin remet le compteur à zéro (`resetOnRoles`), tentative comptée avant le mot de passe en un appel atomique (`hit`/`unhit`, `attempt`), alerte au passage de la limite | `cerbere` | `v3.33.0` |
 | — | Disponibilités — **un jour absent est non réservable** (`longestFreeRange`, `readNights`, état « inconnu » d'`EventBookingCTA`) ; agent IA — **cache des prix 5 min et limite par IP** (`stay-agent-guard`, 3e argument de `createAgentRoute` / `createMcpRoute`) | `le-douanier` | `v3.34.0` |
+| — | Sécurité — **garde-commit en CI** (`--depuis <réf>` : fichiers modifiés d'une PR ou d'un push) | `cerbere` | `v3.35.0` |
 | — | Veille des dates d'événements (`lib/events-watch.ts`) | — | `v0.7.0` |
 
 Plan détaillé : `C:\Users\alexa\.claude\plans\cheerful-toasting-rivest.md`.
@@ -1702,6 +1703,33 @@ tout identifiant de plus de 10 / 7 caractères — chez Albiez comme chez Barbus
   `_T`, la boucle des copies de test reviendrait et le départage redeviendrait aveugle.
 - Correctif : aucune signature publique ne change. Les deux sites montent sans modification de code
   (ils n'écrivent aucun code `MSG_` en dur) ; leur `validateTemplates` couvre leurs identifiants.
+
+### v3.35.0 — garde-commit en CI : `--depuis <réf>` (2026-11-20)
+
+Base : `v3.34.0`. Additif : sans argument, le hook avant commit se comporte exactement comme en
+v3.32.0.
+
+- **Pourquoi.** Le hook ne protège que les clones où `core.hooksPath` est posé, et `--no-verify`
+  le contourne ; la push protection de GitHub ne voit que les secrets de format connu, pas un
+  export de réservations (relecture Fable du bilan d'audit, 2026-11-20).
+- **`scripts/garde-commit.mjs --depuis <réf>`** contrôle les fichiers modifiés entre `<réf>` et
+  `HEAD` (`git diff <réf>...HEAD`, donc depuis la base commune), lus dans `HEAD` et non dans la copie
+  de travail. Mêmes refus que le hook. En CI il n'y a pas de `.env.local` : le contrôle des valeurs
+  de secrets y est inactif (avertissement), les trois autres jouent. Une référence vide, absente ou
+  commençant par `-` refuse (pas d'option injectée dans git). Nouvel export : `lireArguments`.
+- **Branchement côté site** (`ci.yml`, après `npm ci`, checkout en `fetch-depth: 0`) :
+
+  ```yaml
+  - name: garde-commit
+    env:
+      BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
+    run: |
+      if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then exit 0; fi
+      node node_modules/@sejour/socle/scripts/garde-commit.mjs --depuis "$BASE"
+  ```
+
+  La base passe par `env:`, jamais interpolée dans `run:`.
+- Tests : 4 de plus dans `tests/garde-commit.test.ts` (62).
 
 ### v3.34.0 — Jour absent non réservable ; cache et limite des prix de l'agent IA (2026-11-20)
 

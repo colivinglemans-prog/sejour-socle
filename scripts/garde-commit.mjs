@@ -247,14 +247,27 @@ export function fichiersEnvDuDepot(top) {
 }
 
 /**
- * Contrôle l'index du dépôt courant. Rend `{ refus, avertissements }`, chaque refus
- * `{ fichier, motif }`. `racine` et `secrets` sont injectables pour les tests.
+ * Contrôle l'index du dépôt courant — ou, avec `depuis`, les fichiers modifiés entre cette
+ * référence et `HEAD` (mode CI : une PR, un push), lus dans `HEAD`. Rend
+ * `{ refus, avertissements }`, chaque refus `{ fichier, motif }`. `racine` et `secrets` sont
+ * injectables pour les tests.
  */
-export function controlerIndex({ racine, secrets } = {}) {
+export function controlerIndex({ racine, secrets, depuis } = {}) {
   const top = racine ?? gitOk(["rev-parse", "--show-toplevel"]).stdout.trim();
   const opts = { cwd: top };
   const avertissements = [];
-  const indexes = gitOk(["diff", "--cached", "--name-only", "--diff-filter=ACMRT", "-z"], opts)
+  if (depuis !== undefined) {
+    // Une référence commençant par « - » serait lue comme une option de git.
+    if (!depuis || depuis.startsWith("-")) throw new Error(`référence --depuis invalide : « ${depuis} »`);
+    gitOk(["rev-parse", "--verify", "--quiet", `${depuis}^{commit}`], opts);
+  }
+  // Mode index : `:fichier` ; mode CI : `HEAD:fichier`.
+  const prefixe = depuis === undefined ? ":" : "HEAD:";
+  const lister =
+    depuis === undefined
+      ? ["diff", "--cached", "--name-only", "--diff-filter=ACMRT", "-z"]
+      : ["diff", "--name-only", "--diff-filter=ACMRT", "-z", `${depuis}...HEAD`];
+  const indexes = gitOk(lister, opts)
     .stdout.split("\0")
     .filter(Boolean);
   if (indexes.length === 0) return { refus: [], avertissements };
@@ -287,15 +300,17 @@ export function controlerIndex({ racine, secrets } = {}) {
   }
 
   for (const f of indexes) {
-    const taille = git(["cat-file", "-s", `:${f}`], opts);
+    const taille = git(["cat-file", "-s", `${prefixe}${f}`], opts);
     if (taille.status === 0 && Number(taille.stdout.trim()) > TAILLE_MAX) {
       refus.push({ fichier: f, motif: `plus de ${TAILLE_MAX / 1024 / 1024} Mo : trop gros pour être contrôlé` });
       continue;
     }
-    const blob = git(["cat-file", "blob", `:${f}`], { ...opts, encoding: "buffer" });
+    const blob = git(["cat-file", "blob", `${prefixe}${f}`], { ...opts, encoding: "buffer" });
     if (blob.error || blob.status !== 0) {
       // Un lien symbolique ou un sous-module n'a pas de blob lisible ainsi : rien à lire.
-      const mode = git(["ls-files", "-s", "-z", "--", f], opts).stdout.split(" ")[0];
+      const mode = (
+        depuis === undefined ? git(["ls-files", "-s", "-z", "--", f], opts) : git(["ls-tree", "-z", "HEAD", "--", f], opts)
+      ).stdout.split(" ")[0];
       if (mode === "120000" || mode === "160000") continue;
       refus.push({ fichier: f, motif: "illisible dans l'index : contrôle impossible" });
       continue;
@@ -317,10 +332,17 @@ export function controlerIndex({ racine, secrets } = {}) {
   return { refus, avertissements };
 }
 
+/** Arguments : aucun (hook avant commit) ou `--depuis <réf>` (CI). */
+export function lireArguments(argv) {
+  if (argv.length === 0) return {};
+  if (argv.length === 2 && argv[0] === "--depuis") return { depuis: argv[1] };
+  throw new Error(`arguments inattendus : ${argv.join(" ")} (usage : [--depuis <réf>])`);
+}
+
 function main() {
   let resultat;
   try {
-    resultat = controlerIndex();
+    resultat = controlerIndex(lireArguments(process.argv.slice(2)));
   } catch (e) {
     console.error(`\n✋ garde-commit : contrôle impossible, commit refusé — ${e instanceof Error ? e.message : String(e)}\n`);
     return 1;
