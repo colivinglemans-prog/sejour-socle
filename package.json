@@ -38,7 +38,7 @@
     "recharts": "^3",
     "vitest": ">=4",
     "zod": "^4",
-    "nodemailer": "^10.6.1"
+    "nodemailer": "^6.10.1 || ^10.6.1"
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "1.32.2",

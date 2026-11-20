@@ -189,7 +189,7 @@ deux validations.
 | — | Sécurité — **limite de connexion durcie** : seul un succès admin remet le compteur à zéro (`resetOnRoles`), tentative comptée avant le mot de passe en un appel atomique (`hit`/`unhit`, `attempt`), alerte au passage de la limite | `cerbere` | `v3.33.0` |
 | — | Disponibilités — **un jour absent est non réservable** (`longestFreeRange`, `readNights`, état « inconnu » d'`EventBookingCTA`) ; agent IA — **cache des prix 5 min et limite par IP** (`stay-agent-guard`, 3e argument de `createAgentRoute` / `createMcpRoute`) | `le-douanier` | `v3.34.0` |
 | — | Sécurité — **garde-commit en CI** (`--depuis <réf>` : fichiers modifiés d'une PR ou d'un push) | `cerbere` | `v3.35.0` |
-| — | Sécurité — **nodemailer 10** (paire optionnelle `^10.6.1` ; la 6 cumule 18 avis, dont injection SMTP et envoi vers un domaine non voulu) | — | `v3.35.1` |
+| — | Sécurité — **nodemailer 10** (paire optionnelle `^6.10.1 || ^10.6.1`, les sites en `^10.6.1` ; la 6 cumule 18 avis, dont injection SMTP et envoi vers un domaine non voulu) | — | `v3.35.1` |
 | — | Veille des dates d'événements (`lib/events-watch.ts`) | — | `v0.7.0` |
 
 Plan détaillé : `C:\Users\alexa\.claude\plans\cheerful-toasting-rivest.md`.
@@ -1712,11 +1712,12 @@ Base : `v3.35.0`. Correctif de sécurité, sans changement d'API.
 - **Pourquoi.** `npm audit` signale 18 avis (élevés) sur nodemailer ≤ 10.1.3 : injection de
   commandes SMTP, en-têtes, envoi vers un domaine non voulu par l'analyseur d'adresses, déni de
   service.
-- La dépendance paire optionnelle passe de `^6` à `^10.6.1` ; `@types/nodemailer` disparaît
-  (nodemailer 10 publie ses propres types). `smtp.ts` n'utilise que `createTransport` / `sendMail`,
+- La dépendance paire optionnelle passe de `^6` à `^6.10.1 || ^10.6.1` (plage tolérante : un site
+  encore en 6 installe sans conflit), la dépendance de développement à `^10.6.1` ;
+  `@types/nodemailer` disparaît (nodemailer 10 publie ses propres types). `smtp.ts` n'utilise que `createTransport` / `sendMail`,
   inchangés. Node ≥ 20 exigé (les sites tournent sur Node 24).
-- **Les deux sites montent nodemailer en même temps que le socle**, sinon npm refuse l'installation
-  (conflit de dépendance paire) ; retirer `@types/nodemailer` de leurs devDependencies.
+- **Les sites montent en `^10.6.1` et retirent `@types/nodemailer` dès que possible** : c'est la
+  version installée par le site qui compte pour la sécurité. Relu par `le-douanier`.
 
 ### v3.35.0 — garde-commit en CI : `--depuis <réf>` (2026-11-20)
 
