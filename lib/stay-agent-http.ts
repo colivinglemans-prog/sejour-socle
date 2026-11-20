@@ -125,7 +125,7 @@ export function openApi(cfg: StayAgentConfig): Record<string, unknown> {
       "/info": op("get_property_info", "Fiche du logement, capacité, inclus, règles, annulation et paiement", common),
       "/availability": op("check_availability", "Nuits libres, durée minimale réelle par jour d'arrivée (minStayByArrival), jours sans arrivée ou départ", [
         q("from", day("Premier jour"), true),
-        q("to", day(`Dernier jour, inclus (${MAX_SEARCH_DAYS} jours au plus après from)`), true),
+        q("to", day(`Dernier jour, inclus (${MAX_SEARCH_DAYS} jours au plus après from ; ramené à pricesOpenDaysAhead jours après aujourd'hui)`), true),
         ...common,
       ]),
       "/quote": op("get_quote", "Prix exact d'un séjour et liens de réservation ; sinon raison et alternatives", [

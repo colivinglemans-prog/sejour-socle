@@ -206,9 +206,27 @@ export function propertyInfo(cfg: StayAgentConfig, p: ToolParams): ToolResult {
 export async function availability(cfg: StayAgentConfig, deps: StayQuoteDeps, p: ToolParams): Promise<ToolResult> {
   if (!isDay(p.from) || !isDay(p.to)) return bad("Paramètres from et to attendus au format AAAA-MM-JJ.");
   const from = p.from < deps.today ? deps.today : p.from;
-  const to = p.to;
-  const span = daysBetween(from, to);
+  const span = daysBetween(from, p.to);
   if (span < 0 || span > MAX_SEARCH_DAYS) return bad(`Plage de ${MAX_SEARCH_DAYS} jours au plus, from avant to.`);
+  // v3.31.0 — borné vers le futur comme le devis et la recherche (`maxHorizonDays`) : chaque mois
+  // lointain coûtait une URL Beds24 de plus, et un paramètre aléatoire contournait le cache CDN.
+  // Un début au-delà de l'horizon est refusé ; une fin au-delà est ramenée à l'horizon.
+  const horizon = addDays(deps.today, cfg.quote.maxHorizonDays);
+  if (from > horizon) {
+    return {
+      status: 400,
+      body: {
+        ok: false,
+        reason: "too-far",
+        detail: `Les tarifs ne sont ouverts que ${cfg.quote.maxHorizonDays} jours à l'avance (jusqu'au ${horizon}).`,
+      },
+    };
+  }
+  const to = p.to > horizon ? horizon : p.to;
+  const truncated =
+    to !== p.to
+      ? { truncated: { requestedTo: p.to, detail: `Plage ramenée au ${horizon} : tarifs ouverts ${cfg.quote.maxHorizonDays} jours à l'avance.` } }
+      : {};
   try {
     // Lu au-delà de `to` : la durée minimale d'une arrivée en fin de plage dépend des jours
     // suivants (nuits libres, premier départ ouvert). La profondeur se **calcule** : le plus
@@ -246,6 +264,7 @@ export async function availability(cfg: StayAgentConfig, deps: StayQuoteDeps, p:
         ok: true,
         from,
         to,
+        ...truncated,
         freeNights: nights,
         minStayByArrival,
         noArrival: (a.sansArrivee ?? []).filter(inRange),
