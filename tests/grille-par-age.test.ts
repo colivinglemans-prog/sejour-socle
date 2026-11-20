@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 import type { AvailabilityResponse } from "../lib/availability";
 import { addDays } from "../lib/dates";
-import { buildPriceGrid, DegradedGridError, fixedStays, pricedRange, type PriceGrid } from "../lib/price-grid";
+import { buildPriceGrid, fixedStays, pricedRange, type PriceGrid } from "../lib/price-grid";
 import { readPriceGrid, runPriceGridJob } from "../lib/price-grid-job";
 import type { RoomPrice, RoomPriceRequest } from "../lib/stay-price";
 import type { StayQuoteConfig, StayQuoteDeps } from "../lib/stay-quote";
@@ -109,9 +109,34 @@ describe("buildPriceGrid({ previous })", () => {
     expect(next.grid.complete).toBe(true);
   });
 
-  it("pannes en série : arrêt (DegradedGridError), ratio sur les appels du passage", async () => {
+  it("pannes en série : arrêt sans exception, `degraded`, cellules précédentes gardées", async () => {
     const full = await build(null, { now: T0 });
-    await expect(build(full.grid, { now: hours(1), down: () => true })).rejects.toBeInstanceOf(DegradedGridError);
+    const next = await build(full.grid, { now: hours(1), down: () => true });
+    expect(next.grid.degraded).toBe(3);
+    expect(next.calls).toHaveLength(3);
+    expect(next.grid.complete).toBe(true);
+  });
+
+  it("bascule réelle : grille d'avant v3.37.0 (fusionnée, sans pricedAt) en `previous`", async () => {
+    const old: PriceGrid = {
+      columns: [{ parties: PARTIES }],
+      rows: STAYS.map((st) => ({ ...st, nights: 2, cells: [{ status: "available", total: 999, perPersonPerNight: 1 }] })),
+      generatedAt: T0.toISOString(),
+      pricesShown: true,
+    };
+    const { grid, calls } = await build(old, { budget: 3500, now: T0 });
+    expect(calls.length).toBeLessThan(6);
+    expect(grid.complete).toBe(false); // l'ancienne grille servie reste en place
+  });
+
+  it("prix publics coupés avec `previous` : aucune demande, grille complète sans prix", async () => {
+    const b = beds24();
+    const grid = await buildPriceGrid(CFG, { today: TODAY, availability: free, price: b.price }, {
+      sources: [fixedStays(STAYS)], parties: PARTIES, previous: null, enabled: false, clock: ticking(), now: T0,
+    });
+    expect(b.calls).toHaveLength(0);
+    expect(grid.complete).toBe(true);
+    expect(grid.pricesShown).toBe(false);
   });
 });
 
@@ -133,12 +158,12 @@ describe("runPriceGridJob({ incremental })", () => {
 
   it("froid : la progression est rangée sous :work, rien n'est servi tant que la grille est incomplète", async () => {
     const m = memory();
-    const r1 = await runPriceGridJob(JOB, { store: m.store, build: (p) => build(p, { budget: 3500, now: T0 }).then((x) => x.grid), now: T0 });
+    const r1 = await runPriceGridJob(JOB, { store: m.store, build: (p) => build(p ?? null, { budget: 3500, now: T0 }).then((x) => x.grid), now: T0 });
     expect(r1.outcome).toBe("incomplete");
     expect(m.data.has("site:price-grid:work")).toBe(true);
     expect(await readPriceGrid(m.store, JOB.key, JOB.composition, { today: TODAY, now: T0 })).toBeNull();
 
-    const r2 = await runPriceGridJob(JOB, { store: m.store, build: (p) => build(p, { now: hours(1) }).then((x) => x.grid), now: hours(1) });
+    const r2 = await runPriceGridJob(JOB, { store: m.store, build: (p) => build(p ?? null, { now: hours(1) }).then((x) => x.grid), now: hours(1) });
     expect(r2.outcome).toBe("stored");
     const read = await readPriceGrid(m.store, JOB.key, JOB.composition, { today: TODAY, now: hours(1) });
     expect(read).not.toBeNull();
@@ -148,9 +173,9 @@ describe("runPriceGridJob({ incremental })", () => {
 
   it("lecture : colonnes fusionnées quand les prix sont égaux, âge = plus vieux prix", async () => {
     const m = memory();
-    const same = async (p: PriceGrid | null) => {
+    const same = async (p?: PriceGrid | null) => {
       const deps: StayQuoteDeps = { today: TODAY, availability: free, price: async (r) => ({ total: 500, nightly: { [r.checkIn]: 250, [addDays(r.checkIn, 1)]: 250 }, warn: "" }) };
-      return buildPriceGrid(CFG, deps, { sources: [fixedStays(STAYS)], parties: PARTIES, previous: p, clock: ticking(), now: T0 });
+      return buildPriceGrid(CFG, deps, { sources: [fixedStays(STAYS)], parties: PARTIES, previous: p ?? null, clock: ticking(), now: T0 });
     };
     await runPriceGridJob(JOB, { store: m.store, build: same, now: T0 });
     const late = await readPriceGrid(m.store, JOB.key, JOB.composition, { today: TODAY, now: hours(30) });
@@ -158,12 +183,44 @@ describe("runPriceGridJob({ incremental })", () => {
     expect(late!.stale).toBe(true);
   });
 
+  it("hors mode incremental, `build` est appelé sans argument (jamais le renouvellement par âge)", async () => {
+    const m = memory();
+    const seen: unknown[] = [];
+    await runPriceGridJob({ key: "k", composition: "v1" }, { store: m.store, build: async (...args) => (seen.push(args.length), (await build(null, { now: T0 })).grid), now: T0 });
+    expect(seen).toEqual([0]);
+  });
+
+  it("lecture d'une grille sans pricedAt : `priced` absent, âge = generatedAt, pas de fusion", async () => {
+    const m = memory();
+    const old: PriceGrid = {
+      columns: PARTIES.map((p) => ({ parties: [p] })),
+      rows: STAYS.map((st) => ({ ...st, nights: 2, cells: [{ status: "available", total: 500, perPersonPerNight: 1 }, { status: "available", total: 500, perPersonPerNight: 1 }] })),
+      generatedAt: T0.toISOString(),
+      pricesShown: true,
+    };
+    m.data.set(JOB.key, JSON.stringify({ grid: old, generatedAt: old.generatedAt, composition: JOB.composition }));
+    const read = await readPriceGrid(m.store, JOB.key, JOB.composition, { today: TODAY, now: hours(2) });
+    expect(read!.priced).toBeUndefined();
+    expect(read!.grid.columns).toHaveLength(2);
+    expect(read!.stale).toBe(false);
+  });
+
+  it("pannes en série en mode incremental : progression gardée sous :work, grille servie intacte, relevé KO", async () => {
+    const m = memory();
+    await runPriceGridJob(JOB, { store: m.store, build: (p) => build(p ?? null, { now: T0 }).then((x) => x.grid), now: T0 });
+    const served = m.data.get(JOB.key);
+    const r = await runPriceGridJob(JOB, { store: m.store, build: (p) => build(p ?? null, { now: hours(1), down: () => true }).then((x) => x.grid), now: hours(1) });
+    expect(r.outcome).toBe("failed");
+    expect(m.data.has(`${JOB.key}:work`)).toBe(true);
+    expect(JSON.parse(m.data.get(JOB.key)!).grid.rows).toEqual(JSON.parse(served!).grid.rows);
+  });
+
   it("prix trop vieux à la rangée (Beds24 refuse les mêmes cellules depuis longtemps) : relevé KO, alerte au 2e", async () => {
     const m = memory();
-    await runPriceGridJob(JOB, { store: m.store, build: (p) => build(p, { now: T0 }).then((x) => x.grid), now: T0 });
+    await runPriceGridJob(JOB, { store: m.store, build: (p) => build(p ?? null, { now: T0 }).then((x) => x.grid), now: T0 });
     const notes: string[] = [];
     // Plus rien n'est renouvelé (budget nul) ; 25 h puis 26 h plus tard.
-    const frozen = (p: PriceGrid | null) => build(p, { budget: 1, now: hours(25) }).then((x) => x.grid);
+    const frozen = (p?: PriceGrid | null) => build(p ?? null, { budget: 1, now: hours(25) }).then((x) => x.grid);
     const r1 = await runPriceGridJob(JOB, { store: m.store, build: frozen, now: hours(25), notify: (n) => void notes.push(n.title) });
     const r2 = await runPriceGridJob(JOB, { store: m.store, build: frozen, now: hours(26), notify: (n) => void notes.push(n.title) });
     expect(r1.stalled).toBe(true);

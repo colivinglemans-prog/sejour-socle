@@ -82,7 +82,7 @@ export interface PriceGridJobDeps {
    * Le calcul, avec ses dépendances Beds24 déjà branchées par le site. En mode `incremental`, il
    * reçoit la grille de travail précédente (`null` au premier passage) à passer en `previous`.
    */
-  build: (previous: PriceGrid | null) => Promise<PriceGrid>;
+  build: (previous?: PriceGrid | null) => Promise<PriceGrid>;
   notify?: (n: PriceGridNotification) => Promise<void> | void;
   /** `true` : calculer et rendre la grille, sans rien écrire ni alerter. */
   dry?: boolean;
@@ -158,7 +158,9 @@ async function locked(
   if (cfg.incremental) return renewed(cfg, deps, job, jobKey, now);
   let grid: PriceGrid;
   try {
-    grid = await deps.build(null);
+    // Sans argument : un `build` qui transmet `previous` à `buildPriceGrid` garde le calcul complet
+    // (`undefined`), jamais le renouvellement par âge hors du mode `incremental`.
+    grid = await deps.build();
   } catch (e) {
     if (e instanceof IncompleteGridError) {
       if (deps.dry) return { outcome: "incomplete", reason: e.message };
@@ -219,6 +221,14 @@ async function renewed(
 
   const stored: StoredPriceGrid = { grid, generatedAt: grid.generatedAt, composition: cfg.composition };
   await deps.store.set(`${cfg.key}:work`, JSON.stringify(stored));
+
+  if (grid.degraded) {
+    // Pannes Beds24 en série : la progression est gardée (:work), pause et relevé KO.
+    if (grid.complete !== false) await deps.store.set(cfg.key, JSON.stringify(stored));
+    await deps.store.set(jobKey, JSON.stringify({ ...job, lastFailureAt: now.toISOString() }));
+    const alert = await advanceAlert(cfg, deps, true, now);
+    return { outcome: "failed", grid, reason: `Beds24 limite : ${grid.degraded} pannes, passage arrêté.`, alert };
+  }
 
   if (grid.complete === false) {
     // Démarrage à froid : la progression est rangée, la grille servie reste l'ancienne.

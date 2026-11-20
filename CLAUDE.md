@@ -1730,7 +1730,17 @@ Plan `curried-mapping-stallman` v2, section B (corrections de Fable intégrées)
 - **`readPriceGrid`** : fusionne les colonnes à la lecture (`mergeColumns`), `stale` sur le plus vieux
   `pricedAt`, et rend `priced: { oldest, newest }` — la date honnête à afficher.
 - **`pricedRange(grid)`** exporté ; `PriceGrid` reçoit `priced` et le libellé `pricedBetween` (« Prix relevés entre le … et le … »).
-- **Changer la composition** côté site en passant au mode par âge (la grille rangée change de forme).
+- **Ne PAS changer la composition** en passant au mode par âge (relecture le-douanier) : une
+  composition nouvelle rendrait la grille servie illisible pendant tout le démarrage à froid (4-5 h
+  sans tableau). Composition inchangée : l'ancienne grille (fusionnée, sans `pricedAt`) reste servie,
+  ses cellules sont toutes redemandées (`pending`), et elle est remplacée par la première grille
+  complète. `readPriceGrid` lit les deux formes (`priced` absent : ni fusion, ni changement de date).
+- **Pannes en série** : le passage s'arrête et rend la grille avec `degraded` (rien de perdu) ; le job
+  range `:work`, pose la pause de `retryAfterMinutes` et compte un relevé KO.
+- **Côté site, à la bascule** : `incremental: true`, `build: (previous) => …({ previous })`, prix
+  sans `revalidate`, prop `priced` + libellé `pricedBetween`, et **`revalidateTag("price-grid", { expire: 0 })`
+  après chaque rangement** (`outcome === "stored"`) : sinon la page en `unstable_cache` garde la
+  grille et sa date jusqu'à 5 min de plus.
 - Tests : `tests/grille-par-age.test.ts`.
 
 ### v3.36.0 — Prix frais partout, alternatives du week-end (2026-11-20)

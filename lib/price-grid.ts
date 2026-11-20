@@ -114,6 +114,11 @@ export interface PriceGrid {
    * (démarrage à froid). Une grille incomplète n'est jamais servie (`price-grid-job`).
    */
   complete?: boolean;
+  /**
+   * Grille renouvelée par âge : le passage s'est arrêté sur des pannes Beds24 en série (nombre de
+   * pannes). Les cellules non renouvelées gardent leur valeur et leur âge ; à compter en relevé KO.
+   */
+  degraded?: number;
 }
 
 export interface BuildPriceGridOptions {
@@ -164,7 +169,9 @@ export interface BuildPriceGridOptions {
    * Les prix doivent alors venir de Beds24 **sans cache** (`fetchRoomPrice` sans `revalidate`) :
    * c'est l'âge de chaque cellule qui fait la fraîcheur, plus le cache de Next (stale-while-
    * revalidate, qui servait des prix de la veille : test voyageur du 20/11/2026).
-   * `undefined` : l'ancien calcul complet (`IncompleteGridError` si le temps manque).
+   * `undefined` : l'ancien calcul complet (`IncompleteGridError` si le temps manque). Une grille
+   * d'avant v3.37.0 (fusionnée, sans `pricedAt`) est acceptée : ses cellules sont toutes
+   * redemandées, la grille servie reste l'ancienne jusqu'à la première grille complète.
    */
   previous?: PriceGrid | null;
 }
@@ -628,8 +635,9 @@ async function renewByAge(
     } else if (q.reason === "service-unavailable") {
       failed++;
       // La cellule précédente reste, son `pricedAt` dit son âge. Au-delà du seuil, rapporté aux
-      // appels **de ce passage**, on s'arrête : insister aggrave la limitation de Beds24.
-      if (failed >= 3 && failed > o.maxFailureRatio * calls) throw new DegradedGridError(failed, calls);
+      // appels **de ce passage**, on s'arrête — sans rien perdre de ce qui a été renouvelé avant :
+      // insister aggrave la limitation de Beds24.
+      if (failed >= 3 && failed > o.maxFailureRatio * calls) break;
     } else if (q.reason === "unavailable") {
       // Beds24 refuse alors que nos règles acceptaient : il a le dernier mot.
       t.row.cells[t.i] = { status: "taken", pricedAt: at };
@@ -646,12 +654,15 @@ async function renewByAge(
     generatedAt: o.now.toISOString(),
     pricesShown: o.enabled,
     complete: rows.every((r) => r.cells.every((c) => !isPending(c))),
+    ...(failed >= 3 && failed > o.maxFailureRatio * calls ? { degraded: failed } : {}),
   };
 }
 
 /**
  * L'âge des prix d'une grille renouvelée par âge : le plus ancien et le plus récent `pricedAt`.
- * `null` pour une grille sans `pricedAt` (calcul complet d'avant v3.37.0).
+ * `null` pour une grille sans `pricedAt` (calcul complet d'avant v3.37.0). Les lignes « complet »
+ * d'après la disponibilité sont tamponnées à chaque passage (la disponibilité vient d'être lue) :
+ * `newest` vaut donc en pratique l'heure du dernier passage.
  */
 export function pricedRange(grid: PriceGrid): { oldest: string; newest: string } | null {
   let oldest: string | null = null;
