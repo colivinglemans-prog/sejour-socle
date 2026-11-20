@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { addDays, daysBetween, formatDate } from "../lib/dates";
 import {
   longestFreeRange,
+  readNights,
   strictestMinStay,
   type AvailabilityResponse,
   type AvailabilityUrl,
@@ -70,7 +71,18 @@ export interface EventBookingCTAProps {
   labels: EventBookingLabels;
 }
 
-type Status = "loading" | "full" | "partial" | "soldout" | "error" | "hidden";
+/**
+ * `unknown` (v3.34.0) : la réponse est arrivée mais ne dit pas tout — aucune nuit de la
+ * fenêtre lue (réponse Beds24 vide, fenêtre au-delà de l'horizon de la route), ou lecture
+ * partielle sans plage assez longue. Le bloc est **masqué**, comme `hidden` : afficher
+ * « Complet » sur des nuits qu'on n'a pas lues ferait fuir un lecteur pour rien, et proposer
+ * les dates conseillées promettrait une disponibilité inconnue. L'article garde son lien vers
+ * le calendrier ; l'encart revient seul dès que la donnée existe.
+ *
+ * À ne pas confondre avec `error` (route en panne, HTTP non 2xx) : là, on retombe sur les
+ * dates conseillées, Beds24 revalide au paiement — comportement inchangé.
+ */
+type Status = "loading" | "full" | "partial" | "soldout" | "error" | "hidden" | "unknown";
 
 /**
  * Bloc de réservation affiché en fin d'article événementiel.
@@ -125,12 +137,16 @@ export default function EventBookingCTA({
         const data: Partial<AvailabilityResponse> = await res.json();
         if (cancelled) return;
 
-        const free = longestFreeRange(data.dates ?? {}, windowStart, checkOut);
+        const dates = data.dates ?? {};
+        // Une nuit absente de la réponse est non réservable (v3.34.0, `longestFreeRange`).
+        const free = longestFreeRange(dates, windowStart, checkOut);
         const minStay = strictestMinStay(data.minStay, defaultMinStay);
 
         if (!free || free.nights < minStay) {
           setRange(null);
-          setStatus("soldout");
+          // « Complet » seulement si chaque nuit de la fenêtre a été lue ; sinon on ne sait pas.
+          const { read, total } = readNights(dates, windowStart, checkOut);
+          setStatus(read === total ? "soldout" : "unknown");
           return;
         }
 
@@ -172,7 +188,8 @@ export default function EventBookingCTA({
   const provisional = !event.confirmed ? labels.provisionalDates : undefined;
 
   // Événement terminé : l'article reste en ligne comme archive, sans bloc de réservation.
-  if (status === "hidden") return null;
+  // Donnée absente ou incomplète : rien plutôt qu'un « Complet » non vérifié.
+  if (status === "hidden" || status === "unknown") return null;
 
   if (status === "loading") {
     return (

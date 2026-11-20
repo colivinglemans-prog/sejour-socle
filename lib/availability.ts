@@ -16,9 +16,9 @@ import { addDays } from "./dates";
 
 export interface AvailabilityResponse {
   /**
-   * Jour `YYYY-MM-DD` → la nuit est-elle vendable. Une clé absente vaut « libre » pour
-   * `longestFreeRange` (proposer plutôt que masquer), mais **pas** pour le calendrier ni pour
-   * le devis d'une IA (`stay-quote`), qui exigent un `true` explicite avant de vendre.
+   * Jour `YYYY-MM-DD` → la nuit est-elle vendable. Une clé absente vaut **non réservable**,
+   * partout : `longestFreeRange` (depuis v3.34.0), le calendrier et le devis d'une IA
+   * (`stay-quote`) exigent tous un `true` explicite avant de proposer une nuit.
    */
   dates: Record<string, boolean>;
   /** Jour d'arrivée → nombre minimal de nuits imposé par le calendrier tarifaire. */
@@ -56,8 +56,15 @@ export function strictestMinStay(
 /**
  * La plus longue suite de nuits libres dans `[checkIn, checkOut[`, ou `null`.
  *
- * Une date absente de la réponse est traitée comme **libre** : mieux vaut proposer la
- * réservation — Beds24 revalide au paiement — que de masquer une nuit réellement disponible.
+ * Seule une nuit lue `true` est libre ; une date **absente** de la réponse est **non
+ * réservable** (v3.34.0). Avant, elle valait « libre » : or `/api/availability` est bornée à
+ * aujourd'hui + 400 jours, et une réponse Beds24 vide ne porte aucune clé — l'encart d'un
+ * article annonçait alors « Disponible » des nuits que personne n'avait lues. On ne promet
+ * rien qu'on n'a pas lu, comme le calendrier et le devis IA (aligné sur `knownNights` de
+ * Barbusse, qui faisait ce tri en amont).
+ *
+ * Conséquence pour l'appelant : une absence de donnée (panne, réponse vide) ne se règle plus
+ * en passant `{}` — cela rend `null`. Distinguer d'abord « rien lu » avec `readNights`.
  */
 export function longestFreeRange(
   dates: Record<string, boolean>,
@@ -69,7 +76,7 @@ export function longestFreeRange(
   let run = 0;
 
   for (let d = checkIn; d < checkOut; d = addDays(d, 1)) {
-    if (dates[d] !== false) {
+    if (dates[d] === true) {
       if (runStart === null) runStart = d;
       run += 1;
       if (!best || run > best.nights) best = { from: runStart, nights: run };
@@ -81,6 +88,29 @@ export function longestFreeRange(
 
   if (!best) return null;
   return { from: best.from, to: addDays(best.from, best.nights), nights: best.nights };
+}
+
+/**
+ * Combien des nuits de `[checkIn, checkOut[` la réponse a-t-elle **lues** (clé présente,
+ * `true` ou `false`), sur combien.
+ *
+ * Sert à ne pas confondre « tout est pris » et « on ne sait pas » : `longestFreeRange` rend
+ * `null` dans les deux cas. Aucune nuit lue (réponse vide, fenêtre au-delà de l'horizon) :
+ * l'appelant masque plutôt que d'afficher « Complet ». Lecture partielle sans plage assez
+ * longue : même prudence, on n'affirme pas « Complet » sur des nuits qu'on n'a pas vues.
+ */
+export function readNights(
+  dates: Record<string, boolean>,
+  checkIn: string,
+  checkOut: string,
+): { read: number; total: number } {
+  let read = 0;
+  let total = 0;
+  for (let d = checkIn; d < checkOut; d = addDays(d, 1)) {
+    total += 1;
+    if (typeof dates[d] === "boolean") read += 1;
+  }
+  return { read, total };
 }
 
 type AvailabilityReader = (from: string, to: string) => Promise<AvailabilityResponse>;
