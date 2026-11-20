@@ -141,6 +141,19 @@ describe("buildPriceGrid", () => {
     expect(calls).toHaveLength(3); // la semaine prise ne coûte aucun appel de prix
   });
 
+  it("après la dernière nuit libre (vente pas encore ouverte), pas de ligne « Réservé »", async () => {
+    // Tout est pris à partir du 2027-01-20 : au-delà de la dernière nuit libre (19), on ne sait pas
+    // si c'est réservé ou pas encore en vente.
+    const taken: string[] = [];
+    for (let d = "2027-01-20"; d <= "2027-03-31"; d = addDays(d, 1)) taken.push(d);
+    const { d } = deps({ taken });
+    const grid = await buildPriceGrid(CFG, d, {
+      sources: [weekendStays({ from: "2027-01-01", to: "2027-02-28" })],
+      parties: [{ adults: 10, children: 0 }],
+    });
+    expect(grid.rows.map((r) => r.checkIn)).toEqual(["2027-01-01", "2027-01-08", "2027-01-15"]);
+  });
+
   it("spreadTtl étale les durées de cache, de façon déterministe", () => {
     const ttls = ["a", "b", "c", "d", "e", "f", "g", "h"].map((k) => spreadTtl(k, 43_200, 43_200));
     expect(ttls.every((t) => t >= 43_200 && t < 86_400)).toBe(true);

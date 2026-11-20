@@ -1710,6 +1710,7 @@ Barbusse, ajouter les séjours du lundi au vendredi (côté site : `weekendStays
 - `spreadTtl(key, base, spread)` : durée de cache d'un prix étalée sur `[base, base + spread[`,
   déterministe par séjour. Les prix d'une grille calculée d'un coup n'expirent plus tous ensemble
   (12 h plus tard), ce qui imposait plusieurs passages « incomplete » de suite.
+- Au-delà de la **dernière nuit libre lue**, une ligne « complet » n’est pas montrée : on ne distingue pas « réservé » de « pas encore ouvert à la vente » (horizon Beds24). Évite le « Réservé » à tort sur l’hiver suivant ou le Noël de l’an prochain.
 - `PriceGridJobConfig.maxIncompleteStreak` (6 par défaut, 3 auparavant, codé en dur) : une grille
   d'une centaine de prix se remplit à froid en ~4 passages de 22 s ; 3 donnait une fausse alerte.
 - Relecture : à faire (`le-douanier`, `le-dahu`, `chef-de-stand`).

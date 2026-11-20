@@ -424,7 +424,14 @@ export async function buildPriceGrid(
   }
   // Une ligne « complet » sans intitulé entièrement couverte par une ligne « complet » intitulée
   // (le week-end du 25 au 27 dans « Noël », du 23 au 27) n'apprend rien : elle disparaît.
-  const all = [...byKey.values()];
+  // Au-delà de la dernière nuit libre lue, « complet » ne se distingue pas de « pas encore ouvert à
+  // la vente » (horizon de réservation Beds24) : ces lignes-là ne sont pas montrées, plutôt que
+  // d'annoncer « Réservé » à tort (Noël de l'an prochain, l'hiver suivant).
+  const lastFree = Object.keys(avail.dates)
+    .filter((d) => avail.dates[d])
+    .sort()
+    .pop();
+  const all = [...byKey.values()].filter((r) => !r.cells.length || (lastFree !== undefined && r.checkIn <= lastFree));
   const takenLabeled = all.filter((r) => r.label && r.cells.length);
   const rows = all
     .filter(
