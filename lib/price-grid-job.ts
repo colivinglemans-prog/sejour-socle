@@ -3,7 +3,7 @@
  * que la lire (relecture de cerbere : une page publique qui interroge Beds24 se fait épuiser le
  * quota par le premier robot venu, et fait attendre 30 à 40 s le premier visiteur).
  *
- * - `runPriceGridJob` (cron, toutes les heures) : calcule la grille et la range dans le magasin du
+ * - `runPriceGridJob` (cron, toutes les 20 min chez les deux sites depuis le 21/11/2026) : calcule la grille et la range dans le magasin du
  *   site (`{ grid, generatedAt, composition }`). **En cas d'échec, la grille précédente reste
  *   intacte** ; une marque `lastFailureAt` suspend les essais pendant `retryAfterMinutes` (15),
  *   pour ne pas insister auprès d'un Beds24 qui limite. Alerte ntfy selon la règle des alertes du
@@ -55,8 +55,8 @@ export interface PriceGridJobConfig {
   staleHours?: number;
   /**
    * Nombre de passages `incomplete` de suite à partir duquel le passage compte comme un relevé KO.
-   * 6 par défaut : une grille d'une centaine de prix se remplit à froid en 4 passages (une
-   * trentaine de prix par passage de 22 s) ; avec des durées de cache étalées (`spreadTtl`), le
+   * 6 par défaut : une grille d'une centaine de prix se remplit à froid en 4 passages (25 à 30
+   * prix par passage de 18 à 22 s, selon le budget du site) ; avec des durées de cache étalées (`spreadTtl`), le
    * régime normal reste à un passage.
    */
   maxIncompleteStreak?: number;

@@ -64,3 +64,48 @@ export function heartbeatResponse(result: { overdue: number }): {
   const ok = result.overdue === 0;
   return { status: ok ? 200 : 503, body: { ok, overdue: result.overdue } };
 }
+
+const watchedSinceKeyOf = (prefix: string, name: string) => `${prefix}:${name}:watched-since`;
+
+/**
+ * `overdueCrons` avec un **délai de grâce au démarrage** : un cron qui n'a encore jamais battu
+ * n'est pas déclaré en retard tant que sa surveillance a moins de `maxAgeMinutes`.
+ *
+ * Sans lui, l'ajout d'un cron à la liste attendue le ferait sortir « en retard » dès le premier
+ * appel de la route après le déploiement (une clé absente compte comme un retard) — un
+ * hebdomadaire, jusqu'à six jours avant son premier passage. L'instant de la première vue est
+ * posé à la première lecture, sous `prefix:name:watched-since`, **sans expiration** : quand la
+ * clé `…:ok` d'un cron mort depuis longtemps expire, le délai de grâce est écoulé depuis
+ * longtemps, le cron reste en retard (pas de faux « rétabli »). Le magasin passé ici ne doit
+ * donc pas imposer d'expiration à ses écritures.
+ *
+ * Même règle que `overdueCrons` pour `names` : **jamais exposé publiquement**.
+ */
+export async function overdueWithGrace(
+  store: HeartbeatStore,
+  prefix: string,
+  expected: readonly ExpectedCron[],
+  now: Date,
+): Promise<{ overdue: number; names: string[] }> {
+  const since = new Map<string, number>();
+  for (const { name } of expected) {
+    const raw = await store.get(watchedSinceKeyOf(prefix, name));
+    const at = raw === null ? NaN : Date.parse(raw);
+    if (Number.isNaN(at)) {
+      await store.set(watchedSinceKeyOf(prefix, name), now.toISOString());
+      since.set(name, now.getTime());
+    } else {
+      since.set(name, at);
+    }
+  }
+  const { names } = await overdueCrons(store, prefix, expected, now);
+  const late: string[] = [];
+  for (const name of names) {
+    const cron = expected.find((c) => c.name === name)!;
+    const neverBeat = (await store.get(okKeyOf(prefix, name))) === null;
+    const inGrace = now.getTime() - (since.get(name) ?? now.getTime()) <= cron.maxAgeMinutes * 60_000;
+    if (neverBeat && inGrace) continue;
+    late.push(name);
+  }
+  return { overdue: late.length, names: late };
+}

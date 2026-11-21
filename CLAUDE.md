@@ -192,6 +192,7 @@ deux validations.
 | — | Sécurité — **nodemailer 10** (paire optionnelle `^6.10.1 || ^10.6.1`, les sites en `^10.6.1` ; la 6 cumule 18 avis, dont injection SMTP et envoi vers un domaine non voulu) | — | `v3.35.1` |
 | — | Prix — **prix frais partout** (`fetchRoomPrice` sans `revalidate` = `no-store`), `StaySearchDeps.pauseMs`, CDN des prix 120 s sans SWR, alternatives du week-end (`sameWeekdayFirst`), `lowestTotal(filter)`, `perPersonPrice` | `monsieur-loyal` | `v3.36.0` |
 | — | Prix — **grille renouvelée par âge** (`buildPriceGrid({ previous })`, `pricedAt`, `runPriceGridJob({ incremental })`, `<clé>:work`, `readPriceGrid().priced`, `pricedRange`) | — | `v3.37.0` |
+| — | Surveillance — **`overdueWithGrace`** (délai de grâce au démarrage du battement de cœur, préfixe en paramètre ; Albiez branche son battement) | `le-douanier` | `v3.38.0` |
 | — | Veille des dates d'événements (`lib/events-watch.ts`) | — | `v0.7.0` |
 
 Plan détaillé : `C:\Users\alexa\.claude\plans\cheerful-toasting-rivest.md`.
@@ -1706,6 +1707,21 @@ tout identifiant de plus de 10 / 7 caractères — chez Albiez comme chez Barbus
   `_T`, la boucle des copies de test reviendrait et le départage redeviendrait aveugle.
 - Correctif : aucune signature publique ne change. Les deux sites montent sans modification de code
   (ils n'écrivent aucun code `MSG_` en dur) ; leur `validateTemplates` couvre leurs identifiants.
+
+### v3.38.0 — Délai de grâce du battement de cœur (2026-11-21)
+
+Base : `v3.37.0`. Additif : `overdueCrons` ne change pas. Suite de la revue des crons du 21/11
+(Albiez n'avait aucune alerte de cron arrêté).
+
+- **`overdueWithGrace(store, prefix, expected, now)`** (`lib/heartbeat`) : un cron qui n'a jamais
+  battu n'est pas en retard tant que sa surveillance a moins de `maxAgeMinutes` (clé
+  `prefix:name:watched-since`, posée à la première lecture, **sans expiration**). Remonté de
+  Barbusse (où le préfixe était en dur), pour qu'Albiez ne sorte pas 5 crons « en retard » dès son
+  déploiement (dont 2 hebdomadaires).
+- Le magasin passé ne doit pas imposer d'expiration à ses écritures (le `watched-since` doit durer
+  plus longtemps que la clé `…:ok`).
+- Côté site : remplacer l'`overdueWithGrace` local par celui du socle, avec son préfixe.
+- Tests : `tests/heartbeat.test.ts`.
 
 ### v3.37.0 — Grille de prix renouvelée par âge (2026-11-20)
 
