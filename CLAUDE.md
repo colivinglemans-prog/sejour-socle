@@ -193,6 +193,7 @@ deux validations.
 | — | Prix — **prix frais partout** (`fetchRoomPrice` sans `revalidate` = `no-store`), `StaySearchDeps.pauseMs`, CDN des prix 120 s sans SWR, alternatives du week-end (`sameWeekdayFirst`), `lowestTotal(filter)`, `perPersonPrice` | `monsieur-loyal` | `v3.36.0` |
 | — | Prix — **grille renouvelée par âge** (`buildPriceGrid({ previous })`, `pricedAt`, `runPriceGridJob({ incremental })`, `<clé>:work`, `readPriceGrid().priced`, `pricedRange`) | — | `v3.37.0` |
 | — | Surveillance — **`overdueWithGrace`** (délai de grâce au démarrage du battement de cœur, préfixe en paramètre ; Albiez branche son battement) | `le-douanier` | `v3.38.0` |
+| — | Disponibilités — **libre juste avant / après** (`nearbyFreeRanges`, état `nearby` et prop `nearby` d'`EventBookingCTA`, libellés `nearby*`) | `le-douanier` | `v3.39.0` |
 | — | Veille des dates d'événements (`lib/events-watch.ts`) | — | `v0.7.0` |
 
 Plan détaillé : `C:\Users\alexa\.claude\plans\cheerful-toasting-rivest.md`.
@@ -564,7 +565,7 @@ Vercel :
 | Chemin | Contenu | Vient de |
 |---|---|---|
 | `lib/events.ts` | `LocalEvent`, `nextEdition`, `findEventByKey`, `findEventOnDay`, `findEventForStay`, `stayWindow`, `eventJsonLd`. Depuis v3.2.0, `LocalEvent` porte aussi `organizer`, `performer` et `tickets`, optionnels. **Le type et les fonctions ; jamais les données.** | Albiez pour la forme (écrit pour être extrait), Barbusse pour `findEventForStay` |
-| `lib/availability.ts` | `AvailabilityResponse`, `AvailabilityUrl`, `strictestMinStay`, `longestFreeRange`. | Barbusse (le CTA), généralisé |
+| `lib/availability.ts` | `AvailabilityResponse`, `AvailabilityUrl`, `strictestMinStay`, `longestFreeRange`, `readNights`, `nearbyFreeRanges` (v3.39.0). | Barbusse (le CTA), généralisé |
 | `lib/stay-selection.ts` | `SelectionContext`, `isValidCheckIn`, `isValidCheckOut`, `cellState`, `selectionAfterClick`, `consecutiveFreeNights`. **Le cœur du tunnel, sorti d'un composant client pour devenir testable.** | les deux calendriers, identiques |
 | `lib/booking-url.ts` | `bookingUrl` — l'URL `booking2.php` composée à un seul endroit. | trois copies, mêmes paramètres dans le même ordre |
 | `components/ReservationCalendar.tsx` | Le calendrier public : deux mois, huit états de case, séjour minimum, fermetures, compteurs, modale Beds24. | les deux, à 80 % identiques |
@@ -1707,6 +1708,23 @@ tout identifiant de plus de 10 / 7 caractères — chez Albiez comme chez Barbus
   `_T`, la boucle des copies de test reviendrait et le départage redeviendrait aveugle.
 - Correctif : aucune signature publique ne change. Les deux sites montent sans modification de code
   (ils n'écrivent aucun code `MSG_` en dur) ; leur `validateTemplates` couvre leurs identifiants.
+
+### v3.39.0 — Libre juste avant / après un événement complet (2026-11-21)
+
+Cas réel : l'article « Où se loger 24H 2027 » de Barbusse affichait « Complet » parce que les nuits de la
+course (9 → 13 juin) étaient réservées, alors que la maison était libre du 28 mai au 8 juin (Journée
+Test, pesage, arrivées en avance).
+
+- `nearbyFreeRanges(dates, minStay, windowStart, windowEnd, scan, defaultMinStay)` (`lib/availability.ts`) :
+  plages libres **collées** à la fenêtre (avant le premier jour réservé, après le dernier), bornées par
+  `scan` ; séjour proposé = le plus court qui satisfait le minimum **le plus strict lu sur ses nuits, la
+  veille et le jour de départ compris** (décalage d'un jour des `minStay` Beds24, cf. `strictestMinStay`) ;
+  nuit non lue = non libre. Tests : `tests/availability-nearby.test.ts`.
+- `EventBookingCTA` : prop facultative `nearby={{ before, after }}` ; quand la fenêtre est entièrement lue et
+  prise, seconde lecture élargie (jamais avant aujourd'hui) → état `nearby` (titre, phrase, une ligne et un
+  bouton Beds24 pré-rempli par côté). Libellés facultatifs `nearbyTitle`, `nearbyBefore(from, to)`,
+  `nearbyAfter(from, to)`, `nearbyBody` : s'il en manque un, ou sans `nearby`, le bloc reste « Complet ».
+  Erreur de la seconde lecture → « Complet ». Additif : un site qui ne passe rien ne change pas.
 
 ### v3.38.0 — Délai de grâce du battement de cœur (2026-11-21)
 
