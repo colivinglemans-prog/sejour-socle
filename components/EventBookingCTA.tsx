@@ -69,7 +69,7 @@ export interface EventBookingLabels {
    * pré-rempli est vraiment — un **minimum**, dates modifiables chez Beds24 — ex. « À partir de 4
    * nuits, arrivée au choix ». `side` : avant l'événement l'arrivée est libre, après c'est le départ.
    */
-  nearbyStay?: (nights: number, side: "before" | "after") => string;
+  nearbyStay?: (nights: number, side: NearbyRange["side"]) => string;
 }
 
 export interface EventBookingCTAProps {
