@@ -135,7 +135,7 @@ export interface DeploySite {
 
   /**
    * Route publique de heartbeat (`overdueWithGrace` + `heartbeatResponse`, `lib/heartbeat`). Les
-   * deux sites en ont une (Albiez depuis v3.38.0) ; absente seulement pour un site sans stockage.
+   * deux sites en ont une ; absente seulement pour un site sans stockage.
    * `severity` (v3.21.0, `blocking` par défaut) : `warning` quand le site envoie déjà lui-même une
    * alerte nommant les tâches en retard — la surveillance la montre sans ouvrir une seconde alerte
    * pour la même panne.

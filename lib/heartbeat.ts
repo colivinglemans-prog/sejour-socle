@@ -1,6 +1,8 @@
 /**
  * Battement de cœur des tâches planifiées : chaque cron écrit son passage, une route publique
  * dit si l'un d'eux est en retard. Le magasin est injecté (Upstash, Redis, mémoire en test).
+ * `overdueWithGrace` ajoute un délai de grâce au démarrage (remonté de Barbusse en v3.38.0) : un
+ * cron ajouté ne sort pas « en retard » avant son premier passage.
  */
 
 export interface HeartbeatStore {

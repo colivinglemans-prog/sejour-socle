@@ -73,4 +73,10 @@ describe("overdueWithGrace", () => {
     ]);
     expect((await overdueWithGrace(s, "albiez:hb", expected, plus(91))).names).toEqual(["nuki"]);
   });
+  it("watched-since illisible : réinitialisé à maintenant (nouvelle grâce)", async () => {
+    const s = memory();
+    s.data.set("hb:nuki:watched-since", "illisible");
+    expect((await overdueWithGrace(s, "hb", [expected[0]], T)).overdue).toBe(0);
+    expect(s.data.get("hb:nuki:watched-since")).toBe(T.toISOString());
+  });
 });
