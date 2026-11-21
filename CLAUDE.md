@@ -194,6 +194,7 @@ deux validations.
 | — | Prix — **grille renouvelée par âge** (`buildPriceGrid({ previous })`, `pricedAt`, `runPriceGridJob({ incremental })`, `<clé>:work`, `readPriceGrid().priced`, `pricedRange`) | — | `v3.37.0` |
 | — | Surveillance — **`overdueWithGrace`** (délai de grâce au démarrage du battement de cœur, préfixe en paramètre ; Albiez branche son battement) | `le-douanier` | `v3.38.0` |
 | — | Disponibilités — **libre juste avant / après** (`nearbyFreeRanges`, état `nearby` et prop `nearby` d'`EventBookingCTA`, libellés `nearby*`) | `le-douanier` | `v3.39.0` |
+| — | Disponibilités — libellé facultatif **`nearbyStay(nights, side)`** : le séjour pré-rempli de l'état `nearby` présenté comme un minimum | `le-douanier` | `v3.40.0` |
 | — | Veille des dates d'événements (`lib/events-watch.ts`) | — | `v0.7.0` |
 
 Plan détaillé : `C:\Users\alexa\.claude\plans\cheerful-toasting-rivest.md`.
@@ -1708,6 +1709,14 @@ tout identifiant de plus de 10 / 7 caractères — chez Albiez comme chez Barbus
   `_T`, la boucle des copies de test reviendrait et le départage redeviendrait aveugle.
 - Correctif : aucune signature publique ne change. Les deux sites montent sans modification de code
   (ils n'écrivent aucun code `MSG_` en dur) ; leur `validateTemplates` couvre leurs identifiants.
+
+### v3.40.0 — Le séjour proposé se lit comme un minimum (2026-11-21)
+
+Retour de l'hôte sur l'état `nearby` : « Du 5 juin au 9 juin · 4 nuits » donnait l'impression qu'un séjour de
+5 ou 6 nuits était impossible, alors que le bouton ne fait que pré-remplir le plus court séjour accepté
+(dates modifiables sur la page Beds24). Libellé facultatif `EventBookingLabels.nearbyStay(nights, side)` :
+présent, il remplace `range` sur cette ligne (« À partir de 4 nuits, arrivée au choix » avant l'événement,
+« …départ au choix » après) ; absent, rendu de v3.39.0. Additif.
 
 ### v3.39.0 — Libre juste avant / après un événement complet (2026-11-21)
 

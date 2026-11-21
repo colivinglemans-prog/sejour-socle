@@ -63,6 +63,13 @@ export interface EventBookingLabels {
   nearbyAfter?: (from: string, to: string) => string;
   /** Une phrase : pourquoi ces nuits valent le coup. */
   nearbyBody?: string;
+  /**
+   * Ligne du séjour proposé dans l'état `nearby` (v3.40.0). Absente : `range` (« Du 5 au 9 juin ·
+   * 4 nuits »), qui se lit comme la seule option possible. Présente, elle dit ce que le séjour
+   * pré-rempli est vraiment — un **minimum**, dates modifiables chez Beds24 — ex. « À partir de 4
+   * nuits, arrivée au choix ». `side` : avant l'événement l'arrivée est libre, après c'est le départ.
+   */
+  nearbyStay?: (nights: number, side: "before" | "after") => string;
 }
 
 export interface EventBookingCTAProps {
@@ -276,7 +283,9 @@ export default function EventBookingCTA({
                 )}
               </p>
               <p className="mt-1 text-sm text-secondary">
-                {labels.range(fmt(r.stay.from), fmt(r.stay.to), r.stay.nights)}
+                {labels.nearbyStay
+                  ? labels.nearbyStay(r.stay.nights, r.side)
+                  : labels.range(fmt(r.stay.from), fmt(r.stay.to), r.stay.nights)}
               </p>
               <a
                 href={beds24BookingUrl({ propertyId, lang, checkIn: r.stay.from, checkOut: r.stay.to })}
