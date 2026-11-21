@@ -4,9 +4,11 @@ import { useEffect, useState } from "react";
 import { addDays, daysBetween, formatDate } from "../lib/dates";
 import {
   longestFreeRange,
+  nearbyFreeRanges,
   readNights,
   strictestMinStay,
   type AvailabilityResponse,
+  type NearbyRange,
   type AvailabilityUrl,
 } from "../lib/availability";
 import { bookingUrl as beds24BookingUrl } from "../lib/booking-url";
@@ -49,6 +51,18 @@ export interface EventBookingLabels {
    * protocole de test, pas le compilateur.
    */
   provisionalDates?: string;
+  /**
+   * État « libre juste avant / après » (v3.39.0), quand la fenêtre de l'événement est prise
+   * mais que des nuits collées à elle restent libres (essais, montage, arrivée en avance).
+   * Les quatre libellés vont ensemble : s'il en manque un, le bloc reste en « complet ».
+   */
+  nearbyTitle?: string;
+  /** Ex. « Libre juste avant : du 29 mai au 9 juin ». Bornes déjà formatées. */
+  nearbyBefore?: (from: string, to: string) => string;
+  /** Ex. « Libre juste après : du 14 au 19 juin ». */
+  nearbyAfter?: (from: string, to: string) => string;
+  /** Une phrase : pourquoi ces nuits valent le coup. */
+  nearbyBody?: string;
 }
 
 export interface EventBookingCTAProps {
@@ -68,6 +82,11 @@ export interface EventBookingCTAProps {
   calendarHref: string;
   /** Séjour minimum retenu quand le calendrier tarifaire n'en impose aucun. */
   defaultMinStay?: number;
+  /**
+   * Jours à explorer avant et après la fenêtre quand elle est prise (v3.39.0). Absent :
+   * comportement d'avant, « Complet ». Voir `nearbyFreeRanges`.
+   */
+  nearby?: { before: number; after: number };
   labels: EventBookingLabels;
 }
 
@@ -82,7 +101,7 @@ export interface EventBookingCTAProps {
  * À ne pas confondre avec `error` (route en panne, HTTP non 2xx) : là, on retombe sur les
  * dates conseillées, Beds24 revalide au paiement — comportement inchangé.
  */
-type Status = "loading" | "full" | "partial" | "soldout" | "error" | "hidden" | "unknown";
+type Status = "loading" | "full" | "partial" | "soldout" | "nearby" | "error" | "hidden" | "unknown";
 
 /**
  * Bloc de réservation affiché en fin d'article événementiel.
@@ -107,11 +126,15 @@ export default function EventBookingCTA({
   availabilityUrl,
   calendarHref,
   defaultMinStay = 2,
+  nearby,
   labels,
 }: EventBookingCTAProps) {
   const { checkIn, checkOut } = stayWindow(event, margins);
   const [status, setStatus] = useState<Status>("loading");
   const [range, setRange] = useState<{ from: string; to: string; nights: number } | null>(null);
+  const [near, setNear] = useState<{ before?: NearbyRange; after?: NearbyRange }>({});
+  const nearbyReady =
+    !!nearby && !!labels.nearbyTitle && !!labels.nearbyBefore && !!labels.nearbyAfter && !!labels.nearbyBody;
 
   useEffect(() => {
     let cancelled = false;
@@ -146,7 +169,43 @@ export default function EventBookingCTA({
           setRange(null);
           // « Complet » seulement si chaque nuit de la fenêtre a été lue ; sinon on ne sait pas.
           const { read, total } = readNights(dates, windowStart, checkOut);
-          setStatus(read === total ? "soldout" : "unknown");
+          if (read !== total) {
+            setStatus("unknown");
+            return;
+          }
+          // Fenêtre prise : y a-t-il des nuits libres collées à elle ? Seconde lecture, élargie,
+          // jamais avant aujourd'hui. Toute erreur ici laisse « Complet » : on ne promet rien.
+          if (nearbyReady && nearby) {
+            try {
+              const before = Math.max(0, Math.min(nearby.before, daysBetween(today, windowStart)));
+              const scanStart = addDays(windowStart, -before);
+              const scanEnd = addDays(checkOut, nearby.after);
+              const wide = await fetch(availabilityUrl(scanStart, addDays(scanEnd, -1)), {
+                cache: "no-store",
+              });
+              if (wide.ok) {
+                const w: Partial<AvailabilityResponse> = await wide.json();
+                if (cancelled) return;
+                const found = nearbyFreeRanges(
+                  w.dates ?? {},
+                  w.minStay,
+                  windowStart,
+                  checkOut,
+                  { before, after: nearby.after },
+                  defaultMinStay,
+                );
+                if (found.before || found.after) {
+                  setNear(found);
+                  setStatus("nearby");
+                  return;
+                }
+              }
+            } catch {
+              // on retombe sur « Complet »
+            }
+            if (cancelled) return;
+          }
+          setStatus("soldout");
           return;
         }
 
@@ -172,7 +231,7 @@ export default function EventBookingCTA({
     // `availabilityUrl` et `labels` sont des littéraux recréés à chaque rendu du parent :
     // les mettre en dépendance relancerait la requête sans fin. Seule la fenêtre compte.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [checkIn, checkOut, defaultMinStay]);
+  }, [checkIn, checkOut, defaultMinStay, nearby?.before, nearby?.after]);
 
   // En UTC, comme partout où l'on affiche un jour calendaire : sans `timeZone`, un visiteur
   // à l'ouest de Greenwich lirait la veille.
@@ -195,6 +254,46 @@ export default function EventBookingCTA({
     return (
       <div className="mt-12 rounded-xl border border-border bg-light-bg px-6 py-8">
         <p className="text-sm text-secondary">{labels.loading}</p>
+      </div>
+    );
+  }
+
+  if (status === "nearby") {
+    const sides = [near.before, near.after].filter((r): r is NearbyRange => !!r);
+    return (
+      <div className="mt-12 rounded-xl border border-primary/30 bg-primary/5 px-6 py-8">
+        <p className="text-lg font-semibold text-foreground">{labels.nearbyTitle}</p>
+        {provisional && <p className="mt-2 text-sm text-secondary">{provisional}</p>}
+        <p className="mt-3 text-sm text-secondary">{labels.nearbyBody}</p>
+        <div className="mt-4 space-y-4">
+          {sides.map((r) => (
+            <div key={r.side}>
+              <p className="text-base font-medium text-primary">
+                {(r.side === "before" ? labels.nearbyBefore! : labels.nearbyAfter!)(
+                  fmt(r.freeFrom),
+                  fmt(r.freeTo),
+                )}
+              </p>
+              <p className="mt-1 text-sm text-secondary">
+                {labels.range(fmt(r.stay.from), fmt(r.stay.to), r.stay.nights)}
+              </p>
+              <a
+                href={beds24BookingUrl({ propertyId, lang, checkIn: r.stay.from, checkOut: r.stay.to })}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-3 inline-block rounded-lg bg-primary px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
+              >
+                {labels.book}
+              </a>
+            </div>
+          ))}
+        </div>
+        <a
+          href={calendarHref}
+          className="mt-5 inline-block rounded-lg border border-border bg-background px-6 py-3 text-sm font-semibold text-foreground transition-colors hover:bg-light-bg"
+        >
+          {labels.seeCalendar}
+        </a>
       </div>
     );
   }

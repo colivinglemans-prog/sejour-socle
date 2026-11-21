@@ -12,7 +12,7 @@
  * venait à porter autre chose, c'est la route qui aurait un problème, pas ce module.
  */
 
-import { addDays } from "./dates";
+import { addDays, daysBetween } from "./dates";
 
 export interface AvailabilityResponse {
   /**
@@ -145,4 +145,88 @@ export function monthlyAvailability(read: AvailabilityReader): AvailabilityReade
     }
     return out;
   };
+}
+
+/** Une plage libre collée à un événement complet, et le séjour qu'on y propose. */
+export interface NearbyRange {
+  /** Juste avant l'événement, ou juste après. */
+  side: "before" | "after";
+  /** Toute la plage libre lue, `[freeFrom, freeTo[` — ce qu'on annonce. */
+  freeFrom: string;
+  freeTo: string;
+  /** Le séjour pré-rempli dans le lien de réservation : le plus court qui respecte le minimum. */
+  stay: { from: string; to: string; nights: number };
+}
+
+/**
+ * Les nuits libres **collées** à la fenêtre d'un événement quand celle-ci est prise
+ * (v3.39.0) : la course est réservée, mais la maison est libre la veille des essais.
+ *
+ * - `before` : la suite de nuits libres qui se termine au premier jour réservé de la fenêtre,
+ *   en remontant jusqu'à `scan.before` jours avant `windowStart` ;
+ * - `after` : celle qui commence au lendemain du dernier jour réservé, jusqu'à `scan.after`
+ *   jours après `windowEnd`.
+ *
+ * Seule une nuit lue `true` compte (même règle que `longestFreeRange`). Le séjour proposé est
+ * le plus court qui satisfait le minimum **le plus strict lu sur ses nuits, la veille et le
+ * jour de départ compris** : Beds24 rend les `minStay` décalés d'un jour (voir
+ * `strictestMinStay`), et lire la seule clé d'arrivée ferait proposer un séjour refusé au
+ * paiement. Prudent : on peut annoncer un minimum un peu trop haut, jamais trop bas.
+ *
+ * Rien de réservé dans la fenêtre, ou aucune plage assez longue : `{}`.
+ */
+export function nearbyFreeRanges(
+  dates: Record<string, boolean>,
+  minStay: Record<string, number> | undefined,
+  windowStart: string,
+  windowEnd: string,
+  scan: { before: number; after: number },
+  defaultMinStay: number,
+): { before?: NearbyRange; after?: NearbyRange } {
+  const booked: string[] = [];
+  for (let d = windowStart; d < windowEnd; d = addDays(d, 1)) {
+    if (dates[d] === false) booked.push(d);
+  }
+  if (booked.length === 0) return {};
+
+  const required = (from: string, to: string) => {
+    let max = defaultMinStay;
+    for (let d = addDays(from, -1); d <= to; d = addDays(d, 1)) {
+      const n = minStay?.[d];
+      if (Number.isFinite(n) && (n as number) > max) max = n as number;
+    }
+    return max;
+  };
+
+  const out: { before?: NearbyRange; after?: NearbyRange } = {};
+
+  // Avant : on remonte depuis la veille du premier jour réservé.
+  const firstBooked = booked[0];
+  const scanStart = addDays(windowStart, -scan.before);
+  let freeFrom = firstBooked;
+  while (addDays(freeFrom, -1) >= scanStart && dates[addDays(freeFrom, -1)] === true) {
+    freeFrom = addDays(freeFrom, -1);
+  }
+  for (let from = addDays(firstBooked, -1); from >= freeFrom; from = addDays(from, -1)) {
+    const nights = daysBetween(from, firstBooked);
+    if (nights >= required(from, firstBooked)) {
+      out.before = { side: "before", freeFrom, freeTo: firstBooked, stay: { from, to: firstBooked, nights } };
+      break;
+    }
+  }
+
+  // Après : on avance depuis le lendemain du dernier jour réservé.
+  const afterStart = addDays(booked[booked.length - 1], 1);
+  const scanEnd = addDays(windowEnd, scan.after);
+  let freeTo = afterStart;
+  while (freeTo < scanEnd && dates[freeTo] === true) freeTo = addDays(freeTo, 1);
+  for (let to = addDays(afterStart, 1); to <= freeTo; to = addDays(to, 1)) {
+    const nights = daysBetween(afterStart, to);
+    if (nights >= required(afterStart, to)) {
+      out.after = { side: "after", freeFrom: afterStart, freeTo, stay: { from: afterStart, to, nights } };
+      break;
+    }
+  }
+
+  return out;
 }
