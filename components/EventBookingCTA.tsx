@@ -180,7 +180,8 @@ export default function EventBookingCTA({
               const before = Math.max(0, Math.min(nearby.before, daysBetween(today, windowStart)));
               const scanStart = addDays(windowStart, -before);
               const scanEnd = addDays(checkOut, nearby.after);
-              const wide = await fetch(availabilityUrl(scanStart, addDays(scanEnd, -1)), {
+              // Un jour de plus en tête : `nearbyFreeRanges` lit le minimum de la veille.
+              const wide = await fetch(availabilityUrl(addDays(scanStart, -1), addDays(scanEnd, -1)), {
                 cache: "no-store",
               });
               if (wide.ok) {
@@ -268,7 +269,7 @@ export default function EventBookingCTA({
         <div className="mt-4 space-y-4">
           {sides.map((r) => (
             <div key={r.side}>
-              <p className="text-base font-medium text-primary">
+              <p id={`nearby-${r.side}`} className="text-base font-medium text-primary">
                 {(r.side === "before" ? labels.nearbyBefore! : labels.nearbyAfter!)(
                   fmt(r.freeFrom),
                   fmt(r.freeTo),
@@ -279,6 +280,7 @@ export default function EventBookingCTA({
               </p>
               <a
                 href={beds24BookingUrl({ propertyId, lang, checkIn: r.stay.from, checkOut: r.stay.to })}
+                aria-describedby={`nearby-${r.side}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="mt-3 inline-block rounded-lg bg-primary px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-primary-dark"
